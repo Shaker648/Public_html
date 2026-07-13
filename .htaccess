@@ -1,0 +1,26 @@
+# ═══════════════════════════════════════════════════════════════
+# First 1 Car — web hardening. Does NOT change how the app works;
+# it only blocks direct browser access to files that should never
+# be downloaded, and adds a few safe response headers.
+# ═══════════════════════════════════════════════════════════════
+
+# Don't list directory contents when there's no index file
+Options -Indexes
+
+# Block direct web access to data/config files.
+# (PHP still includes config.php / auth.php internally — that is a
+#  filesystem read, not an HTTP request, so the app is unaffected.)
+<FilesMatch "\.(log|sql|bak|inc|ini|md|sh|json~)$">
+    Require all denied
+</FilesMatch>
+
+<FilesMatch "^(config|auth|ai_config)\.php$">
+    Require all denied
+</FilesMatch>
+
+# Safe security headers
+<IfModule mod_headers.c>
+    Header set X-Content-Type-Options "nosniff"
+    Header set X-Frame-Options "SAMEORIGIN"
+    Header set Referrer-Policy "strict-origin-when-cross-origin"
+</IfModule>
