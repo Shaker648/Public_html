@@ -2,9 +2,15 @@
 
 require 'auth.php';
 require 'config.php';
+require 'sold_helpers.php';
 
 /* ── Permission-gated (default: admin only) ── */
 perm_require('page.sales_analytics');
+
+// Exclude reverted sales from all analytics.
+$soldColOk    = ensure_sold_revert_columns($pdo);
+$activeSoldNA = sold_active_sql($soldColOk, '');   // no-alias fragment
+$activeSoldS  = sold_active_sql($soldColOk, 's');  // for the "s" alias query
 
 $lang = $_GET['lang'] ?? 'ar';
 if (!in_array($lang, ['ar', 'en'])) {
@@ -65,9 +71,9 @@ $t = [
 /* ════════════════ QUERIES ════════════════ */
 
 // Stat cards
-$totalSold = (int)$pdo->query("SELECT COUNT(*) FROM sold_cars")->fetchColumn();
-$soldMonth = (int)$pdo->query("SELECT COUNT(*) FROM sold_cars WHERE MONTH(sold_at)=MONTH(CURDATE()) AND YEAR(sold_at)=YEAR(CURDATE())")->fetchColumn();
-$soldYear  = (int)$pdo->query("SELECT COUNT(*) FROM sold_cars WHERE YEAR(sold_at)=YEAR(CURDATE())")->fetchColumn();
+$totalSold = (int)$pdo->query("SELECT COUNT(*) FROM sold_cars WHERE $activeSoldNA")->fetchColumn();
+$soldMonth = (int)$pdo->query("SELECT COUNT(*) FROM sold_cars WHERE MONTH(sold_at)=MONTH(CURDATE()) AND YEAR(sold_at)=YEAR(CURDATE()) AND $activeSoldNA")->fetchColumn();
+$soldYear  = (int)$pdo->query("SELECT COUNT(*) FROM sold_cars WHERE YEAR(sold_at)=YEAR(CURDATE()) AND $activeSoldNA")->fetchColumn();
 
 // Leaderboard (salesman, fallback to sold_by)
 $leaderboard = $pdo->query("
@@ -76,6 +82,7 @@ $leaderboard = $pdo->query("
            SUM(sale_type='dealer')   AS dealer_sales,
            COUNT(*) AS total
     FROM sold_cars
+    WHERE $activeSoldNA
     GROUP BY seller
     ORDER BY total DESC
 ")->fetchAll(PDO::FETCH_ASSOC);
@@ -85,13 +92,14 @@ $topSeller = $leaderboard[0]['seller'] ?? '—';
 // By branch
 $byBranch = $pdo->query("
     SELECT sold_branch, COUNT(*) AS cnt
-    FROM sold_cars GROUP BY sold_branch ORDER BY cnt DESC
+    FROM sold_cars WHERE $activeSoldNA GROUP BY sold_branch ORDER BY cnt DESC
 ")->fetchAll(PDO::FETCH_ASSOC);
 
 // Top models
 $topModels = $pdo->query("
     SELECT c.brand, c.model, COUNT(*) AS cnt
     FROM sold_cars s JOIN cars c ON s.car_id = c.id
+    WHERE $activeSoldS
     GROUP BY c.brand, c.model ORDER BY cnt DESC LIMIT 8
 ")->fetchAll(PDO::FETCH_ASSOC);
 
@@ -99,7 +107,7 @@ $topModels = $pdo->query("
 $monthlyRaw = $pdo->query("
     SELECT DATE_FORMAT(sold_at,'%Y-%m') AS ym, COUNT(*) AS cnt
     FROM sold_cars
-    WHERE sold_at >= DATE_SUB(CURDATE(), INTERVAL 12 MONTH)
+    WHERE sold_at >= DATE_SUB(CURDATE(), INTERVAL 12 MONTH) AND $activeSoldNA
     GROUP BY ym ORDER BY ym ASC
 ")->fetchAll(PDO::FETCH_ASSOC);
 
@@ -113,7 +121,7 @@ foreach ($monthlyRaw as $r) {
 }
 
 // Customer vs dealer split
-$splitRaw = $pdo->query("SELECT sale_type, COUNT(*) AS cnt FROM sold_cars GROUP BY sale_type")->fetchAll(PDO::FETCH_KEY_PAIR);
+$splitRaw = $pdo->query("SELECT sale_type, COUNT(*) AS cnt FROM sold_cars WHERE $activeSoldNA GROUP BY sale_type")->fetchAll(PDO::FETCH_KEY_PAIR);
 $custCount = (int)($splitRaw['customer'] ?? 0);
 $dealCount = (int)($splitRaw['dealer'] ?? 0);
 

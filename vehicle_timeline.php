@@ -2,6 +2,7 @@
 
 require 'auth.php';
 require 'config.php';
+require 'sold_helpers.php';
 
 $lang = $_GET['lang'] ?? 'ar';
 $dir  = $lang === 'ar' ? 'rtl' : 'ltr';
@@ -34,6 +35,8 @@ $t = [
         'added'            => 'إضافة السيارة',
         'transferred'      => 'نقل السيارة',
         'sold_event'       => 'بيع السيارة',
+        'sale_return_event'=> 'إرجاع من البيع (رجعت للمخزون)',
+        'sold_reverted_tag'=> '↩️ أُرجعت لاحقاً للمخزون',
         'amana_out_event'  => 'خروج أمانة',
         'amana_return_event' => 'إرجاع من الأمانة',
         'amana_dealer'     => 'التاجر',
@@ -72,6 +75,8 @@ $t = [
         'added'            => 'Vehicle Added',
         'transferred'      => 'Vehicle Transferred',
         'sold_event'       => 'Vehicle Sold',
+        'sale_return_event'=> 'Returned from Sale (back in stock)',
+        'sold_reverted_tag'=> '↩️ Later returned to stock',
         'amana_out_event'  => 'Out on Consignment',
         'amana_return_event' => 'Returned from Consignment',
         'amana_dealer'     => 'Dealer',
@@ -146,10 +151,31 @@ foreach ($cStmt->fetchAll(PDO::FETCH_ASSOC) as $cn) {
 // Most recent dealer name (used as a fallback label on امانة events)
 $lastDealer = !empty($consignHist) ? end($consignHist)['dealer_name'] : '';
 
-/* ─── Fetch sold record ─────────────────────────────────── */
-$stmt = $pdo->prepare("SELECT * FROM sold_cars WHERE car_id = ? LIMIT 1");
+/* ─── Fetch sale record(s) — kept even after a revert, so the trip shows
+       "sold to X" AND "returned to stock" ─────────────────────────────── */
+ensure_sold_revert_columns($pdo);
+$stmt = $pdo->prepare("SELECT * FROM sold_cars WHERE car_id = ? ORDER BY sold_at ASC");
 $stmt->execute([$id]);
-$sold = $stmt->fetch(PDO::FETCH_ASSOC);
+$soldRows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+$sold     = $soldRows[0] ?? null;   // kept for any backward-compat reference
+
+/* ─── Merge movements + sales into ONE chronological stream ─── */
+$timelineEvents = [];
+foreach ($movements as $mv) {
+    $timelineEvents[] = [
+        'ts'   => strtotime($mv['created_at'] ?? '') ?: 0,
+        'kind' => $mv['event_type'] ?? 'transfer',
+        'mv'   => $mv,
+    ];
+}
+foreach ($soldRows as $sr) {
+    $timelineEvents[] = [
+        'ts'   => strtotime($sr['sold_at'] ?? '') ?: 0,
+        'kind' => 'sold',
+        'sold' => $sr,
+    ];
+}
+usort($timelineEvents, fn($a, $b) => $a['ts'] <=> $b['ts']);
 
 $daysInStock = floor((time() - strtotime($car['created_at'])) / 86400);
 
@@ -670,21 +696,62 @@ body {
                 </div>
             </div>
 
-            <!-- Transfers & امانة events -->
-            <?php foreach ($movements as $mv):
-                $evType    = $mv['event_type'] ?? 'transfer';
+            <!-- Transfers, امانة, sale & return events (chronological) -->
+            <?php foreach ($timelineEvents as $ev):
+                $kind = $ev['kind'];
 
-                // امانة events are admin/manager only — hide from sales entirely
-                if (($evType === 'amana_out' || $evType === 'amana_return') && !$canSeeAmana) {
-                    continue;
+                // For movement-based events, prep labels + hide امانة from sales.
+                if ($kind !== 'sold') {
+                    $mv = $ev['mv'];
+                    if (($kind === 'amana_out' || $kind === 'amana_return') && !$canSeeAmana) {
+                        continue;
+                    }
+                    $fromLabel = getBranchName($pdo, $mv['from_branch'], $lang, $branchCache);
+                    $toLabel   = getBranchName($pdo, $mv['to_branch'],   $lang, $branchCache);
                 }
-
-                $fromLabel = getBranchName($pdo, $mv['from_branch'], $lang, $branchCache);
-                $toLabel   = getBranchName($pdo, $mv['to_branch'],   $lang, $branchCache);
-
-                /* ─── امانة OUT event ─── */
-                if ($evType === 'amana_out'):
             ?>
+
+            <?php /* ─── SOLD event ─── */ if ($kind === 'sold'):
+                $srow            = $ev['sold'];
+                $soldBranchLabel = getBranchName($pdo, $srow['sold_branch'], $lang, $branchCache);
+                $wasReverted     = (($srow['status'] ?? 'sold') === 'returned');
+            ?>
+            <div class="tl-item">
+                <div class="tl-dot-wrap">
+                    <div class="tl-dot ev-sold">💰</div>
+                </div>
+                <div class="tl-body">
+                    <div class="tl-title ev-sold"><?= $t[$lang]['sold_event'] ?></div>
+                    <div class="tl-date">📅 <?= date('d M Y · h:i A', strtotime($srow['sold_at'])) ?></div>
+                    <div class="tl-facts">
+                        <div class="tl-fact">
+                            <span class="tl-fact-label"><?= $t[$lang]['branch'] ?></span>
+                            <span class="tl-fact-value"><?= htmlspecialchars($soldBranchLabel) ?></span>
+                        </div>
+                        <div class="tl-fact">
+                            <span class="tl-fact-label"><?= $t[$lang]['by'] ?></span>
+                            <span class="tl-fact-value"><?= htmlspecialchars($srow['sold_by']) ?></span>
+                        </div>
+                        <?php if (!empty($srow['customer_name'])): ?>
+                        <div class="tl-fact">
+                            <span class="tl-fact-label"><?= $t[$lang]['customer'] ?></span>
+                            <span class="tl-fact-value"><?= htmlspecialchars($srow['customer_name']) ?></span>
+                        </div>
+                        <?php endif; ?>
+                        <?php if (!empty($srow['dealer_name'])): ?>
+                        <div class="tl-fact">
+                            <span class="tl-fact-label"><?= $t[$lang]['dealer'] ?></span>
+                            <span class="tl-fact-value"><?= htmlspecialchars($srow['dealer_name']) ?></span>
+                        </div>
+                        <?php endif; ?>
+                    </div>
+                    <?php if ($wasReverted): ?>
+                    <div class="tl-note">💬 <?= $t[$lang]['sold_reverted_tag'] ?></div>
+                    <?php endif; ?>
+                </div>
+            </div>
+
+            <?php /* ─── امانة OUT event ─── */ elseif ($kind === 'amana_out'): ?>
             <div class="tl-item">
                 <div class="tl-dot-wrap">
                     <div class="tl-dot ev-amana">🔶</div>
@@ -711,10 +778,8 @@ body {
                     </div>
                 </div>
             </div>
-            <?php
-                /* ─── امانة RETURN event ─── */
-                elseif ($evType === 'amana_return'):
-            ?>
+
+            <?php /* ─── امانة RETURN event ─── */ elseif ($kind === 'amana_return'): ?>
             <div class="tl-item">
                 <div class="tl-dot-wrap">
                     <div class="tl-dot ev-amana-return">↩️</div>
@@ -737,10 +802,32 @@ body {
                     </div>
                 </div>
             </div>
-            <?php
-                /* ─── Normal transfer / created (unchanged) ─── */
-                else:
-            ?>
+
+            <?php /* ─── SALE RETURN event (car reverted back to stock) ─── */ elseif ($kind === 'sale_return'): ?>
+            <div class="tl-item">
+                <div class="tl-dot-wrap">
+                    <div class="tl-dot ev-amana-return">↩️</div>
+                </div>
+                <div class="tl-body">
+                    <div class="tl-title ev-amana-return"><?= $t[$lang]['sale_return_event'] ?></div>
+                    <div class="tl-date">📅 <?= date('d M Y · h:i A', strtotime($mv['created_at'])) ?></div>
+                    <div class="tl-facts">
+                        <div class="tl-fact">
+                            <span class="tl-fact-label"><?= $t[$lang]['branch'] ?></span>
+                            <span class="tl-fact-value"><?= htmlspecialchars($toLabel) ?></span>
+                        </div>
+                        <div class="tl-fact">
+                            <span class="tl-fact-label"><?= $t[$lang]['by'] ?></span>
+                            <span class="tl-fact-value"><?= htmlspecialchars($mv['moved_by']) ?></span>
+                        </div>
+                    </div>
+                    <?php if (!empty($mv['notes'])): ?>
+                    <div class="tl-note">💬 <?= htmlspecialchars($mv['notes']) ?></div>
+                    <?php endif; ?>
+                </div>
+            </div>
+
+            <?php /* ─── Normal transfer ─── */ else: ?>
             <div class="tl-item">
                 <div class="tl-dot-wrap">
                     <div class="tl-dot ev-transfer">🔄</div>
@@ -766,45 +853,8 @@ body {
                     <?php endif; ?>
                 </div>
             </div>
-            <?php endif; /* event_type branch */ ?>
+            <?php endif; /* event kind */ ?>
             <?php endforeach; ?>
-
-            <!-- Sold event -->
-            <?php if ($sold):
-                $soldBranchLabel = getBranchName($pdo, $sold['sold_branch'], $lang, $branchCache);
-            ?>
-            <div class="tl-item">
-                <div class="tl-dot-wrap">
-                    <div class="tl-dot ev-sold">💰</div>
-                </div>
-                <div class="tl-body">
-                    <div class="tl-title ev-sold"><?= $t[$lang]['sold_event'] ?></div>
-                    <div class="tl-date">📅 <?= date('d M Y · h:i A', strtotime($sold['sold_at'])) ?></div>
-                    <div class="tl-facts">
-                        <div class="tl-fact">
-                            <span class="tl-fact-label"><?= $t[$lang]['branch'] ?></span>
-                            <span class="tl-fact-value"><?= htmlspecialchars($soldBranchLabel) ?></span>
-                        </div>
-                        <div class="tl-fact">
-                            <span class="tl-fact-label"><?= $t[$lang]['by'] ?></span>
-                            <span class="tl-fact-value"><?= htmlspecialchars($sold['sold_by']) ?></span>
-                        </div>
-                        <?php if (!empty($sold['customer_name'])): ?>
-                        <div class="tl-fact">
-                            <span class="tl-fact-label"><?= $t[$lang]['customer'] ?></span>
-                            <span class="tl-fact-value"><?= htmlspecialchars($sold['customer_name']) ?></span>
-                        </div>
-                        <?php endif; ?>
-                        <?php if (!empty($sold['dealer_name'])): ?>
-                        <div class="tl-fact">
-                            <span class="tl-fact-label"><?= $t[$lang]['dealer'] ?></span>
-                            <span class="tl-fact-value"><?= htmlspecialchars($sold['dealer_name']) ?></span>
-                        </div>
-                        <?php endif; ?>
-                    </div>
-                </div>
-            </div>
-            <?php endif; ?>
 
         </div>
 
