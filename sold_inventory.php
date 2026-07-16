@@ -2,12 +2,29 @@
 
 require 'auth.php';
 require 'config.php';
+require 'sold_helpers.php';
 
 perm_require('page.sold_inventory');
 
 $lang = $_GET['lang'] ?? 'ar';
 if (!in_array($lang, ['ar', 'en'])) $lang = 'ar';
 $dir = $lang === 'ar' ? 'rtl' : 'ltr';
+
+// Revert-a-sale feature: make sure the columns exist, and only count/list
+// ACTIVE (non-reverted) sales everywhere on this page.
+$soldColOk    = ensure_sold_revert_columns($pdo);
+$activeSold   = sold_active_sql($soldColOk, 'sc');   // for aliased queries (sc.*)
+$activeSoldNA = sold_active_sql($soldColOk, '');     // for un-aliased queries
+
+// Per-card action permissions (admin only by default)
+$canRevertSale = can('sold.revert');
+$canEditSale   = can('sold.edit');
+
+// CSRF token for the revert / edit actions
+if (empty($_SESSION['csrf_token'])) {
+    $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+}
+$csrfToken = $_SESSION['csrf_token'];
 
 $t = [
     'ar' => [
@@ -61,6 +78,17 @@ $t = [
         'notes'            => 'ملاحظات',
         'showing'          => 'عرض',
         'results'          => 'نتيجة',
+
+        /* ── Revert / edit a sale ── */
+        'edit_buyer'      => 'تعديل المشتري',
+        'revert_stock'    => 'إرجاع للمخزون',
+        'revert_confirm'  => 'هل تريد إرجاع هذه السيارة إلى المخزون؟ سترجع كسيارة متاحة، ويظهر في رحلتها أنها بيعت ثم رجعت.',
+        'reverted_ok'     => '✓ تم إرجاع السيارة إلى المخزون بنجاح',
+        'edited_ok'       => '✓ تم تحديث بيانات المشتري',
+        'edit_sale_title' => 'تعديل بيانات المشتري',
+        'edit_sale_hint'  => 'عدّل اسم/هاتف العميل أو اسم التاجر الذي بيعت له السيارة فقط.',
+        'save'            => '💾 حفظ',
+        'cancel'          => 'إلغاء',
 
         /* ── Vault modal ── */
         'vault_entering'   => 'جارٍ الدخول إلى المنطقة الآمنة...',
@@ -127,6 +155,17 @@ $t = [
         'showing'          => 'Showing',
         'results'          => 'results',
 
+        /* ── Revert / edit a sale ── */
+        'edit_buyer'      => 'Edit buyer',
+        'revert_stock'    => 'Return to stock',
+        'revert_confirm'  => 'Return this car to inventory? It becomes available again, and its timeline will show it was sold then returned.',
+        'reverted_ok'     => '✓ Car returned to inventory',
+        'edited_ok'       => '✓ Buyer info updated',
+        'edit_sale_title' => 'Edit buyer info',
+        'edit_sale_hint'  => 'Edit only the customer name/phone or the dealer name the car was sold to.',
+        'save'            => '💾 Save',
+        'cancel'          => 'Cancel',
+
         /* ── Vault modal ── */
         'vault_entering'   => 'Entering secure vault...',
         'vault_title'      => '🔐 Most Secured Area of the System',
@@ -151,6 +190,7 @@ $fType   = trim($_GET['sale_type'] ?? '');
 
 $where  = [];
 $params = [];
+$where[] = $activeSold;   // exclude reverted sales from every filtered query
 if ($fFrom !== '')   { $where[] = "sc.sold_at >= ?"; $params[] = $fFrom . ' 00:00:00'; }
 if ($fTo !== '')     { $where[] = "sc.sold_at <= ?"; $params[] = $fTo   . ' 23:59:59'; }
 if ($fSeller !== '') { $where[] = "(COALESCE(NULLIF(sc.salesman,''), sc.sold_by) = ?)"; $params[] = $fSeller; }
@@ -167,9 +207,9 @@ function fq($pdo, $sql, $params) {
 
 /* ─── Stats ─── */
 $totalSold     = (int)fq($pdo, "SELECT COUNT(*) FROM sold_cars sc $wClause", $params)->fetchColumn();
-$soldMonth     = (int)$pdo->query("SELECT COUNT(*) FROM sold_cars WHERE MONTH(sold_at)=MONTH(CURDATE()) AND YEAR(sold_at)=YEAR(CURDATE())")->fetchColumn();
-$soldYear      = (int)$pdo->query("SELECT COUNT(*) FROM sold_cars WHERE YEAR(sold_at)=YEAR(CURDATE())")->fetchColumn();
-$soldPrevMonth = (int)$pdo->query("SELECT COUNT(*) FROM sold_cars WHERE MONTH(sold_at)=MONTH(DATE_SUB(CURDATE(),INTERVAL 1 MONTH)) AND YEAR(sold_at)=YEAR(DATE_SUB(CURDATE(),INTERVAL 1 MONTH))")->fetchColumn();
+$soldMonth     = (int)$pdo->query("SELECT COUNT(*) FROM sold_cars WHERE MONTH(sold_at)=MONTH(CURDATE()) AND YEAR(sold_at)=YEAR(CURDATE()) AND $activeSoldNA")->fetchColumn();
+$soldYear      = (int)$pdo->query("SELECT COUNT(*) FROM sold_cars WHERE YEAR(sold_at)=YEAR(CURDATE()) AND $activeSoldNA")->fetchColumn();
+$soldPrevMonth = (int)$pdo->query("SELECT COUNT(*) FROM sold_cars WHERE MONTH(sold_at)=MONTH(DATE_SUB(CURDATE(),INTERVAL 1 MONTH)) AND YEAR(sold_at)=YEAR(DATE_SUB(CURDATE(),INTERVAL 1 MONTH)) AND $activeSoldNA")->fetchColumn();
 $monthDiff     = $soldMonth - $soldPrevMonth;
 
 /* ─── Leaderboard ─── */
@@ -201,7 +241,7 @@ $topModels = fq($pdo, "
 $monthlyRaw = $pdo->query("
     SELECT DATE_FORMAT(sold_at,'%Y-%m') AS ym, COUNT(*) AS cnt
     FROM sold_cars
-    WHERE sold_at >= DATE_SUB(CURDATE(), INTERVAL 12 MONTH)
+    WHERE sold_at >= DATE_SUB(CURDATE(), INTERVAL 12 MONTH) AND $activeSoldNA
     GROUP BY ym ORDER BY ym ASC
 ")->fetchAll(PDO::FETCH_ASSOC);
 $months = [];
@@ -229,8 +269,8 @@ $soldCardsSQL = "
 $soldCards = fq($pdo, $soldCardsSQL, $params)->fetchAll(PDO::FETCH_ASSOC);
 
 /* ─── Filter dropdowns ─── */
-$allSellers  = $pdo->query("SELECT DISTINCT COALESCE(NULLIF(salesman,''), sold_by) AS s FROM sold_cars ORDER BY s")->fetchAll(PDO::FETCH_COLUMN);
-$allBranches = $pdo->query("SELECT DISTINCT sold_branch FROM sold_cars WHERE sold_branch IS NOT NULL AND sold_branch != '' ORDER BY sold_branch")->fetchAll(PDO::FETCH_COLUMN);
+$allSellers  = $pdo->query("SELECT DISTINCT COALESCE(NULLIF(salesman,''), sold_by) AS s FROM sold_cars WHERE $activeSoldNA ORDER BY s")->fetchAll(PDO::FETCH_COLUMN);
+$allBranches = $pdo->query("SELECT DISTINCT sold_branch FROM sold_cars WHERE sold_branch IS NOT NULL AND sold_branch != '' AND $activeSoldNA ORDER BY sold_branch")->fetchAll(PDO::FETCH_COLUMN);
 
 /* ─── JSON for charts ─── */
 $chartMonths      = json_encode(array_map(fn($m) => date('M y', strtotime($m.'-01')), array_keys($months)));
@@ -469,6 +509,37 @@ tbody tr:hover { background:rgba(34,197,94,.04); }
 .sold-date { font-size:11px; color:var(--muted); font-weight:600; }
 .sold-note { background:rgba(245,158,11,.08); border:1px solid rgba(245,158,11,.18); color:#fcd34d; border-radius:8px; padding:6px 10px; font-size:11.5px; font-weight:600; line-height:1.45; }
 
+/* ── Per-card sale actions (admin) ── */
+.sold-actions { display:flex; gap:8px; margin-top:4px; padding-top:10px; border-top:1px solid rgba(255,255,255,.05); }
+.sa-form { display:contents; }
+.sa-btn { flex:1; display:flex; align-items:center; justify-content:center; gap:5px; height:36px; border-radius:10px; font-size:12px; font-weight:800; font-family:inherit; cursor:pointer; border:1px solid transparent; transition:transform .15s, filter .15s; }
+.sa-btn:hover { transform:translateY(-2px); filter:brightness(1.12); }
+.sa-edit   { background:rgba(147,51,234,.14); color:#c084fc; border-color:rgba(147,51,234,.3); }
+.sa-revert { background:rgba(34,197,94,.14); color:#4ade80; border-color:rgba(34,197,94,.3); }
+
+/* ── Flash banner ── */
+.flash-banner { border-radius:14px; padding:13px 18px; font-weight:800; font-size:14px; margin-bottom:16px; background:rgba(34,197,94,.1); border:1px solid rgba(34,197,94,.3); color:#4ade80; }
+
+/* ── Edit-buyer modal ── */
+.se-overlay { position:fixed; inset:0; background:rgba(2,6,23,.8); backdrop-filter:blur(6px); z-index:2000; display:none; align-items:center; justify-content:center; padding:20px; }
+.se-overlay.open { display:flex; }
+.se-box { background:#0f172a; border:1px solid rgba(147,51,234,.3); border-radius:24px; padding:24px; width:100%; max-width:440px; box-shadow:0 32px 72px rgba(0,0,0,.6); }
+.se-head { display:flex; justify-content:space-between; align-items:center; margin-bottom:6px; }
+.se-head h3 { color:#c084fc; font-size:18px; }
+.se-x { background:none; border:none; color:#64748b; font-size:22px; cursor:pointer; line-height:1; }
+.se-x:hover { color:#ef4444; }
+.se-hint { color:#94a3b8; font-size:12.5px; line-height:1.6; margin-bottom:16px; }
+.se-car { background:rgba(147,51,234,.08); border:1px solid rgba(147,51,234,.22); color:#e2e8f0; border-radius:12px; padding:10px 14px; font-size:13px; font-weight:700; margin-bottom:16px; }
+.se-field { margin-bottom:14px; }
+.se-field label { display:block; font-size:12px; font-weight:700; color:#94a3b8; margin-bottom:6px; }
+.se-field input { width:100%; height:46px; border:1px solid rgba(255,255,255,.1); background:#0d1526; color:#f1f5f9; border-radius:12px; padding:0 14px; font-size:14px; font-family:inherit; outline:none; }
+.se-field input:focus { border-color:rgba(147,51,234,.55); box-shadow:0 0 0 3px rgba(147,51,234,.12); }
+.se-actions { display:flex; gap:10px; margin-top:18px; }
+.se-btn { flex:1; height:48px; border-radius:13px; font-weight:800; font-size:14px; cursor:pointer; border:none; font-family:inherit; transition:transform .15s; }
+.se-btn:hover { transform:translateY(-2px); }
+.se-save { background:linear-gradient(90deg,#9333ea,#2563eb); color:#fff; }
+.se-cancel { background:rgba(255,255,255,.06); color:#cbd5e1; border:1px solid rgba(255,255,255,.1); }
+
 @media(max-width:1200px) { .filter-grid { grid-template-columns:1fr 1fr 1fr; } }
 @media(max-width:900px) {
     .stats-row { grid-template-columns:1fr 1fr; }
@@ -519,6 +590,12 @@ tbody tr:hover { background:rgba(34,197,94,.04); }
 
 <div id="mainContent">
 <div class="wrap">
+
+<?php if (isset($_GET['reverted'])): ?>
+    <div class="flash-banner"><?= $t[$lang]['reverted_ok'] ?></div>
+<?php elseif (isset($_GET['edited'])): ?>
+    <div class="flash-banner"><?= $t[$lang]['edited_ok'] ?></div>
+<?php endif; ?>
 
 <div class="header">
     <div class="header-top">
@@ -775,6 +852,34 @@ tbody tr:hover { background:rgba(34,197,94,.04); }
                 <span class="sold-seller-tag">👤 <?= htmlspecialchars($seller) ?></span>
                 <span class="sold-date">🕐 <?= !empty($sc['sold_at']) ? date('d M Y', strtotime($sc['sold_at'])) : '—' ?></span>
             </div>
+
+            <?php if ($canEditSale || $canRevertSale): ?>
+            <div class="sold-actions">
+                <?php if ($canEditSale): ?>
+                <button type="button" class="sa-btn sa-edit"
+                    onclick='openEditSale(<?= json_encode([
+                        "id"    => (int)$sc["id"],
+                        "car"   => $carName,
+                        "type"  => $sc["sale_type"],
+                        "cname" => (string)($sc["customer_name"]  ?? ""),
+                        "cphone"=> (string)($sc["customer_phone"] ?? ""),
+                        "dname" => (string)($sc["dealer_name"]    ?? ""),
+                    ], JSON_UNESCAPED_UNICODE | JSON_HEX_APOS | JSON_HEX_QUOT) ?>)'>
+                    ✏️ <?= $t[$lang]['edit_buyer'] ?>
+                </button>
+                <?php endif; ?>
+                <?php if ($canRevertSale): ?>
+                <form method="POST" action="sale_action.php?lang=<?= $lang ?>" class="sa-form"
+                      onsubmit="return confirm(<?= htmlspecialchars(json_encode($t[$lang]['revert_confirm'], JSON_UNESCAPED_UNICODE), ENT_QUOTES) ?>);">
+                    <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken) ?>">
+                    <input type="hidden" name="action" value="revert">
+                    <input type="hidden" name="sold_id" value="<?= (int)$sc['id'] ?>">
+                    <input type="hidden" name="lang" value="<?= $lang ?>">
+                    <button type="submit" class="sa-btn sa-revert">↩️ <?= $t[$lang]['revert_stock'] ?></button>
+                </form>
+                <?php endif; ?>
+            </div>
+            <?php endif; ?>
         </div>
         <?php endforeach; ?>
     </div>
@@ -783,6 +888,62 @@ tbody tr:hover { background:rgba(34,197,94,.04); }
 
 </div><!-- /.wrap -->
 </div><!-- /#mainContent -->
+
+<?php if ($canEditSale): ?>
+<!-- Edit-buyer modal -->
+<div class="se-overlay" id="seOverlay" onclick="if(event.target===this)closeEditSale()">
+    <div class="se-box">
+        <div class="se-head">
+            <h3>✏️ <?= $t[$lang]['edit_sale_title'] ?></h3>
+            <button type="button" class="se-x" onclick="closeEditSale()">✕</button>
+        </div>
+        <p class="se-hint"><?= $t[$lang]['edit_sale_hint'] ?></p>
+        <div class="se-car" id="seCar">—</div>
+        <form method="POST" action="sale_action.php?lang=<?= $lang ?>">
+            <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken) ?>">
+            <input type="hidden" name="action" value="edit">
+            <input type="hidden" name="lang" value="<?= $lang ?>">
+            <input type="hidden" name="sold_id" id="seSoldId" value="">
+
+            <div class="se-field" id="seCustNameWrap">
+                <label>🧑 <?= $t[$lang]['cust_name'] ?></label>
+                <input type="text" name="customer_name" id="seCustName" autocomplete="off">
+            </div>
+            <div class="se-field" id="seCustPhoneWrap">
+                <label>📞 <?= $t[$lang]['cust_phone'] ?></label>
+                <input type="text" name="customer_phone" id="seCustPhone" autocomplete="off">
+            </div>
+            <div class="se-field" id="seDealerWrap">
+                <label>🏢 <?= $t[$lang]['dealer_name_lbl'] ?></label>
+                <input type="text" name="dealer_name" id="seDealer" autocomplete="off">
+            </div>
+
+            <div class="se-actions">
+                <button type="button" class="se-btn se-cancel" onclick="closeEditSale()"><?= $t[$lang]['cancel'] ?></button>
+                <button type="submit" class="se-btn se-save"><?= $t[$lang]['save'] ?></button>
+            </div>
+        </form>
+    </div>
+</div>
+<script>
+function openEditSale(d) {
+    document.getElementById('seSoldId').value    = d.id;
+    document.getElementById('seCar').textContent = '🚗 ' + d.car;
+    document.getElementById('seCustName').value  = d.cname  || '';
+    document.getElementById('seCustPhone').value = d.cphone || '';
+    document.getElementById('seDealer').value    = d.dname  || '';
+    // Show the fields relevant to the sale type, but keep all editable.
+    var isDealer = d.type === 'dealer';
+    document.getElementById('seCustNameWrap').style.display  = isDealer ? 'none' : '';
+    document.getElementById('seCustPhoneWrap').style.display = isDealer ? 'none' : '';
+    document.getElementById('seDealerWrap').style.display    = isDealer ? '' : 'none';
+    document.getElementById('seOverlay').classList.add('open');
+}
+function closeEditSale() {
+    document.getElementById('seOverlay').classList.remove('open');
+}
+</script>
+<?php endif; ?>
 
 <script>
 /* ── Vault Particle Canvas ── */

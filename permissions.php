@@ -117,6 +117,18 @@ function perm_catalog(): array
                     'dar' => 'عرض كل السيارات المباعة وتفاصيلها', 'den' => 'View all sold vehicles and their details',
                     'd' => [1, 0, 0],
                 ],
+                'sold.revert' => [
+                    'ar' => 'إرجاع سيارة مباعة للمخزون', 'en' => 'Return a sold car to inventory',
+                    'dar' => 'إلغاء البيع وإرجاع السيارة كسيارة متاحة في المخزون (يظهر في رحلة السيارة أنها بيعت ثم رجعت)',
+                    'den' => 'Cancel a sale and put the car back as available stock (the timeline shows it was sold then returned)',
+                    'd' => [1, 0, 0],
+                ],
+                'sold.edit' => [
+                    'ar' => 'تعديل بيانات المشتري في المبيعات', 'en' => 'Edit the buyer on a sale',
+                    'dar' => 'تعديل اسم/هاتف العميل أو اسم التاجر الذي بيعت له السيارة',
+                    'den' => 'Edit the customer name/phone or dealer name a car was sold to',
+                    'd' => [1, 0, 0],
+                ],
                 'page.sales_analytics' => [
                     'ar' => 'تحليلات المبيعات', 'en' => 'Sales Analytics page',
                     'dar' => 'إحصائيات وتحليلات المبيعات', 'den' => 'Sales statistics and analytics',
