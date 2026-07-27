@@ -151,7 +151,7 @@ $statusKey = $car['status'] ?? '';
 $statusMap = [
     'available'   => ['label' => $T['available'],   'cls' => 'st-green'],
     'sold'        => ['label' => $T['sold'],        'cls' => 'st-red'],
-    'reserved'    => ['label' => $T['reserved'],    'cls' => 'st-amber'],
+    'reserved'    => ['label' => $T['reserved'],    'cls' => 'st-gold'],
     'consignment' => ['label' => $T['consignment'], 'cls' => 'st-purple'],
 ];
 $status = $statusMap[$statusKey] ?? ['label' => htmlspecialchars((string)$statusKey), 'cls' => 'st-plain'];
@@ -183,7 +183,8 @@ function dealChip($val) {
 }
 
 $noteText = trim((string)($car['notes'] ?? ''));
-$isAvailable = $statusKey === 'available';
+// Reserved cars are still actionable (edit / transfer / sell) — just gold.
+$isAvailable = in_array($statusKey, ['available', 'reserved'], true);
 ?>
 <!DOCTYPE html>
 <html lang="<?= $lang ?>" dir="<?= $dir ?>">
@@ -225,6 +226,7 @@ body {
 .st-green  { background:rgba(34,197,94,.14);  color:#4ade80; border:1px solid rgba(34,197,94,.35); }
 .st-red    { background:rgba(239,68,68,.14);  color:#fca5a5; border:1px solid rgba(239,68,68,.35); }
 .st-amber  { background:rgba(245,158,11,.14); color:#fbbf24; border:1px solid rgba(245,158,11,.35); }
+.st-gold   { background:linear-gradient(135deg,rgba(250,204,21,.22),rgba(234,179,8,.14)); color:#facc15; border:1px solid rgba(250,204,21,.5); box-shadow:0 0 12px rgba(250,204,21,.22); }
 .st-purple { background:rgba(147,51,234,.14); color:#c084fc; border:1px solid rgba(147,51,234,.35); }
 .st-plain  { background:rgba(255,255,255,.07); color:var(--text); border:1px solid var(--border); }
 

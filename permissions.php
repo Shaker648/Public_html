@@ -319,6 +319,18 @@ function perm_catalog(): array
                     'den' => 'See consignment cars and events in the timeline page',
                     'd' => [1, 1, 0],
                 ],
+                'reserve.create' => [
+                    'ar' => 'حجز السيارة', 'en' => 'Reserve a car',
+                    'dar' => 'زر "حجز السيارة" على كارت السيارة — يحجزها بضغطة واحدة بدون إدخال أي بيانات، وتظهر ذهبية في كل الصفحات',
+                    'den' => 'The "Reserve" button on a car card — one click, no data entry; the car turns gold everywhere',
+                    'd' => [1, 1, 0],
+                ],
+                'reserve.cancel' => [
+                    'ar' => 'إلغاء حجز السيارة', 'en' => 'Cancel a reservation',
+                    'dar' => 'زر "إلغاء الحجز" — يرجّع السيارة المحجوزة لحالتها العادية',
+                    'den' => 'The "Cancel reservation" button — puts a reserved car back to normal',
+                    'd' => [1, 1, 0],
+                ],
                 'amana.manage' => [
                     'ar' => 'إدارة الأمانة عند البيع', 'en' => 'Manage amana in sales',
                     'dar' => 'إخراج سيارة أمانة أو إغلاقها كبيع من صفحة البيع',

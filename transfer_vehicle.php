@@ -78,7 +78,7 @@ $cars = $pdo->query("
     FROM cars
     LEFT JOIN colors   ON cars.color  = colors.color_en
     LEFT JOIN branches ON cars.branch = branches.name
-    WHERE cars.status = 'available'
+    WHERE cars.status IN ('available','reserved')
     ORDER BY cars.brand, cars.model
 ")->fetchAll(PDO::FETCH_ASSOC);
 
@@ -135,7 +135,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     FROM cars
                     LEFT JOIN colors   ON cars.color  = colors.color_en
                     LEFT JOIN branches ON cars.branch = branches.name
-                    WHERE cars.status = 'available'
+                    WHERE cars.status IN ('available','reserved')
                     ORDER BY cars.brand, cars.model
                 ")->fetchAll(PDO::FETCH_ASSOC);
             } else {
