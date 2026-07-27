@@ -501,7 +501,7 @@ function fetchStock($pdo, $brand, $model, $color = null, $branch = null, $year =
     $sql = "SELECT cars.trim_name, cars.car_year, cars.color, cars.chassis, cars.branch, cars.created_at,
                    branches.name_ar, branches.name_en
             FROM cars LEFT JOIN branches ON cars.branch = branches.name
-            WHERE cars.status IN ('available','consignment')";
+            WHERE cars.status IN ('available','reserved','consignment')";
     $p = [];
     if ($brand)  { $sql .= " AND cars.brand = ?";  $p[] = $brand; }
     if ($model)  { $sql .= " AND cars.model = ?";  $p[] = $model; }
@@ -740,7 +740,7 @@ function buildDataPack($pdo, $lang, $isManager, $ents) {
     if (!$models) {
         /* global snapshot */
         $rows = $pdo->query("SELECT brand, model, COUNT(*) n FROM cars
-                             WHERE status IN ('available','consignment')
+                             WHERE status IN ('available','reserved','consignment')
                              GROUP BY brand, model ORDER BY n DESC LIMIT 30")->fetchAll(PDO::FETCH_ASSOC);
         $out[] = "AVAILABLE STOCK COUNTS:";
         foreach ($rows as $r) $out[] = "- {$r['brand']} {$r['model']}: {$r['n']}";
@@ -932,7 +932,7 @@ if ($text !== '' && !$tap) {
 
     /* count */
     if ($intent === 'count') {
-        $sql = "SELECT COUNT(*) FROM cars WHERE status IN ('available','consignment')";
+        $sql = "SELECT COUNT(*) FROM cars WHERE status IN ('available','reserved','consignment')";
         $p = []; $scope = t('in total', 'إجمالاً', $lang);
         if ($model)  { $sql .= " AND model = ?";  $p[] = $model;  $scope = "{$brand} {$model}"; }
         elseif ($brand) { $sql .= " AND brand = ?"; $p[] = $brand; $scope = $brand; }
@@ -946,7 +946,7 @@ if ($text !== '' && !$tap) {
 
     /* cheapest / priciest (among models with available stock) */
     if ($intent === 'cheapest' || $intent === 'priciest') {
-        $sqlBM = "SELECT DISTINCT c.brand, c.model FROM cars c WHERE c.status IN ('available','consignment')";
+        $sqlBM = "SELECT DISTINCT c.brand, c.model FROM cars c WHERE c.status IN ('available','reserved','consignment')";
         $pBM = [];
         if ($brand) { $sqlBM .= " AND c.brand = ?"; $pBM[] = $brand; }
         $sqlBM .= " LIMIT 60";
@@ -979,7 +979,7 @@ if ($text !== '' && !$tap) {
                     menuOptions($isManager, $lang));
         }
         $sql = "SELECT brand, model, trim_name, car_year, color, chassis, branch, created_at
-                FROM cars WHERE status IN ('available','consignment')";
+                FROM cars WHERE status IN ('available','reserved','consignment')";
         $p = [];
         if ($model) { $sql .= " AND model = ?"; $p[] = $model; }
         elseif ($brand) { $sql .= " AND brand = ?"; $p[] = $brand; }
@@ -1012,7 +1012,7 @@ if ($text !== '' && !$tap) {
     /* brand-only stock question → brand summary */
     if ($brand && in_array($intent, ['stock', null], true) && !$model) {
         $st = $pdo->prepare("SELECT model, COUNT(*) n FROM cars
-                             WHERE brand = ? AND status IN ('available','consignment')
+                             WHERE brand = ? AND status IN ('available','reserved','consignment')
                              GROUP BY model ORDER BY n DESC");
         $st->execute([$brand]);
         $rows = $st->fetchAll(PDO::FETCH_ASSOC);
@@ -1178,7 +1178,7 @@ if ($intent === 'incoming') {
 /* STOCK — color picker then result */
 if (empty($ctx['color'])) {
     $stmt = $pdo->prepare("SELECT DISTINCT color FROM cars
-                            WHERE brand = ? AND model = ? AND status IN ('available','consignment')");
+                            WHERE brand = ? AND model = ? AND status IN ('available','reserved','consignment')");
     $stmt->execute([$brand, $model]);
     $colors = $stmt->fetchAll(PDO::FETCH_COLUMN);
 

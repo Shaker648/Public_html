@@ -137,7 +137,7 @@ $cars = $pdo->query("
     FROM cars
     LEFT JOIN colors   ON cars.color  = colors.color_en
     LEFT JOIN branches ON cars.branch = branches.name
-    WHERE cars.status = 'available'
+    WHERE cars.status IN ('available','reserved')
     ORDER BY cars.brand, cars.model
 ")->fetchAll(PDO::FETCH_ASSOC);
 
@@ -221,10 +221,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     // Accept an available car normally, OR a consignment car when an
     // admin/manager is closing the امانة as a sale.
+    // Reserved cars sell exactly like available ones (تم البيع on a gold card).
     if ($canAmana) {
-        $stmt = $pdo->prepare("SELECT * FROM cars WHERE id = ? AND status IN ('available','consignment') LIMIT 1");
+        $stmt = $pdo->prepare("SELECT * FROM cars WHERE id = ? AND status IN ('available','reserved','consignment') LIMIT 1");
     } else {
-        $stmt = $pdo->prepare("SELECT * FROM cars WHERE id = ? AND status = 'available' LIMIT 1");
+        $stmt = $pdo->prepare("SELECT * FROM cars WHERE id = ? AND status IN ('available','reserved') LIMIT 1");
     }
     $stmt->execute([$car_id]);
     $car = $stmt->fetch(PDO::FETCH_ASSOC);
@@ -305,7 +306,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 FROM cars
                 LEFT JOIN colors   ON cars.color  = colors.color_en
                 LEFT JOIN branches ON cars.branch = branches.name
-                WHERE cars.status = 'available'
+                WHERE cars.status IN ('available','reserved')
                 ORDER BY cars.brand, cars.model
             ")->fetchAll(PDO::FETCH_ASSOC);
 

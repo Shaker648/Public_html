@@ -36,6 +36,8 @@ $t = [
         'transferred'      => 'نقل السيارة',
         'sold_event'       => 'بيع السيارة',
         'sale_return_event'=> 'إرجاع من البيع (رجعت للمخزون)',
+        'reserved_event'   => 'حجز السيارة',
+        'reserve_cancel_event' => 'إلغاء الحجز',
         'sold_reverted_tag'=> '↩️ أُرجعت لاحقاً للمخزون',
         'amana_out_event'  => 'خروج أمانة',
         'amana_return_event' => 'إرجاع من الأمانة',
@@ -76,6 +78,8 @@ $t = [
         'transferred'      => 'Vehicle Transferred',
         'sold_event'       => 'Vehicle Sold',
         'sale_return_event'=> 'Returned from Sale (back in stock)',
+        'reserved_event'   => 'Car Reserved',
+        'reserve_cancel_event' => 'Reservation Cancelled',
         'sold_reverted_tag'=> '↩️ Later returned to stock',
         'amana_out_event'  => 'Out on Consignment',
         'amana_return_event' => 'Returned from Consignment',
@@ -207,7 +211,7 @@ $routeStops[count($routeStops)-1]['current'] = true;
 $statusConfig = [
     'available' => ['color' => '#22c55e', 'bg' => 'rgba(34,197,94,.12)',  'icon' => '✅'],
     'sold'      => ['color' => '#ef4444', 'bg' => 'rgba(239,68,68,.12)',  'icon' => '💰'],
-    'reserved'  => ['color' => '#f59e0b', 'bg' => 'rgba(245,158,11,.12)', 'icon' => '🔒'],
+    'reserved'  => ['color' => '#facc15', 'bg' => 'rgba(250,204,21,.14)', 'icon' => '🔒'],
     'consignment' => ['color' => '#f59e0b', 'bg' => 'rgba(245,158,11,.12)', 'icon' => '🔶'],
 ];
 $sc = $statusConfig[$car['status']] ?? $statusConfig['available'];
@@ -486,6 +490,8 @@ body {
 .tl-dot.ev-amana { background:rgba(245,158,11,.15); border-color:#f59e0b; }
 .tl-dot.ev-amana-return { background:rgba(34,197,94,.15); border-color:#22c55e; }
 .tl-dot.ev-sold     { background:rgba(239,68,68,.15); border-color:var(--red); }
+.tl-dot.ev-reserved { background:rgba(250,204,21,.16); border-color:#facc15; }
+.tl-dot.ev-reserve-cancel { background:rgba(250,204,21,.10); border-color:rgba(250,204,21,.55); }
 
 .tl-body {
     flex:1;
@@ -504,6 +510,8 @@ body {
 .tl-title.ev-amana { color:#f59e0b; }
 .tl-title.ev-amana-return { color:#22c55e; }
 .tl-title.ev-sold     { color:var(--red); }
+.tl-title.ev-reserved { color:#facc15; }
+.tl-title.ev-reserve-cancel { color:#fde68a; }
 
 .tl-date { font-size:12px; color:var(--muted); font-weight:600; margin-bottom:10px; }
 
@@ -824,6 +832,44 @@ body {
                     <?php if (!empty($mv['notes'])): ?>
                     <div class="tl-note">💬 <?= htmlspecialchars($mv['notes']) ?></div>
                     <?php endif; ?>
+                </div>
+            </div>
+
+            <?php /* ─── حجز / RESERVED event ─── */ elseif ($kind === 'reserved'): ?>
+            <div class="tl-item">
+                <div class="tl-dot-wrap">
+                    <div class="tl-dot ev-reserved">🔒</div>
+                </div>
+                <div class="tl-body">
+                    <div class="tl-title ev-reserved"><?= $t[$lang]['reserved_event'] ?></div>
+                    <div class="tl-date">📅 <?= date('d M Y · h:i A', strtotime($mv['created_at'])) ?></div>
+                    <div class="tl-facts">
+                        <div class="tl-fact">
+                            <span class="tl-fact-label"><?= $t[$lang]['branch'] ?></span>
+                            <span class="tl-fact-value"><?= htmlspecialchars($toLabel) ?></span>
+                        </div>
+                        <div class="tl-fact">
+                            <span class="tl-fact-label"><?= $t[$lang]['by'] ?></span>
+                            <span class="tl-fact-value"><?= htmlspecialchars($mv['moved_by']) ?></span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <?php /* ─── إلغاء الحجز / RESERVATION CANCELLED event ─── */ elseif ($kind === 'reserve_cancel'): ?>
+            <div class="tl-item">
+                <div class="tl-dot-wrap">
+                    <div class="tl-dot ev-reserve-cancel">↩️</div>
+                </div>
+                <div class="tl-body">
+                    <div class="tl-title ev-reserve-cancel"><?= $t[$lang]['reserve_cancel_event'] ?></div>
+                    <div class="tl-date">📅 <?= date('d M Y · h:i A', strtotime($mv['created_at'])) ?></div>
+                    <div class="tl-facts">
+                        <div class="tl-fact">
+                            <span class="tl-fact-label"><?= $t[$lang]['by'] ?></span>
+                            <span class="tl-fact-value"><?= htmlspecialchars($mv['moved_by']) ?></span>
+                        </div>
+                    </div>
                 </div>
             </div>
 

@@ -2,6 +2,7 @@
 
 require 'auth.php';
 require 'config.php';
+require 'reserve_helpers.php';
 
 $lang = $_GET['lang'] ?? 'ar';
 
@@ -75,6 +76,17 @@ $t = [
         'wa_no_price'      => 'السعر غير محدد',
         'wa_price_label'   => 'السعر',
         'wa_trade_label'   => 'سعر التاجر',
+        'status_reserved'  => 'محجوزة',
+        'reserve_btn'      => 'حجز السيارة',
+        'unreserve_btn'    => 'إلغاء الحجز',
+        'sold_btn'         => 'تم البيع',
+        'reserved_by'      => 'حجزها',
+        'reserved_at'      => 'تاريخ الحجز',
+        'reserved_count'   => 'المحجوزة',
+        'flash_reserved'   => '✓ تم حجز السيارة — ظهرت باللون الذهبي في كل الصفحات',
+        'flash_unreserved' => '✓ تم إلغاء الحجز — رجعت السيارة لحالتها العادية',
+        'flash_res_err'    => '⚠️ تعذّر تنفيذ العملية، حاول مرة أخرى',
+        'unreserve_confirm'=> 'إلغاء حجز هذه السيارة؟',
     ],
 
     'en' => [
@@ -141,6 +153,17 @@ $t = [
         'wa_no_price'      => 'Price not set',
         'wa_price_label'   => 'Price',
         'wa_trade_label'   => 'Trade Price',
+        'status_reserved'  => 'Reserved',
+        'reserve_btn'      => 'Reserve',
+        'unreserve_btn'    => 'Cancel reservation',
+        'sold_btn'         => 'Mark Sold',
+        'reserved_by'      => 'Reserved by',
+        'reserved_at'      => 'Reserved on',
+        'reserved_count'   => 'Reserved',
+        'flash_reserved'   => '✓ Car reserved — it now shows in gold on every page',
+        'flash_unreserved' => '✓ Reservation cancelled — the car is back to normal',
+        'flash_res_err'    => '⚠️ Could not complete the action, please try again',
+        'unreserve_confirm'=> 'Cancel this car\'s reservation?',
     ],
 
 ];
@@ -205,13 +228,22 @@ $canBtnSell      = can('dash.btn_sell');
 $canWaCustomer   = can('dash.wa_customer');
 $canWaCustPrice  = can('dash.wa_customer_price');
 $canWaDealer     = can('dash.wa_dealer');
+$canReserve      = can('reserve.create');       // حجز السيارة
+$canUnreserve    = can('reserve.cancel');       // إلغاء الحجز
+
+// CSRF token for the one-click reserve / cancel buttons
+if (empty($_SESSION['csrf_token'])) {
+    $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+}
+$csrfToken = $_SESSION['csrf_token'];
 
 // ─── Build query with pricing join ───────────────────────────────────────────
 $conditions = [];
 $params     = [];
 
 // Which car statuses is this user allowed to see on the dashboard?
-$statuses = ["'available'"];
+// Reserved cars stay in stock for EVERYONE — they are just painted gold.
+$statuses = ["'available'", "'reserved'"];
 if ($canSeeAmana)    $statuses[] = "'consignment'";
 if ($canSoldSection) $statuses[] = "'sold'";
 $conditions[] = "cars.status IN (" . implode(',', $statuses) . ")";
@@ -285,6 +317,13 @@ foreach ($cars as $car) {
     }
 }
 
+/* ─── Who reserved which car (for the gold cards) ─── */
+$reservedIds  = [];
+foreach ($availableCarsList as $c) {
+    if (($c['status'] ?? '') === 'reserved') $reservedIds[] = $c['id'];
+}
+$reserveInfo = reservation_info($pdo, $reservedIds);
+
 /* ─── Pull active امانة details (dealer, since-when, who) for the cards ─── */
 $amanaInfo = [];
 if (!empty($amanaCarsList)) {
@@ -311,6 +350,7 @@ $totalCars     = (int) $pdo->query("SELECT COUNT(*) FROM cars")->fetchColumn();
 $availableCars = (int) $pdo->query("SELECT COUNT(*) FROM cars WHERE status='available'")->fetchColumn();
 $soldCars      = (int) $pdo->query("SELECT COUNT(*) FROM cars WHERE status='sold'")->fetchColumn();
 $amanaCars     = (int) $pdo->query("SELECT COUNT(*) FROM cars WHERE status='consignment'")->fetchColumn();
+$reservedCars  = (int) $pdo->query("SELECT COUNT(*) FROM cars WHERE status='reserved'")->fetchColumn();
 
 function fmtPrice($p) {
     if ($p === null || $p === '') return '';
@@ -494,6 +534,52 @@ function fmtPrice($p) {
         .status-available { background:rgba(34,197,94,.15); color:#22c55e; border:1px solid rgba(34,197,94,.25); }
         .status-sold { background:rgba(239,68,68,.15); color:#ef4444; border:1px solid rgba(239,68,68,.25); }
         .status-amana { background:rgba(245,158,11,.15); color:#f59e0b; border:1px solid rgba(245,158,11,.3); }
+
+        /* ── 🔒 محجوزة / Reserved — the golden card ── */
+        .status-reserved {
+            background:linear-gradient(135deg,rgba(250,204,21,.22),rgba(234,179,8,.16));
+            color:#facc15; border:1px solid rgba(250,204,21,.5);
+            box-shadow:0 0 12px rgba(250,204,21,.22);
+        }
+        .vehicle-card.reserved-card {
+            border-color:rgba(250,204,21,.55);
+            background:
+                linear-gradient(135deg,rgba(250,204,21,.07),rgba(234,179,8,.03)),
+                rgba(15,23,42,.88);
+            box-shadow:0 0 0 1px rgba(250,204,21,.14), 0 10px 34px rgba(234,179,8,.14);
+            position:relative; overflow:hidden;
+        }
+        /* soft golden sheen sweeping across a reserved card */
+        .vehicle-card.reserved-card::after {
+            content:''; position:absolute; inset:0; pointer-events:none;
+            background:linear-gradient(120deg,transparent 35%,rgba(250,204,21,.10) 50%,transparent 65%);
+            transform:translateX(-120%);
+            animation:goldSweep 5.5s ease-in-out infinite;
+        }
+        @keyframes goldSweep { 0%,100% { transform:translateX(-120%); } 50% { transform:translateX(120%); } }
+        .vehicle-card.reserved-card:hover {
+            border-color:rgba(250,204,21,.85);
+            box-shadow:0 0 0 1px rgba(250,204,21,.28), 0 16px 46px rgba(234,179,8,.24);
+        }
+        .vehicle-card.reserved-card .vehicle-title { color:#fde68a; }
+        .reserved-meta {
+            display:flex; align-items:center; gap:8px; flex-wrap:wrap;
+            background:rgba(250,204,21,.08); border:1px solid rgba(250,204,21,.26);
+            border-radius:12px; padding:8px 12px; font-size:12px; font-weight:700; color:#fde68a;
+        }
+        .btn-reserve   { background:linear-gradient(135deg,#eab308,#ca8a04); color:#1c1400; }
+        .btn-unreserve { background:rgba(250,204,21,.14); color:#facc15; border:1px solid rgba(250,204,21,.4) !important; }
+        .btn-soldnow   { background:linear-gradient(135deg,#dc2626,#b91c1c); }
+        .reserve-form  { display:contents; }
+        .stat-reserved { color:#facc15; }
+
+        /* flash banner for reserve / cancel */
+        .res-flash {
+            border-radius:16px; padding:13px 18px; margin-bottom:16px;
+            font-weight:700; font-size:14px;
+            background:rgba(250,204,21,.1); border:1px solid rgba(250,204,21,.35); color:#fde68a;
+        }
+        .res-flash.err { background:rgba(239,68,68,.1); border-color:rgba(239,68,68,.35); color:#fca5a5; }
 
         /* Compact strip styles below */
 
@@ -791,6 +877,14 @@ function fmtPrice($p) {
         </div>
     </div>
 
+    <?php if (isset($_GET['reserved'])): ?>
+        <div class="res-flash">🔒 <?= $t[$lang]['flash_reserved'] ?></div>
+    <?php elseif (isset($_GET['unreserved'])): ?>
+        <div class="res-flash"><?= $t[$lang]['flash_unreserved'] ?></div>
+    <?php elseif (isset($_GET['res_err'])): ?>
+        <div class="res-flash err"><?= $t[$lang]['flash_res_err'] ?></div>
+    <?php endif; ?>
+
     <?php if (isset($_GET['denied'])): ?>
     <!-- Shown when a page redirects here because a permission is missing -->
     <div style="background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.35);color:#fca5a5;
@@ -839,6 +933,12 @@ function fmtPrice($p) {
             <div class="stat-title">✅ <?= $t[$lang]['available'] ?></div>
             <div class="stat-number stat-green"><?= $availableCars ?></div>
         </div>
+        <?php if ($reservedCars > 0): ?>
+        <div class="stat-card">
+            <div class="stat-title">🔒 <?= $t[$lang]['reserved_count'] ?></div>
+            <div class="stat-number stat-reserved"><?= $reservedCars ?></div>
+        </div>
+        <?php endif; ?>
         <?php if ($canStatAmana && $amanaCars > 0): ?>
         <div class="stat-card">
             <div class="stat-title">🔶 <?= $t[$lang]['status_amana'] ?></div>
@@ -923,6 +1023,8 @@ function fmtPrice($p) {
         <?php endif; ?>
 
         <?php foreach ($availableCarsList as $car):
+            $isReserved = (($car['status'] ?? '') === 'reserved');
+            $resInfo    = $isReserved ? ($reserveInfo[$car['id']] ?? null) : null;
             $displayColor  = $lang === 'ar' ? ($car['color_ar']  ?: $car['color'])  : ($car['color_en']  ?: $car['color']);
             $displayBranch = $lang === 'ar' ? ($car['name_ar']   ?: $car['branch']) : ($car['name_en']   ?: $car['branch']);
             $noteText      = trim((string)($car['notes'] ?? ''));
@@ -943,7 +1045,7 @@ function fmtPrice($p) {
                 $displayBranch.' '.($car['name_en'] ?? '').' '.($car['name_ar'] ?? '').' '.$car['chassis']
             ));
         ?>
-            <div class="vehicle-card" data-search="<?= htmlspecialchars($searchBlob) ?>">
+            <div class="vehicle-card <?= $isReserved ? 'reserved-card' : '' ?>" data-search="<?= htmlspecialchars($searchBlob) ?>">
 
                 <div class="vehicle-header">
                     <div class="qr-sticker" title="QR"
@@ -951,11 +1053,22 @@ function fmtPrice($p) {
                          data-name="<?= htmlspecialchars($car['brand'].' '.$car['model'], ENT_QUOTES) ?>"
                          data-id="<?= (int)$car['id'] ?>"><div class="qs qs-wait"></div></div>
                     <div>
-                        <div class="vehicle-title">🚗 <?= htmlspecialchars($car['brand']) ?> <?= htmlspecialchars($car['model']) ?></div>
+                        <div class="vehicle-title"><?= $isReserved ? '🔒' : '🚗' ?> <?= htmlspecialchars($car['brand']) ?> <?= htmlspecialchars($car['model']) ?></div>
                         <div class="vehicle-year-badge">📅 <?= htmlspecialchars($car['car_year']) ?></div>
                     </div>
-                    <div class="status status-available"><?= $t[$lang]['status_available'] ?></div>
+                    <?php if ($isReserved): ?>
+                        <div class="status status-reserved">🔒 <?= $t[$lang]['status_reserved'] ?></div>
+                    <?php else: ?>
+                        <div class="status status-available"><?= $t[$lang]['status_available'] ?></div>
+                    <?php endif; ?>
                 </div>
+
+                <?php if ($isReserved && $resInfo): ?>
+                <div class="reserved-meta">
+                    <span>👤 <?= $t[$lang]['reserved_by'] ?>: <?= htmlspecialchars($resInfo['by']) ?></span>
+                    <span>📅 <?= date('d M Y', strtotime($resInfo['at'])) ?></span>
+                </div>
+                <?php endif; ?>
 
                 <div class="vehicle-info">
                     <div class="info-row">
@@ -1006,11 +1119,36 @@ function fmtPrice($p) {
                         <div class="btn btn-disabled">🔄 <?= $t[$lang]['transfer'] ?></div>
                     <?php endif; ?>
                     <?php if ($canBtnSell): ?>
-                        <a href="sold_vehicle.php?id=<?= $car['id'] ?>&lang=<?= $lang ?>" class="btn btn-sell">
-                            💰 <?= $t[$lang]['sell'] ?>
+                        <?php /* On a reserved car the sell button reads "تم البيع" and opens the
+                                normal sale page — the sale itself follows the exact same steps. */ ?>
+                        <a href="sold_vehicle.php?id=<?= $car['id'] ?>&lang=<?= $lang ?>"
+                           class="btn <?= $isReserved ? 'btn-soldnow' : 'btn-sell' ?>">
+                            💰 <?= $isReserved ? $t[$lang]['sold_btn'] : $t[$lang]['sell'] ?>
                         </a>
                     <?php else: ?>
-                        <div class="btn btn-disabled">💰 <?= $t[$lang]['sell'] ?></div>
+                        <div class="btn btn-disabled">💰 <?= $isReserved ? $t[$lang]['sold_btn'] : $t[$lang]['sell'] ?></div>
+                    <?php endif; ?>
+
+                    <?php /* ── حجز السيارة / إلغاء الحجز — one click, no data entry ── */ ?>
+                    <?php if (!$isReserved && $canReserve): ?>
+                        <form method="POST" action="reserve_action.php" class="reserve-form">
+                            <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken) ?>">
+                            <input type="hidden" name="action" value="reserve">
+                            <input type="hidden" name="car_id" value="<?= (int)$car['id'] ?>">
+                            <input type="hidden" name="lang" value="<?= $lang ?>">
+                            <input type="hidden" name="back" value="dashboard.php">
+                            <button type="submit" class="btn btn-reserve">🔒 <?= $t[$lang]['reserve_btn'] ?></button>
+                        </form>
+                    <?php elseif ($isReserved && $canUnreserve): ?>
+                        <form method="POST" action="reserve_action.php" class="reserve-form"
+                              onsubmit="return confirm(<?= htmlspecialchars(json_encode($t[$lang]['unreserve_confirm'], JSON_UNESCAPED_UNICODE), ENT_QUOTES) ?>);">
+                            <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken) ?>">
+                            <input type="hidden" name="action" value="cancel">
+                            <input type="hidden" name="car_id" value="<?= (int)$car['id'] ?>">
+                            <input type="hidden" name="lang" value="<?= $lang ?>">
+                            <input type="hidden" name="back" value="dashboard.php">
+                            <button type="submit" class="btn btn-unreserve">↩️ <?= $t[$lang]['unreserve_btn'] ?></button>
+                        </form>
                     <?php endif; ?>
                 </div>
 
