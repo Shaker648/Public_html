@@ -13,12 +13,17 @@
  *   installment_bank_requests  — one row per bank, with its own % and status
  */
 
-/** The banks / finance companies a request can be sent to. */
-function inst_banks(): array
+/**
+ * The banks the system ships with. These are only used to SEED the database
+ * the very first time — after that the list lives in `installment_bank_list`
+ * and is managed from the page itself (add / delete, Arabic + English).
+ */
+function inst_default_banks(): array
 {
     return [
         'abk'      => ['ar' => 'الأهلي الكويتي',                  'en' => 'Al Ahli Kuwaiti (ABK)'],
         'nbk'      => ['ar' => 'الوطني الكويتي',                   'en' => 'Kuwaiti National (NBK)'],
+        'enbd'     => ['ar' => 'الإمارات دبي الوطني',              'en' => 'Emirates NBD'],
         'egbank'   => ['ar' => 'إيجي بنك',                        'en' => 'EG Bank'],
         'misr'     => ['ar' => 'بنك مصر',                         'en' => 'Banque Misr'],
         'cairo'    => ['ar' => 'بنك القاهرة',                     'en' => 'Banque du Caire'],
@@ -33,11 +38,119 @@ function inst_banks(): array
     ];
 }
 
+/**
+ * Create the bank table and seed it with the defaults on first use.
+ * Returns false if the table can't be prepared (callers then fall back to the
+ * built-in list, so the page never breaks).
+ */
+function inst_ensure_bank_table(PDO $pdo): bool
+{
+    static $ok = null;
+    if ($ok !== null) return $ok;
+
+    try {
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS installment_bank_list (
+                id         INT AUTO_INCREMENT PRIMARY KEY,
+                bank_key   VARCHAR(50)  NOT NULL UNIQUE,
+                name_ar    VARCHAR(255) NOT NULL,
+                name_en    VARCHAR(255) NOT NULL,
+                sort_order INT          NOT NULL DEFAULT 0,
+                active     TINYINT(1)   NOT NULL DEFAULT 1,
+                created_at TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        ");
+
+        // Seed once — only when the table is completely empty.
+        $count = (int)$pdo->query("SELECT COUNT(*) FROM installment_bank_list")->fetchColumn();
+        if ($count === 0) {
+            $ins = $pdo->prepare("
+                INSERT INTO installment_bank_list (bank_key, name_ar, name_en, sort_order, active)
+                VALUES (?, ?, ?, ?, 1)
+            ");
+            $i = 10;
+            foreach (inst_default_banks() as $key => $n) {
+                $ins->execute([$key, $n['ar'], $n['en'], $i]);
+                $i += 10;
+            }
+        }
+
+        return $ok = true;
+    } catch (Throwable $e) {
+        error_log('installment bank list failed: ' . $e->getMessage());
+        return $ok = false;
+    }
+}
+
+/**
+ * The banks a request can be sent to, read from the database.
+ *
+ * @param bool $includeInactive  true = also return removed banks (needed so old
+ *                               requests still show the bank name they used).
+ * @return array [bank_key => ['ar'=>…, 'en'=>…, 'active'=>bool]]
+ */
+function inst_banks(bool $includeInactive = false): array
+{
+    global $pdo;
+    static $cache = [];
+
+    $ck = $includeInactive ? 'all' : 'active';
+    if (isset($cache[$ck])) return $cache[$ck];
+
+    $out = [];
+    if (isset($pdo) && inst_ensure_bank_table($pdo)) {
+        try {
+            $sql = "SELECT bank_key, name_ar, name_en, active FROM installment_bank_list"
+                 . ($includeInactive ? '' : ' WHERE active = 1')
+                 . " ORDER BY sort_order ASC, id ASC";
+            foreach ($pdo->query($sql)->fetchAll(PDO::FETCH_ASSOC) as $r) {
+                $out[$r['bank_key']] = [
+                    'ar'     => $r['name_ar'],
+                    'en'     => $r['name_en'],
+                    'active' => (bool)$r['active'],
+                ];
+            }
+        } catch (Throwable $e) {
+            error_log('inst_banks read failed: ' . $e->getMessage());
+        }
+    }
+
+    // Database unreachable / empty → fall back to the built-in list.
+    if (empty($out)) {
+        foreach (inst_default_banks() as $key => $n) {
+            $out[$key] = ['ar' => $n['ar'], 'en' => $n['en'], 'active' => true];
+        }
+    }
+
+    return $cache[$ck] = $out;
+}
+
 /** Bank display name in the current language (falls back to the raw key). */
 function inst_bank_name(string $key, string $lang): string
 {
-    $banks = inst_banks();
+    // Include removed banks so historical requests keep showing a real name.
+    $banks = inst_banks(true);
     return $banks[$key][$lang] ?? $banks[$key]['ar'] ?? $key;
+}
+
+/** Build a unique, URL-safe key for a newly added bank. */
+function inst_make_bank_key(PDO $pdo, string $nameEn, string $nameAr): string
+{
+    $base = strtolower(trim($nameEn));
+    $base = preg_replace('/[^a-z0-9]+/', '_', $base);
+    $base = trim((string)$base, '_');
+    if ($base === '') $base = 'bank';
+    $base = substr($base, 0, 40);
+
+    $key = $base;
+    $i   = 2;
+    $chk = $pdo->prepare("SELECT 1 FROM installment_bank_list WHERE bank_key = ? LIMIT 1");
+    $chk->execute([$key]);
+    while ($chk->fetchColumn()) {
+        $key = $base . '_' . $i++;
+        $chk->execute([$key]);
+    }
+    return $key;
 }
 
 /** Model years offered on an installment request. */

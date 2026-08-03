@@ -205,4 +205,86 @@ if ($action === 'delete') {
     inst_back($lang, 'deleted');
 }
 
+/* ───────────────────── MANAGE THE BANK LIST ───────────────────── */
+// Add / remove the banks that appear on the request form (AR + EN names).
+
+if ($action === 'bank_add') {
+
+    if (!can('installments.manage_banks')) { http_response_code(403); die('Access Denied'); }
+
+    $nameAr = trim($_POST['name_ar'] ?? '');
+    $nameEn = trim($_POST['name_en'] ?? '');
+
+    if ($nameAr === '' || $nameEn === '') {
+        inst_back($lang, 'bank_err');
+    }
+    if (!inst_ensure_bank_table($pdo)) inst_back($lang, 'bank_err');
+
+    try {
+        // Don't allow the exact same name twice.
+        $dup = $pdo->prepare("SELECT 1 FROM installment_bank_list WHERE name_ar = ? OR name_en = ? LIMIT 1");
+        $dup->execute([$nameAr, $nameEn]);
+        if ($dup->fetchColumn()) {
+            inst_back($lang, 'bank_dup');
+        }
+
+        $key  = inst_make_bank_key($pdo, $nameEn, $nameAr);
+        $next = (int)$pdo->query("SELECT COALESCE(MAX(sort_order),0) + 10 FROM installment_bank_list")->fetchColumn();
+
+        $pdo->prepare("
+            INSERT INTO installment_bank_list (bank_key, name_ar, name_en, sort_order, active)
+            VALUES (?, ?, ?, ?, 1)
+        ")->execute([$key, $nameAr, $nameEn, $next]);
+    } catch (Exception $e) {
+        error_log('bank add failed: ' . $e->getMessage());
+        inst_back($lang, 'bank_err');
+    }
+
+    inst_back($lang, 'bank_added');
+}
+
+if ($action === 'bank_delete') {
+
+    if (!can('installments.manage_banks')) { http_response_code(403); die('Access Denied'); }
+
+    $key = trim($_POST['bank_key'] ?? '');
+    if ($key === '' || !inst_ensure_bank_table($pdo)) inst_back($lang);
+
+    try {
+        // If the bank was already used on a request, keep the row (so history
+        // still shows its name) and just hide it from new requests.
+        $used = $pdo->prepare("SELECT COUNT(*) FROM installment_bank_requests WHERE bank_key = ?");
+        $used->execute([$key]);
+
+        if ((int)$used->fetchColumn() > 0) {
+            $pdo->prepare("UPDATE installment_bank_list SET active = 0 WHERE bank_key = ?")->execute([$key]);
+            inst_back($lang, 'bank_hidden');
+        }
+
+        $pdo->prepare("DELETE FROM installment_bank_list WHERE bank_key = ?")->execute([$key]);
+    } catch (Exception $e) {
+        error_log('bank delete failed: ' . $e->getMessage());
+        inst_back($lang, 'bank_err');
+    }
+
+    inst_back($lang, 'bank_deleted');
+}
+
+if ($action === 'bank_restore') {
+
+    if (!can('installments.manage_banks')) { http_response_code(403); die('Access Denied'); }
+
+    $key = trim($_POST['bank_key'] ?? '');
+    if ($key === '' || !inst_ensure_bank_table($pdo)) inst_back($lang);
+
+    try {
+        $pdo->prepare("UPDATE installment_bank_list SET active = 1 WHERE bank_key = ?")->execute([$key]);
+    } catch (Exception $e) {
+        error_log('bank restore failed: ' . $e->getMessage());
+        inst_back($lang, 'bank_err');
+    }
+
+    inst_back($lang, 'bank_restored');
+}
+
 inst_back($lang);

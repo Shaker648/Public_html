@@ -27,6 +27,7 @@ $canCreate  = can('installments.create');
 $canDecide  = can('installments.decide');
 $canViewAll = can('installments.view_all');
 $canDelete  = can('installments.delete');
+$canBanks   = can('installments.manage_banks');
 
 if (empty($_SESSION['csrf_token'])) {
     $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
@@ -92,6 +93,25 @@ $t = [
         'wa_send'      => 'واتساب العميل',
         'wa_msg'       => "أهلاً %s 👋\nيسعدنا إبلاغك أنه تمت موافقة %s على طلب التقسيط الخاص بسيارة %s بمقدم %s%%.\nبرجاء التواصل معنا لاستكمال الإجراءات.\nFirst 1 Car 🚗",
         'already_bank' => 'مضاف بالفعل',
+        /* bank list management */
+        'manage_banks'  => 'إدارة البنوك',
+        'manage_hint'   => 'أضف أو احذف البنوك اللي بتظهر في نموذج الطلب. اكتب الاسم بالعربي والإنجليزي.',
+        'bank_ar'       => 'اسم البنك بالعربي',
+        'bank_en'       => 'اسم البنك بالإنجليزي',
+        'bank_add_btn'  => '➕ إضافة البنك',
+        'bank_del'      => 'حذف',
+        'bank_restore'  => 'استرجاع',
+        'bank_del_conf' => 'حذف هذا البنك من القائمة؟',
+        'bank_inactive' => 'محذوف (مستخدم في طلبات قديمة)',
+        'banks_count'   => 'بنك',
+        'open_banks'    => '🏦 إدارة البنوك',
+        'close_banks'   => '✕ إغلاق إدارة البنوك',
+        'f_bank_added'  => '✓ تم إضافة البنك',
+        'f_bank_del'    => '✓ تم حذف البنك',
+        'f_bank_hidden' => '✓ البنك مستخدم في طلبات قديمة — تم إخفاؤه من الطلبات الجديدة مع الاحتفاظ بالسجل',
+        'f_bank_rest'   => '✓ تم استرجاع البنك',
+        'f_bank_dup'    => '⚠️ البنك موجود بالفعل',
+        'f_bank_err'    => '⚠️ اكتب اسم البنك بالعربي والإنجليزي',
     ],
     'en' => [
         'title'        => 'Installments',
@@ -150,11 +170,32 @@ $t = [
         'wa_send'      => 'Customer WhatsApp',
         'wa_msg'       => "Hello %s 👋\nGood news — %s approved your installment request for the %s with a %s%% down payment.\nPlease contact us to complete the paperwork.\nFirst 1 Car 🚗",
         'already_bank' => 'already added',
+        /* bank list management */
+        'manage_banks'  => 'Manage Banks',
+        'manage_hint'   => 'Add or remove the banks shown on the request form. Enter the name in Arabic and English.',
+        'bank_ar'       => 'Bank name (Arabic)',
+        'bank_en'       => 'Bank name (English)',
+        'bank_add_btn'  => '➕ Add bank',
+        'bank_del'      => 'Delete',
+        'bank_restore'  => 'Restore',
+        'bank_del_conf' => 'Remove this bank from the list?',
+        'bank_inactive' => 'removed (used by old requests)',
+        'banks_count'   => 'banks',
+        'open_banks'    => '🏦 Manage banks',
+        'close_banks'   => '✕ Close bank manager',
+        'f_bank_added'  => '✓ Bank added',
+        'f_bank_del'    => '✓ Bank deleted',
+        'f_bank_hidden' => '✓ This bank is used by older requests — it was hidden from new ones and the history kept',
+        'f_bank_rest'   => '✓ Bank restored',
+        'f_bank_dup'    => '⚠️ That bank already exists',
+        'f_bank_err'    => '⚠️ Enter the bank name in both Arabic and English',
     ],
 ];
 $L = $t[$lang];
 
-$banks     = inst_banks();
+inst_ensure_bank_table($pdo);
+$banks     = inst_banks();                              // active banks, for the form
+$allBanks  = $canBanks ? inst_banks(true) : $banks;      // incl. removed, for the manager
 $percents  = inst_down_payments();
 $catalog   = inst_car_catalog($pdo);
 
@@ -328,6 +369,40 @@ select:disabled { opacity:.45; cursor:not-allowed; }
 #formCard.open { display:block; animation:formIn .28s ease both; }
 @keyframes formIn { from { opacity:0; transform:translateY(-8px); } to { opacity:1; transform:none; } }
 
+/* Bank-list manager */
+.btn-open-banks {
+    width:100%; height:50px; margin-bottom:16px; border:1px dashed rgba(147,51,234,.45);
+    border-radius:18px; background:rgba(147,51,234,.07); color:#c084fc;
+    font-weight:900; font-size:14px; font-family:inherit; cursor:pointer;
+    transition:background .2s, transform .15s;
+}
+.btn-open-banks:hover { background:rgba(147,51,234,.14); transform:translateY(-2px); }
+#banksCard { display:none; }
+#banksCard.open { display:block; animation:formIn .28s ease both; }
+.bank-add-row { display:grid; grid-template-columns:1fr 1fr auto; gap:12px; align-items:end; margin-bottom:18px; }
+.btn-bank-add { height:46px; padding:0 20px; border:none; border-radius:12px;
+                background:linear-gradient(90deg,var(--purple),#7e22ce); color:#fff;
+                font-weight:900; font-size:13px; font-family:inherit; cursor:pointer;
+                transition:transform .15s; white-space:nowrap; }
+.btn-bank-add:hover { transform:translateY(-2px); }
+.bank-list { display:flex; flex-direction:column; gap:8px; }
+.bank-row { display:flex; align-items:center; justify-content:space-between; gap:12px;
+            background:rgba(255,255,255,.03); border:1px solid rgba(255,255,255,.06);
+            border-radius:12px; padding:10px 14px; }
+.bank-row.off { opacity:.55; border-style:dashed; }
+.bank-row-names { display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
+.bn-ar { font-size:13.5px; font-weight:800; }
+.bn-en { font-size:12px; color:var(--muted-l); font-weight:700; }
+.bn-off { font-size:11px; font-weight:800; color:#fca5a5;
+          background:rgba(239,68,68,.1); border:1px solid rgba(239,68,68,.28);
+          padding:2px 9px; border-radius:20px; }
+.bank-del { height:34px; padding:0 13px; border-radius:10px; font-size:12px; font-weight:800;
+            font-family:inherit; cursor:pointer;
+            background:rgba(239,68,68,.1); color:#f87171; border:1px solid rgba(239,68,68,.3);
+            transition:transform .15s; white-space:nowrap; }
+.bank-del:hover { transform:translateY(-2px); }
+.bank-del.restore { background:rgba(34,197,94,.1); color:#4ade80; border-color:rgba(34,197,94,.3); }
+
 /* Add-bank-to-existing banner */
 .addbank-banner {
     display:none; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap;
@@ -418,9 +493,11 @@ select:disabled { opacity:.45; cursor:not-allowed; }
           border-radius:14px; padding:12px 16px; font-size:13px; color:var(--muted-l); margin-bottom:16px; }
 
 @media(max-width:900px) { .stats { grid-template-columns:1fr 1fr; } }
+@media(max-width:700px) { .bank-add-row { grid-template-columns:1fr; } }
 @media(max-width:600px) {
     .header-top { flex-direction:column; align-items:flex-start; }
     .page-title { font-size:22px; }
+    .bank-row { flex-direction:column; align-items:stretch; gap:10px; }
     .line { flex-direction:column; align-items:stretch; }
     .line-act { justify-content:flex-end; }
     .line-act input[type=text] { flex:1; width:auto; }
@@ -451,6 +528,12 @@ select:disabled { opacity:.45; cursor:not-allowed; }
 <?php elseif (isset($_GET['rejected'])): ?><div class="flash"><?= $L['flash_rej'] ?></div>
 <?php elseif (isset($_GET['deleted'])): ?> <div class="flash"><?= $L['flash_del'] ?></div>
 <?php elseif (isset($_GET['inst_err'])): ?><div class="flash err"><?= $L['flash_err'] ?></div>
+<?php elseif (isset($_GET['bank_added'])): ?>  <div class="flash"><?= $L['f_bank_added'] ?></div>
+<?php elseif (isset($_GET['bank_deleted'])): ?><div class="flash"><?= $L['f_bank_del'] ?></div>
+<?php elseif (isset($_GET['bank_hidden'])): ?> <div class="flash"><?= $L['f_bank_hidden'] ?></div>
+<?php elseif (isset($_GET['bank_restored'])): ?><div class="flash"><?= $L['f_bank_rest'] ?></div>
+<?php elseif (isset($_GET['bank_dup'])): ?>    <div class="flash err"><?= $L['f_bank_dup'] ?></div>
+<?php elseif (isset($_GET['bank_err'])): ?>    <div class="flash err"><?= $L['f_bank_err'] ?></div>
 <?php endif; ?>
 
 <!-- Stats -->
@@ -463,6 +546,55 @@ select:disabled { opacity:.45; cursor:not-allowed; }
 
 <?php if (!$canViewAll): ?>
     <div class="notice">👤 <?= $L['only_mine'] ?></div>
+<?php endif; ?>
+
+<?php if ($canBanks): ?>
+<!-- ═══════════ BANK LIST MANAGER (collapsible) ═══════════ -->
+<button type="button" class="btn-open-banks" id="banksToggle" onclick="toggleBanks()"><?= $L['open_banks'] ?></button>
+
+<div class="card" id="banksCard">
+    <div class="card-title">🏦 <?= $L['manage_banks'] ?>
+        <span class="pill p-ok" style="margin-inline-start:auto;"><?= count($allBanks) ?> <?= $L['banks_count'] ?></span>
+    </div>
+    <div class="card-hint"><?= $L['manage_hint'] ?></div>
+
+    <form method="POST" action="installment_action.php" class="bank-add-row">
+        <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken) ?>">
+        <input type="hidden" name="action" value="bank_add">
+        <input type="hidden" name="lang" value="<?= $lang ?>">
+        <div class="fld">
+            <label><?= $L['bank_ar'] ?></label>
+            <input type="text" name="name_ar" required autocomplete="off" dir="rtl">
+        </div>
+        <div class="fld">
+            <label><?= $L['bank_en'] ?></label>
+            <input type="text" name="name_en" required autocomplete="off" dir="ltr">
+        </div>
+        <button type="submit" class="btn-bank-add"><?= $L['bank_add_btn'] ?></button>
+    </form>
+
+    <div class="bank-list">
+        <?php foreach ($allBanks as $key => $b): $isOff = !($b['active'] ?? true); ?>
+        <div class="bank-row <?= $isOff ? 'off' : '' ?>">
+            <div class="bank-row-names">
+                <span class="bn-ar"><?= htmlspecialchars($b['ar']) ?></span>
+                <span class="bn-en"><?= htmlspecialchars($b['en']) ?></span>
+                <?php if ($isOff): ?><span class="bn-off">🚫 <?= $L['bank_inactive'] ?></span><?php endif; ?>
+            </div>
+            <form method="POST" action="installment_action.php"
+                  <?= $isOff ? '' : 'onsubmit="return confirm(' . htmlspecialchars(json_encode($L['bank_del_conf'], JSON_UNESCAPED_UNICODE), ENT_QUOTES) . ');"' ?>>
+                <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken) ?>">
+                <input type="hidden" name="action" value="<?= $isOff ? 'bank_restore' : 'bank_delete' ?>">
+                <input type="hidden" name="bank_key" value="<?= htmlspecialchars($key) ?>">
+                <input type="hidden" name="lang" value="<?= $lang ?>">
+                <button type="submit" class="bank-del <?= $isOff ? 'restore' : '' ?>">
+                    <?= $isOff ? '↩️ ' . $L['bank_restore'] : '🗑 ' . $L['bank_del'] ?>
+                </button>
+            </form>
+        </div>
+        <?php endforeach; ?>
+    </div>
+</div>
 <?php endif; ?>
 
 <?php if ($canCreate): ?>
@@ -812,9 +944,26 @@ function exitAddBank(silent) {
     if (silent !== true) updateSummary();
 }
 
-/* Re-open the form automatically when a submit came back with an error */
+/* ── Bank-list manager panel ── */
+const BANKS_OPEN_TXT  = <?= json_encode($L['open_banks'], JSON_UNESCAPED_UNICODE) ?>;
+const BANKS_CLOSE_TXT = <?= json_encode($L['close_banks'], JSON_UNESCAPED_UNICODE) ?>;
+
+function toggleBanks(forceOpen) {
+    const card = document.getElementById('banksCard');
+    const btn  = document.getElementById('banksToggle');
+    if (!card) return;
+    const open = forceOpen === true ? true : !card.classList.contains('open');
+    card.classList.toggle('open', open);
+    if (btn) btn.textContent = open ? BANKS_CLOSE_TXT : BANKS_OPEN_TXT;
+}
+
+/* Re-open the right panel automatically after a submit came back */
 <?php if (isset($_GET['inst_err'])): ?>
 toggleForm(true);
+<?php endif; ?>
+<?php if (isset($_GET['bank_added']) || isset($_GET['bank_deleted']) || isset($_GET['bank_hidden'])
+       || isset($_GET['bank_restored']) || isset($_GET['bank_dup']) || isset($_GET['bank_err'])): ?>
+toggleBanks(true);
 <?php endif; ?>
 
 /* ── Require at least one bank before sending ── */

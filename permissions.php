@@ -194,6 +194,12 @@ function perm_catalog(): array
                     'den' => 'See all staff requests (without it, a user only sees their own)',
                     'd' => [1, 1, 0],
                 ],
+                'installments.manage_banks' => [
+                    'ar' => 'إدارة قائمة البنوك', 'en' => 'Manage the bank list',
+                    'dar' => 'إضافة أو حذف البنوك التي تظهر في نموذج الطلب (بالعربي والإنجليزي)',
+                    'den' => 'Add or remove the banks shown on the request form (Arabic + English)',
+                    'd' => [1, 0, 0],
+                ],
                 'installments.delete' => [
                     'ar' => 'حذف طلب تقسيط', 'en' => 'Delete an installment request',
                     'dar' => 'حذف الطلب نهائياً بكل بنوكه', 'den' => 'Permanently delete a request and all its bank lines',
