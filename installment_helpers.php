@@ -21,6 +21,7 @@ function inst_banks(): array
         'nbk'      => ['ar' => 'الوطني الكويتي',                   'en' => 'Kuwaiti National (NBK)'],
         'egbank'   => ['ar' => 'إيجي بنك',                        'en' => 'EG Bank'],
         'misr'     => ['ar' => 'بنك مصر',                         'en' => 'Banque Misr'],
+        'cairo'    => ['ar' => 'بنك القاهرة',                     'en' => 'Banque du Caire'],
         'saib'     => ['ar' => 'بنك سايب',                        'en' => 'SAIB Bank'],
         'drive'    => ['ar' => 'شركة درايف',                      'en' => 'Drive Finance'],
         'ebe'      => ['ar' => 'المصري لتنمية الصادرات',           'en' => 'Export Development Bank (EBE)'],
@@ -37,6 +38,12 @@ function inst_bank_name(string $key, string $lang): string
 {
     $banks = inst_banks();
     return $banks[$key][$lang] ?? $banks[$key]['ar'] ?? $key;
+}
+
+/** Model years offered on an installment request. */
+function inst_years(): array
+{
+    return ['2026', '2027', '2028', '2029', '2030'];
 }
 
 /** Allowed مقدم values: 5%, 10%, … 100%. */

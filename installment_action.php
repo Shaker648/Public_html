@@ -119,6 +119,10 @@ if ($action === 'create') {
     }
 
     /* ── Brand-new request ── */
+    // The year comes from a fixed list (2026–2030) — accept nothing else.
+    if (!in_array($car_year, inst_years(), true)) {
+        inst_back($lang, 'inst_err');
+    }
     if ($customer_name === '' || $customer_phone === '' || $brand === '' || $model === '' || empty($lines)) {
         inst_back($lang, 'inst_err');
     }

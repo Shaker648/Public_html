@@ -517,7 +517,12 @@ select:disabled { opacity:.45; cursor:not-allowed; }
             </div>
             <div class="fld">
                 <label><?= $L['year'] ?></label>
-                <select name="car_year" id="selYear" disabled><option value=""><?= $L['select'] ?></option></select>
+                <select name="car_year" id="selYear" required>
+                    <option value=""><?= $L['select'] ?></option>
+                    <?php foreach (inst_years() as $y): ?>
+                        <option value="<?= $y ?>"><?= $y ?></option>
+                    <?php endforeach; ?>
+                </select>
             </div>
         </div>
         </div><!-- /#custCarSection -->
@@ -700,23 +705,16 @@ function fill(sel, values, enable) {
 if (selBrand) {
     fill(selBrand, uniq(CATALOG.map(c => c.brand)), true);
 
+    // Brand → model → trim cascade from the database.
+    // The YEAR is a fixed list (2026–2030), so it is never rebuilt here.
     selBrand.addEventListener('change', () => {
         const b = selBrand.value;
         fill(selModel, uniq(CATALOG.filter(c => c.brand === b).map(c => c.model)), !!b);
         fill(selTrim, [], false);
-        fill(selYear, [], false);
     });
     selModel.addEventListener('change', () => {
         const b = selBrand.value, m = selModel.value;
         fill(selTrim, uniq(CATALOG.filter(c => c.brand === b && c.model === m).map(c => c.trim)), !!m);
-        fill(selYear, uniq(CATALOG.filter(c => c.brand === b && c.model === m).map(c => c.year)), !!m);
-    });
-    selTrim.addEventListener('change', () => {
-        const b = selBrand.value, m = selModel.value, tr = selTrim.value;
-        const years = uniq(CATALOG.filter(c => c.brand === b && c.model === m && (!tr || c.trim === tr)).map(c => c.year));
-        const keep = selYear.value;
-        fill(selYear, years, true);
-        if (years.includes(keep)) selYear.value = keep;
     });
 }
 
@@ -766,7 +764,9 @@ function toggleForm(forceOpen) {
 }
 
 /* ── "Add bank" mode: same customer + car, just pick a new bank ── */
-const REQUIRED_FIELDS = ['customer_name', 'customer_phone', 'brand', 'model'];
+// These are cleared in "add bank" mode — the section is hidden, and a hidden
+// required field would otherwise block the browser from submitting the form.
+const REQUIRED_FIELDS = ['customer_name', 'customer_phone', 'brand', 'model', 'car_year'];
 
 function enterAddBank(p) {
     const form = document.getElementById('instForm');
