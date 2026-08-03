@@ -428,7 +428,7 @@ select option { background:#0d1526; }
         </div>
         <div class="nav-group">
             <a href="dashboard.php?lang=<?= $lang ?>"       class="nav-btn dash">🏠 <?= $t[$lang]['dashboard'] ?></a>
-            <a href="inventory.php?lang=<?= $lang ?>"        class="nav-btn inv">🚗 <?= $t[$lang]['inventory'] ?></a>
+            <a href="dashboard.php?lang=<?= $lang ?>"        class="nav-btn inv">🚗 <?= $t[$lang]['inventory'] ?></a>
             <?php if (can('page.sold_inventory')): ?>
             <a href="sold_inventory.php?lang=<?= $lang ?>"   class="nav-btn sold">💰 <?= $t[$lang]['sold'] ?></a>
             <?php endif; ?>

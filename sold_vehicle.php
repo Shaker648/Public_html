@@ -978,7 +978,7 @@ html[dir="rtl"] .car-card .avail-badge { float: left; }
             <span><?= $t[$lang]['back'] ?></span>
         </a>
 
-        <a href="sell_car.php?lang=<?= $other_lang ?>" class="lang-btn">
+        <a href="sold_vehicle.php?lang=<?= $other_lang ?>" class="lang-btn">
             🌐 <?= $t[$lang]['lang_switch'] ?>
         </a>
     </div>

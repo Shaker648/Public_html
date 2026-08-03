@@ -605,7 +605,7 @@ tbody tr:hover { background:rgba(34,197,94,.04); }
         </div>
         <div class="nav-group">
             <a href="dashboard.php?lang=<?= $lang ?>" class="nav-btn dash">🏠 <?= $t[$lang]['dashboard'] ?></a>
-            <a href="inventory.php?lang=<?= $lang ?>"  class="nav-btn inv">🚗 <?= $t[$lang]['inventory'] ?></a>
+            <a href="dashboard.php?lang=<?= $lang ?>"  class="nav-btn inv">🚗 <?= $t[$lang]['inventory'] ?></a>
         </div>
     </div>
     <div class="lang-row">

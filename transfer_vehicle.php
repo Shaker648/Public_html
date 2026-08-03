@@ -580,7 +580,7 @@ select option { background:#0d1526; }
             </div>
         </div>
         <div class="topbar-actions">
-            <a href="transfer.php?lang=<?= $lang === 'ar' ? 'en' : 'ar' ?>" class="btn-ghost">
+            <a href="transfer_vehicle.php?lang=<?= $lang === 'ar' ? 'en' : 'ar' ?>" class="btn-ghost">
                 🌐 <?= $t[$lang]['switch_lang'] ?>
             </a>
             <a href="dashboard.php?lang=<?= $lang ?>" class="btn-ghost">

@@ -167,6 +167,41 @@ function perm_catalog(): array
             ],
         ],
 
+        'installments' => [
+            'ar' => 'التقسيط (موافقات البنوك)', 'en' => 'Installments (Bank Approvals)', 'icon' => '🏦',
+            'perms' => [
+                'page.installments' => [
+                    'ar' => 'صفحة التقسيط', 'en' => 'Installments page',
+                    'dar' => 'فتح صفحة التقسيط وعرض طلبات موافقات البنوك',
+                    'den' => 'Open the installments page and view bank approval requests',
+                    'd' => [1, 1, 1],
+                ],
+                'installments.create' => [
+                    'ar' => 'إضافة طلب تقسيط', 'en' => 'Create an installment request',
+                    'dar' => 'تسجيل طلب جديد (اسم العميل ورقمه + السيارة + المقدم) وإرساله للبنوك',
+                    'den' => 'Create a new request (customer + car + down payment) and send it to the banks',
+                    'd' => [1, 1, 1],
+                ],
+                'installments.decide' => [
+                    'ar' => 'قبول / رفض طلبات التقسيط', 'en' => 'Approve / reject requests',
+                    'dar' => 'الرد على طلبات المبيعات بالقبول أو الرفض — هذه هي صلاحية "المدير المسؤول"',
+                    'den' => 'Accept or reject sales requests — this is the "responsible manager" permission',
+                    'd' => [1, 1, 0],
+                ],
+                'installments.view_all' => [
+                    'ar' => 'رؤية كل طلبات التقسيط', 'en' => 'See everyone\'s requests',
+                    'dar' => 'رؤية طلبات كل الموظفين (بدون هذه الصلاحية يرى الموظف طلباته فقط)',
+                    'den' => 'See all staff requests (without it, a user only sees their own)',
+                    'd' => [1, 1, 0],
+                ],
+                'installments.delete' => [
+                    'ar' => 'حذف طلب تقسيط', 'en' => 'Delete an installment request',
+                    'dar' => 'حذف الطلب نهائياً بكل بنوكه', 'den' => 'Permanently delete a request and all its bank lines',
+                    'd' => [1, 0, 0],
+                ],
+            ],
+        ],
+
         'pages_users' => [
             'ar' => 'إدارة المستخدمين', 'en' => 'User Management', 'icon' => '👥',
             'perms' => [

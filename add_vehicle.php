@@ -1060,7 +1060,7 @@ html[dir="rtl"] .select-loading { left: 40px; }
             </div>
             <div class="header-actions">
                 <a href="dashboard.php?lang=<?= $lang ?>" class="action-btn btn-dashboard">🏠 <?= $t[$lang]['dashboard'] ?></a>
-                <a href="inventory.php?lang=<?= $lang ?>"  class="action-btn btn-inventory">📋 <?= $t[$lang]['inventory'] ?></a>
+                <a href="dashboard.php?lang=<?= $lang ?>"  class="action-btn btn-inventory">📋 <?= $t[$lang]['inventory'] ?></a>
                 <?php if (can('page.users')): ?>
                 <a href="users.php?lang=<?= $lang ?>"      class="action-btn btn-users">👥 <?= $t[$lang]['users'] ?></a>
                 <?php endif; ?>
@@ -1071,7 +1071,7 @@ html[dir="rtl"] .select-loading { left: 40px; }
             <div class="breadcrumb">
                 <a href="dashboard.php?lang=<?= $lang ?>"><?= $t[$lang]['dashboard'] ?></a>
                 <span class="breadcrumb-sep">›</span>
-                <a href="inventory.php?lang=<?= $lang ?>"><?= $t[$lang]['inventory'] ?></a>
+                <a href="dashboard.php?lang=<?= $lang ?>"><?= $t[$lang]['inventory'] ?></a>
                 <span class="breadcrumb-sep">›</span>
                 <span class="breadcrumb-current"><?= $t[$lang]['title'] ?></span>
             </div>

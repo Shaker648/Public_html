@@ -417,7 +417,7 @@ html[dir="rtl"] .input-wrap input{text-align:right}
           <label class="checkbox-label">
             <input type="checkbox" name="remember"><?= htmlspecialchars($T['remember']) ?>
           </label>
-          <a href="forgot_password.php" class="forgot-link"><?= htmlspecialchars($T['forgot']) ?></a>
+          <span class="forgot-link" title="<?= htmlspecialchars($T['forgot']) ?>"><?= htmlspecialchars($T['forgot']) ?></span>
         </div>
 
         <button type="submit" class="btn-submit" id="submit-btn">

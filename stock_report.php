@@ -743,7 +743,7 @@ input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(1) opacit
             </div>
             <div class="nav-group">
                 <a href="dashboard.php?lang=<?= $lang ?>"  class="nav-btn dash">🏠 <?= $t[$lang]['dashboard'] ?></a>
-                <a href="inventory.php?lang=<?= $lang ?>"  class="nav-btn inv">🚗 <?= $t[$lang]['inventory'] ?></a>
+                <a href="dashboard.php?lang=<?= $lang ?>"  class="nav-btn inv">🚗 <?= $t[$lang]['inventory'] ?></a>
                 <a href="stock_report.php?lang=<?= $lang ?>" class="nav-btn report">📄 <?= $t[$lang]['title'] ?></a>
             </div>
         </div>

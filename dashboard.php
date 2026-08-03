@@ -1283,6 +1283,11 @@ function fmtPrice($p) {
                 <span class="mi-icon">📋</span><?= $lang === 'ar' ? 'سجل البصمة' : 'Attendance Log' ?>
             </a>
             <?php endif; ?>
+            <?php if (can('page.installments')): ?>
+            <a href="installments.php?lang=<?= $lang ?>" class="more-item">
+                <span class="mi-icon">🏦</span><?= $lang === 'ar' ? 'التقسيط' : 'Installments' ?>
+            </a>
+            <?php endif; ?>
             <?php if (can('page.users')): ?>
             <a href="users.php?lang=<?= $lang ?>" class="more-item">
                 <span class="mi-icon">👥</span><?= $lang === 'ar' ? 'المستخدمون' : 'Users' ?>
