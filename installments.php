@@ -82,6 +82,16 @@ $t = [
         'no_create'    => 'ليست لديك صلاحية إضافة طلبات — يمكنك العرض فقط',
         'filter_all'   => 'كل الحالات',
         'search_ph'    => 'ابحث باسم العميل أو رقمه أو السيارة...',
+        'open_form'    => '➕ طلب تقسيط جديد',
+        'close_form'   => '✕ إغلاق النموذج',
+        'add_bank'     => '➕ إضافة بنك',
+        'add_bank_for' => 'إضافة بنك جديد لنفس العميل — البيانات محفوظة، اختر البنك والنسبة فقط',
+        'cancel_add'   => '↩️ رجوع لطلب جديد',
+        'summary_none' => 'لم تختر أي بنك بعد',
+        'summary_lbl'  => 'البنوك المختارة',
+        'wa_send'      => 'واتساب العميل',
+        'wa_msg'       => "أهلاً %s 👋\nيسعدنا إبلاغك أنه تمت موافقة %s على طلب التقسيط الخاص بسيارة %s بمقدم %s%%.\nبرجاء التواصل معنا لاستكمال الإجراءات.\nFirst 1 Car 🚗",
+        'already_bank' => 'مضاف بالفعل',
     ],
     'en' => [
         'title'        => 'Installments',
@@ -130,6 +140,16 @@ $t = [
         'no_create'    => 'You can view requests but not create them',
         'filter_all'   => 'All statuses',
         'search_ph'    => 'Search by customer, phone or car...',
+        'open_form'    => '➕ New Installment Request',
+        'close_form'   => '✕ Close form',
+        'add_bank'     => '➕ Add bank',
+        'add_bank_for' => 'Adding a bank for the same customer — data is kept, just pick the bank and its %',
+        'cancel_add'   => '↩️ Back to new request',
+        'summary_none' => 'No bank selected yet',
+        'summary_lbl'  => 'Selected banks',
+        'wa_send'      => 'Customer WhatsApp',
+        'wa_msg'       => "Hello %s 👋\nGood news — %s approved your installment request for the %s with a %s%% down payment.\nPlease contact us to complete the paperwork.\nFirst 1 Car 🚗",
+        'already_bank' => 'already added',
     ],
 ];
 $L = $t[$lang];
@@ -296,6 +316,58 @@ select:disabled { opacity:.45; cursor:not-allowed; }
             font-weight:900; font-size:15px; font-family:inherit; cursor:pointer; transition:transform .15s; }
 .btn-send:hover { transform:translateY(-2px); }
 
+/* Collapsible form toggle */
+.btn-open-form {
+    width:100%; height:56px; margin-bottom:18px; border:1px dashed rgba(34,197,94,.45);
+    border-radius:18px; background:rgba(34,197,94,.07); color:#4ade80;
+    font-weight:900; font-size:15px; font-family:inherit; cursor:pointer;
+    transition:background .2s, transform .15s;
+}
+.btn-open-form:hover { background:rgba(34,197,94,.14); transform:translateY(-2px); }
+#formCard { display:none; }
+#formCard.open { display:block; animation:formIn .28s ease both; }
+@keyframes formIn { from { opacity:0; transform:translateY(-8px); } to { opacity:1; transform:none; } }
+
+/* Add-bank-to-existing banner */
+.addbank-banner {
+    display:none; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap;
+    background:rgba(147,51,234,.1); border:1px solid rgba(147,51,234,.35);
+    border-radius:14px; padding:12px 16px; margin-bottom:14px;
+}
+.addbank-banner.on { display:flex; }
+.addbank-banner .ab-who { font-size:13.5px; font-weight:800; color:#c4b5fd; line-height:1.6; }
+.addbank-banner .ab-hint { font-size:11.5px; color:var(--muted-l); }
+.ab-cancel { height:36px; padding:0 14px; border-radius:10px; border:1px solid rgba(255,255,255,.12);
+             background:rgba(255,255,255,.05); color:#cbd5e1; font-size:12px; font-weight:800;
+             font-family:inherit; cursor:pointer; }
+
+/* Selected-banks summary bar */
+.sum-bar {
+    position:sticky; bottom:10px; z-index:20; margin-top:16px;
+    background:rgba(10,17,32,.97); border:1px solid rgba(34,197,94,.35);
+    border-radius:16px; padding:12px 16px; box-shadow:0 10px 34px rgba(0,0,0,.5);
+    display:none; backdrop-filter:blur(10px);
+}
+.sum-bar.on { display:block; }
+.sum-title { font-size:11px; font-weight:900; color:var(--muted); text-transform:uppercase;
+             letter-spacing:.06em; margin-bottom:8px; }
+.sum-chips { display:flex; gap:7px; flex-wrap:wrap; }
+.sum-chip { display:inline-flex; align-items:center; gap:6px; font-size:12px; font-weight:800;
+            background:rgba(34,197,94,.1); border:1px solid rgba(34,197,94,.3); color:#86efac;
+            border-radius:20px; padding:4px 12px; }
+.sum-chip b { color:#4ade80; }
+
+/* Request-card extras */
+.btn-addbank { background:rgba(147,51,234,.12); color:#c084fc; border:1px solid rgba(147,51,234,.35);
+               height:34px; padding:0 14px; border-radius:10px; font-size:12px; font-weight:800;
+               font-family:inherit; cursor:pointer; transition:transform .15s; }
+.btn-addbank:hover { transform:translateY(-2px); }
+.btn-wa { display:inline-flex; align-items:center; gap:5px; text-decoration:none;
+          height:36px; padding:0 13px; border-radius:10px; font-size:12px; font-weight:800;
+          background:rgba(22,163,74,.15); color:#4ade80; border:1px solid rgba(22,163,74,.4);
+          transition:transform .15s; }
+.btn-wa:hover { transform:translateY(-2px); }
+
 /* Filters */
 .filters { display:flex; gap:10px; margin-bottom:16px; flex-wrap:wrap; }
 .filters input, .filters select { height:44px; }
@@ -394,16 +466,29 @@ select:disabled { opacity:.45; cursor:not-allowed; }
 <?php endif; ?>
 
 <?php if ($canCreate): ?>
-<!-- ═══════════ NEW REQUEST ═══════════ -->
-<div class="card">
+<!-- ═══════════ NEW REQUEST (collapsible) ═══════════ -->
+<button type="button" class="btn-open-form" id="formToggle" onclick="toggleForm()"><?= $L['open_form'] ?></button>
+
+<div class="card" id="formCard">
     <div class="card-title">📝 <?= $L['new_request'] ?></div>
     <div class="card-hint"><?= $L['form_hint'] ?></div>
+
+    <!-- shown only in "add bank to existing request" mode -->
+    <div class="addbank-banner" id="addBankBanner">
+        <div>
+            <div class="ab-who" id="abWho"></div>
+            <div class="ab-hint"><?= $L['add_bank_for'] ?></div>
+        </div>
+        <button type="button" class="ab-cancel" onclick="exitAddBank()"><?= $L['cancel_add'] ?></button>
+    </div>
 
     <form method="POST" action="installment_action.php" id="instForm">
         <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken) ?>">
         <input type="hidden" name="action" value="create">
         <input type="hidden" name="lang" value="<?= $lang ?>">
+        <input type="hidden" name="request_id" id="reqIdField" value="">
 
+        <div id="custCarSection">
         <div class="sec-label">👤 <?= $L['customer_data'] ?></div>
         <div class="grid">
             <div class="fld">
@@ -435,6 +520,7 @@ select:disabled { opacity:.45; cursor:not-allowed; }
                 <select name="car_year" id="selYear" disabled><option value=""><?= $L['select'] ?></option></select>
             </div>
         </div>
+        </div><!-- /#custCarSection -->
 
         <div class="sec-label">🏦 <?= $L['banks_data'] ?></div>
         <div class="card-hint" style="margin-bottom:12px;"><?= $L['pick_banks'] ?></div>
@@ -457,6 +543,12 @@ select:disabled { opacity:.45; cursor:not-allowed; }
                 </div>
             </div>
             <?php endforeach; ?>
+        </div>
+
+        <!-- live summary of what's about to be sent -->
+        <div class="sum-bar" id="sumBar">
+            <div class="sum-title">✓ <?= $L['summary_lbl'] ?></div>
+            <div class="sum-chips" id="sumChips"></div>
         </div>
 
         <button type="submit" class="btn-send"><?= $L['send'] ?></button>
@@ -488,6 +580,18 @@ select:disabled { opacity:.45; cursor:not-allowed; }
             $lines   = $r['_lines'];
             $carTxt  = trim($r['brand'].' '.$r['model'].' '.($r['trim_name'] ?? '').' '.($r['car_year'] ?? ''));
             $blob    = mb_strtolower($r['customer_name'].' '.$r['customer_phone'].' '.$carTxt);
+
+            // wa.me needs international digits: Egyptian 01xx… → 201xx…
+            $waPhone = preg_replace('/\D+/', '', (string)$r['customer_phone']);
+            if ($waPhone !== '' && $waPhone[0] === '0') $waPhone = '2' . $waPhone;
+
+            // payload for the "add bank" prefill (banks already used get disabled)
+            $abPayload = json_encode([
+                'id'    => (int)$r['id'],
+                'cust'  => $r['customer_name'],
+                'car'   => $carTxt,
+                'banks' => array_column($lines, 'bank_key'),
+            ], JSON_UNESCAPED_UNICODE | JSON_HEX_APOS | JSON_HEX_QUOT);
         ?>
         <div class="req st-<?= $st ?>" data-search="<?= htmlspecialchars($blob) ?>">
             <div class="req-top">
@@ -497,7 +601,12 @@ select:disabled { opacity:.45; cursor:not-allowed; }
                     <div class="req-car">🚗 <?= htmlspecialchars($carTxt) ?></div>
                     <div class="req-meta"><?= $L['by'] ?>: <?= htmlspecialchars($r['created_by']) ?> · <?= date('d M Y · h:i A', strtotime($r['created_at'])) ?></div>
                 </div>
-                <span class="pill <?= $statusPill[$st]['cls'] ?>"><?= $statusPill[$st]['txt'] ?></span>
+                <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+                    <?php if ($canCreate): ?>
+                    <button type="button" class="btn-addbank" onclick='enterAddBank(<?= $abPayload ?>)'><?= $L['add_bank'] ?></button>
+                    <?php endif; ?>
+                    <span class="pill <?= $statusPill[$st]['cls'] ?>"><?= $statusPill[$st]['txt'] ?></span>
+                </div>
             </div>
 
             <div class="lines">
@@ -516,6 +625,18 @@ select:disabled { opacity:.45; cursor:not-allowed; }
                                     · <?= $L['note'] ?>: <?= htmlspecialchars($line['decision_note']) ?>
                                 <?php endif; ?>
                             </span>
+                        <?php endif; ?>
+                        <?php if ($ls === 'approved' && $waPhone !== ''):
+                            $waText = sprintf($L['wa_msg'],
+                                $r['customer_name'],
+                                inst_bank_name($line['bank_key'], $lang),
+                                $carTxt,
+                                (int)$line['down_payment']);
+                        ?>
+                            <a class="btn-wa" target="_blank" rel="noopener"
+                               href="https://wa.me/<?= htmlspecialchars($waPhone) ?>?text=<?= rawurlencode($waText) ?>">
+                                💬 <?= $L['wa_send'] ?>
+                            </a>
                         <?php endif; ?>
                     </div>
 
@@ -600,13 +721,101 @@ if (selBrand) {
 }
 
 /* ── Bank picker: tick a bank → its own down-payment select appears ── */
+const BANK_NAMES = <?= json_encode(array_map(fn($b) => $b[$lang], $banks), JSON_UNESCAPED_UNICODE) ?>;
+
 function toggleBank(cb, key) {
     document.getElementById('bank-' + key).classList.toggle('on', cb.checked);
+    updateSummary();
 }
 function pctChanged(sel, key) {
     // 100% = paying in full, so there is no down payment / installment.
     document.getElementById('full-' + key).style.display = (sel.value === '100') ? 'block' : 'none';
+    updateSummary();
 }
+
+/* ── Live summary bar: what is about to be sent ── */
+function updateSummary() {
+    const bar = document.getElementById('sumBar');
+    const chips = document.getElementById('sumChips');
+    if (!bar || !chips) return;
+    const checked = document.querySelectorAll('input[name="banks[]"]:checked');
+    chips.innerHTML = '';
+    checked.forEach(cb => {
+        const key = cb.value;
+        const sel = document.querySelector('select[name="down_payment[' + key + ']"]');
+        const chip = document.createElement('span');
+        chip.className = 'sum-chip';
+        chip.innerHTML = '🏦 ' + (BANK_NAMES[key] || key) + ' — <b>' + (sel ? sel.value : '?') + '%</b>';
+        chips.appendChild(chip);
+    });
+    bar.classList.toggle('on', checked.length > 0);
+}
+
+/* ── Collapsible form ── */
+const OPEN_TXT  = <?= json_encode($L['open_form'], JSON_UNESCAPED_UNICODE) ?>;
+const CLOSE_TXT = <?= json_encode($L['close_form'], JSON_UNESCAPED_UNICODE) ?>;
+
+function toggleForm(forceOpen) {
+    const card = document.getElementById('formCard');
+    const btn  = document.getElementById('formToggle');
+    if (!card) return;
+    const open = forceOpen === true ? true : !card.classList.contains('open');
+    card.classList.toggle('open', open);
+    if (btn) btn.textContent = open ? CLOSE_TXT : OPEN_TXT;
+    if (!open) exitAddBank(true);
+}
+
+/* ── "Add bank" mode: same customer + car, just pick a new bank ── */
+const REQUIRED_FIELDS = ['customer_name', 'customer_phone', 'brand', 'model'];
+
+function enterAddBank(p) {
+    const form = document.getElementById('instForm');
+    if (!form) return;
+    toggleForm(true);
+    document.getElementById('reqIdField').value = p.id;
+    document.getElementById('custCarSection').style.display = 'none';
+    REQUIRED_FIELDS.forEach(n => {
+        const el = form.querySelector('[name="' + n + '"]');
+        if (el) el.required = false;
+    });
+    // reset the picker, then lock the banks this request already has
+    form.querySelectorAll('input[name="banks[]"]').forEach(cb => {
+        cb.checked = false;
+        cb.disabled = (p.banks || []).includes(cb.value);
+        const item = document.getElementById('bank-' + cb.value);
+        item.classList.remove('on');
+        item.style.opacity = cb.disabled ? '.4' : '';
+        item.title = cb.disabled ? <?= json_encode($L['already_bank'], JSON_UNESCAPED_UNICODE) ?> : '';
+    });
+    document.getElementById('abWho').textContent = '👤 ' + p.cust + ' · 🚗 ' + p.car;
+    document.getElementById('addBankBanner').classList.add('on');
+    updateSummary();
+    document.getElementById('formCard').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function exitAddBank(silent) {
+    const form = document.getElementById('instForm');
+    if (!form) return;
+    document.getElementById('reqIdField').value = '';
+    document.getElementById('custCarSection').style.display = '';
+    REQUIRED_FIELDS.forEach(n => {
+        const el = form.querySelector('[name="' + n + '"]');
+        if (el) el.required = true;
+    });
+    form.querySelectorAll('input[name="banks[]"]').forEach(cb => {
+        cb.disabled = false;
+        const item = document.getElementById('bank-' + cb.value);
+        item.style.opacity = '';
+        item.title = '';
+    });
+    document.getElementById('addBankBanner').classList.remove('on');
+    if (silent !== true) updateSummary();
+}
+
+/* Re-open the form automatically when a submit came back with an error */
+<?php if (isset($_GET['inst_err'])): ?>
+toggleForm(true);
+<?php endif; ?>
 
 /* ── Require at least one bank before sending ── */
 const instForm = document.getElementById('instForm');

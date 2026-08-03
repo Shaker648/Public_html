@@ -45,6 +45,10 @@ if ($action === 'create') {
 
     if (!can('installments.create')) { http_response_code(403); die('Access Denied'); }
 
+    // "Add bank" mode: append bank lines to an EXISTING request — the customer
+    // and car are taken from the stored request, nothing is retyped.
+    $existingId = (int)($_POST['request_id'] ?? 0);
+
     $customer_name  = trim($_POST['customer_name']  ?? '');
     $customer_phone = trim($_POST['customer_phone'] ?? '');
     $brand          = trim($_POST['brand']     ?? '');
@@ -69,6 +73,52 @@ if ($action === 'create') {
         $lines[$key] = $pct;   // keyed => the same bank can't be added twice
     }
 
+    /* ── Append to an existing request ── */
+    if ($existingId > 0) {
+        if (empty($lines)) inst_back($lang, 'inst_err');
+
+        $rq = $pdo->prepare("SELECT * FROM installment_requests WHERE id = ? LIMIT 1");
+        $rq->execute([$existingId]);
+        $req = $rq->fetch(PDO::FETCH_ASSOC);
+        if (!$req) inst_back($lang, 'inst_err');
+
+        // Without view_all you may only extend your own requests.
+        if (!can('installments.view_all') && ($req['created_by'] ?? '') !== $me) {
+            http_response_code(403);
+            die('Access Denied');
+        }
+
+        try {
+            $pdo->beginTransaction();
+
+            // Skip banks this customer already has on this request.
+            $have = $pdo->prepare("SELECT bank_key FROM installment_bank_requests WHERE request_id = ?");
+            $have->execute([$existingId]);
+            $existingBanks = $have->fetchAll(PDO::FETCH_COLUMN);
+
+            $ins = $pdo->prepare("
+                INSERT INTO installment_bank_requests (request_id, bank_key, down_payment, status)
+                VALUES (?, ?, ?, 'pending')
+            ");
+            $added = 0;
+            foreach ($lines as $bankKey => $pct) {
+                if (in_array($bankKey, $existingBanks, true)) continue;
+                $ins->execute([$existingId, $bankKey, $pct]);
+                $added++;
+            }
+
+            $pdo->commit();
+            if ($added === 0) inst_back($lang, 'inst_err');   // everything picked was a duplicate
+        } catch (Exception $e) {
+            $pdo->rollBack();
+            error_log('Installment add-bank failed: ' . $e->getMessage());
+            inst_back($lang, 'inst_err');
+        }
+
+        inst_back($lang, 'sent');
+    }
+
+    /* ── Brand-new request ── */
     if ($customer_name === '' || $customer_phone === '' || $brand === '' || $model === '' || empty($lines)) {
         inst_back($lang, 'inst_err');
     }

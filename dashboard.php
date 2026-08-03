@@ -346,6 +346,30 @@ if ($canAmanaActions && !empty($amanaCarsList)) {
     $amanaBranches = $pdo->query("SELECT name, name_ar, name_en FROM branches ORDER BY name_en")->fetchAll(PDO::FETCH_ASSOC);
 }
 
+/* ─── Pending تقسيط requests badge (red counter on the More-menu item).
+       Managers see everything waiting for a decision; others see their own. ─── */
+$instPending = 0;
+if (can('page.installments')) {
+    try {
+        if (can('installments.decide')) {
+            $instPending = (int)$pdo->query("
+                SELECT COUNT(*) FROM installment_bank_requests WHERE status = 'pending'
+            ")->fetchColumn();
+        } else {
+            $ipq = $pdo->prepare("
+                SELECT COUNT(*)
+                FROM installment_bank_requests b
+                JOIN installment_requests r ON r.id = b.request_id
+                WHERE b.status = 'pending' AND r.created_by = ?
+            ");
+            $ipq->execute([$_SESSION['username'] ?? '']);
+            $instPending = (int)$ipq->fetchColumn();
+        }
+    } catch (Throwable $e) {
+        $instPending = 0;   // tables not created yet — fine
+    }
+}
+
 $totalCars     = (int) $pdo->query("SELECT COUNT(*) FROM cars")->fetchColumn();
 $availableCars = (int) $pdo->query("SELECT COUNT(*) FROM cars WHERE status='available'")->fetchColumn();
 $soldCars      = (int) $pdo->query("SELECT COUNT(*) FROM cars WHERE status='sold'")->fetchColumn();
@@ -769,6 +793,16 @@ function fmtPrice($p) {
         }
         .more-item:hover, .more-item:active { background:rgba(147,51,234,.15); transform:translateY(-2px); }
         .more-item .mi-icon { font-size:24px; }
+        .more-item { position:relative; }
+        .mi-badge {
+            position:absolute; top:8px; inset-inline-end:10px;
+            min-width:20px; height:20px; padding:0 6px; border-radius:10px;
+            background:#ef4444; color:#fff; font-size:11px; font-weight:900;
+            display:inline-flex; align-items:center; justify-content:center;
+            box-shadow:0 0 10px rgba(239,68,68,.5);
+            animation:miBadgePulse 2s ease-in-out infinite;
+        }
+        @keyframes miBadgePulse { 0%,100% { transform:scale(1); } 50% { transform:scale(1.12); } }
         .more-item-logout { color:#f87171; border-color:rgba(239,68,68,.2); background:rgba(239,68,68,.06); }
         .more-item-disabled { opacity:.35; pointer-events:none; }
 
@@ -1257,8 +1291,11 @@ function fmtPrice($p) {
         <span class="nav-icon">🕐</span><?= $lang === 'ar' ? 'بصمة' : 'Basma' ?>
     </a>
     <?php endif; ?>
-    <button type="button" class="nav-link nav-more-btn" onclick="openMore()">
+    <button type="button" class="nav-link nav-more-btn" onclick="openMore()" style="position:relative;">
         <span class="nav-icon">⋯</span><?= $lang === 'ar' ? 'المزيد' : 'More' ?>
+        <?php if ($instPending > 0): ?>
+        <span class="mi-badge" style="top:2px;"><?= $instPending ?></span>
+        <?php endif; ?>
     </button>
 
 </nav>
@@ -1286,6 +1323,7 @@ function fmtPrice($p) {
             <?php if (can('page.installments')): ?>
             <a href="installments.php?lang=<?= $lang ?>" class="more-item">
                 <span class="mi-icon">🏦</span><?= $lang === 'ar' ? 'التقسيط' : 'Installments' ?>
+                <?php if ($instPending > 0): ?><span class="mi-badge"><?= $instPending ?></span><?php endif; ?>
             </a>
             <?php endif; ?>
             <?php if (can('page.users')): ?>
