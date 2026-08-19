@@ -1,0 +1,4 @@
+# local scratch / test artefacts — never part of the site
+test.db
+*.sqlite
+*.sqlite3
