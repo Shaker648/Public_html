@@ -39,6 +39,11 @@ $t = [
         'qty'          => 'الكمية',
         'move_up'      => 'تحريك لأعلى',
         'move_down'    => 'تحريك لأسفل',
+        'drag_hint'    => 'اسحب لإعادة الترتيب',
+        'drag_tip'     => '💡 امسك علامة ⠿ واسحب الشحنة لأي مكان لإعادة الترتيب — أو استخدم ▲ ▼',
+        'order_saving' => 'جارٍ حفظ الترتيب…',
+        'order_saved'  => '✓ تم حفظ الترتيب',
+        'order_err'    => '⚠️ تعذّر حفظ الترتيب',
         'count_label'  => 'سيارة',
         'select_color' => 'اختر لوناً',
         'edit'         => 'تعديل الكمية',
@@ -95,6 +100,11 @@ $t = [
         'qty'          => 'Qty',
         'move_up'      => 'Move up',
         'move_down'    => 'Move down',
+        'drag_hint'    => 'Drag to reorder',
+        'drag_tip'     => '💡 Hold the ⠿ handle and drag a shipment anywhere to reorder — or use ▲ ▼',
+        'order_saving' => 'Saving order…',
+        'order_saved'  => '✓ Order saved',
+        'order_err'    => '⚠️ Could not save the order',
         'count_label'  => 'cars',
         'select_color' => 'Select a color',
         'edit'         => 'Edit Quantity',
@@ -275,6 +285,33 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $swap->execute([$current['sort_order'], $neighbor['id']]);
             }
         }
+    }
+
+    /* Drag-and-drop reorder — exactly the same concept as ▲▼ (it only writes
+       sort_order), except the whole new order is saved in one go instead of
+       swapping one neighbour at a time. Answers with JSON, no page reload. */
+    if ($action === 'reorder') {
+        $ids = $_POST['ids'] ?? [];
+        $ok  = false;
+        if (is_array($ids) && !empty($ids)) {
+            try {
+                $pdo->beginTransaction();
+                $upd = $pdo->prepare("UPDATE incoming_cars SET sort_order=? WHERE id=?");
+                $pos = 10;
+                foreach ($ids as $rid) {
+                    $rid = (int)$rid;
+                    if ($rid > 0) { $upd->execute([$pos, $rid]); $pos += 10; }
+                }
+                $pdo->commit();
+                $ok = true;
+            } catch (Exception $e) {
+                $pdo->rollBack();
+                error_log('incoming reorder failed: ' . $e->getMessage());
+            }
+        }
+        header('Content-Type: application/json; charset=utf-8');
+        echo json_encode(['ok' => $ok]);
+        exit;
     }
 
     $anchor = isset($_POST['incoming_id']) ? '#ship-'.(int)$_POST['incoming_id'] : '';
@@ -728,6 +765,47 @@ select option { background:#0d1526; }
     padding:4px 13px; border-radius:9px; color:var(--muted); font-weight:700; font-size:14px;
 }
 .ship-controls { display:flex; gap:6px; align-items:center; }
+
+/* ══ Drag-and-drop reordering (same sort_order concept as ▲▼) ══ */
+.drag-tip {
+    background:rgba(147,51,234,.08); border:1px solid rgba(147,51,234,.22);
+    border-radius:14px; padding:10px 16px; margin-bottom:14px;
+    font-size:12.5px; font-weight:600; color:#c4b5fd; line-height:1.6;
+}
+.drag-handle {
+    cursor:grab; touch-action:none; user-select:none;
+    font-size:17px; line-height:1; letter-spacing:-1px;
+    color:#a78bfa;
+}
+.drag-handle:active { cursor:grabbing; }
+.drag-handle:hover { background:rgba(147,51,234,.22) !important; color:#fff; }
+
+/* the card being dragged floats above everything */
+.ship-card.dragging {
+    box-shadow:0 24px 60px rgba(0,0,0,.6), 0 0 0 2px rgba(147,51,234,.55);
+    opacity:.97; transform:scale(1.015); cursor:grabbing;
+}
+/* the gap that shows where it will land */
+.drag-placeholder {
+    border:2px dashed rgba(147,51,234,.5);
+    background:rgba(147,51,234,.06);
+    border-radius:20px; margin:0;
+}
+/* while dragging, dim the rest a touch so the target gap reads clearly */
+.ship-list.is-dragging .ship-card:not(.dragging) { opacity:.62; }
+
+/* saving toast */
+.order-toast {
+    position:fixed; inset-inline-end:20px; bottom:22px; z-index:2000;
+    padding:12px 20px; border-radius:14px; font-size:13.5px; font-weight:800;
+    background:rgba(15,23,42,.97); border:1px solid rgba(147,51,234,.4);
+    color:#e9d5ff; box-shadow:0 12px 40px rgba(0,0,0,.55);
+    opacity:0; transform:translateY(12px); pointer-events:none;
+    transition:opacity .25s, transform .25s;
+}
+.order-toast.show { opacity:1; transform:translateY(0); }
+.order-toast.ok  { border-color:rgba(34,197,94,.5);  color:#86efac; }
+.order-toast.err { border-color:rgba(239,68,68,.5);  color:#fca5a5; }
 .icon-btn {
     width:38px; height:38px; border:1px solid var(--border); border-radius:11px; background:#111827;
     color:var(--muted); cursor:pointer; font-size:16px; display:flex; align-items:center;
@@ -1059,6 +1137,9 @@ a.icon-btn { text-decoration:none; }
     <p><?= $t[$lang]['empty_sub'] ?></p>
 </div>
 <?php else: ?>
+<?php if (count($shipments) > 1): ?>
+<div class="drag-tip"><?= $t[$lang]['drag_tip'] ?></div>
+<?php endif; ?>
 <div class="ship-list" id="shipList">
 <?php foreach ($shipments as $i => $s):
     $assigned    = $colorsByShipment[$s['id']] ?? [];
@@ -1100,6 +1181,8 @@ a.icon-btn { text-decoration:none; }
             </div>
         </div>
         <div class="ship-controls">
+            <button type="button" class="icon-btn drag-handle" title="<?= $t[$lang]['drag_hint'] ?>"
+                    aria-label="<?= $t[$lang]['drag_hint'] ?>">⠿</button>
             <a class="icon-btn receive-btn" title="<?= $t[$lang]['receive'] ?>"
                href="receive_shipment.php?id=<?= $s['id'] ?>&lang=<?= $lang ?>">📦</a>
             <form method="POST" style="display:inline">
@@ -1620,6 +1703,166 @@ function closeBrandBreakdown(e){
 document.addEventListener('keydown',function(e){
     if(e.key==='Escape'){closeBrandBreakdown();}
 });
+
+/* ════════════════════════════════════════════════════════════════
+   Drag-and-drop reordering of shipments.
+
+   Nothing about how ordering WORKS changes: the list is still driven
+   by sort_order and the ▲ ▼ buttons still do exactly what they did.
+   This only adds a nicer way to produce the same result — grab the ⠿
+   handle, drop the card where you want it, and the new order is saved
+   in the background (no page reload).
+   Works with mouse, touch and pen via pointer events.
+════════════════════════════════════════════════════════════════ */
+(function () {
+    const list = document.getElementById('shipList');
+    if (!list) return;
+
+    const T_SAVING = <?= json_encode($t[$lang]['order_saving'], JSON_UNESCAPED_UNICODE) ?>;
+    const T_SAVED  = <?= json_encode($t[$lang]['order_saved'],  JSON_UNESCAPED_UNICODE) ?>;
+    const T_ERR    = <?= json_encode($t[$lang]['order_err'],    JSON_UNESCAPED_UNICODE) ?>;
+
+    let dragEl = null, placeholder = null, grabDY = 0, pointerId = null, scrollTimer = null;
+
+    /* ── little toast in the corner ── */
+    let toastEl = null, toastTimer = null;
+    function toast(msg, kind) {
+        if (!toastEl) {
+            toastEl = document.createElement('div');
+            toastEl.className = 'order-toast';
+            document.body.appendChild(toastEl);
+        }
+        toastEl.textContent = msg;
+        toastEl.className = 'order-toast show' + (kind ? ' ' + kind : '');
+        clearTimeout(toastTimer);
+        if (kind) toastTimer = setTimeout(() => toastEl.classList.remove('show'), 2200);
+    }
+
+    function otherCards() {
+        return Array.from(list.querySelectorAll('.ship-card')).filter(c => c !== dragEl);
+    }
+
+    /* Put the placeholder where the pointer currently is. */
+    function positionPlaceholder(clientY) {
+        const cards = otherCards();
+        for (const card of cards) {
+            const r = card.getBoundingClientRect();
+            if (clientY < r.top + r.height / 2) {
+                list.insertBefore(placeholder, card);
+                return;
+            }
+        }
+        list.appendChild(placeholder);
+    }
+
+    /* Auto-scroll when dragging near the top/bottom of the window. */
+    function edgeScroll(clientY) {
+        const margin = 90, speed = 14;
+        clearInterval(scrollTimer);
+        let dir = 0;
+        if (clientY < margin) dir = -1;
+        else if (clientY > window.innerHeight - margin) dir = 1;
+        if (dir !== 0) scrollTimer = setInterval(() => window.scrollBy(0, dir * speed), 16);
+    }
+
+    list.addEventListener('pointerdown', function (e) {
+        const handle = e.target.closest('.drag-handle');
+        if (!handle || e.button > 0) return;
+        const card = handle.closest('.ship-card');
+        if (!card || list.querySelectorAll('.ship-card').length < 2) return;
+
+        e.preventDefault();
+        dragEl = card;
+        pointerId = e.pointerId;
+
+        const r = dragEl.getBoundingClientRect();
+        grabDY = e.clientY - r.top;
+
+        placeholder = document.createElement('div');
+        placeholder.className = 'drag-placeholder';
+        placeholder.style.height = r.height + 'px';
+        list.insertBefore(placeholder, dragEl);
+
+        // lift the card out of the flow so it follows the finger/cursor
+        dragEl.classList.add('dragging');
+        dragEl.style.position = 'fixed';
+        dragEl.style.zIndex = '1500';
+        dragEl.style.width = r.width + 'px';
+        dragEl.style.left = r.left + 'px';
+        dragEl.style.top = r.top + 'px';
+        dragEl.style.pointerEvents = 'none';
+        list.classList.add('is-dragging');
+
+        handle.setPointerCapture(pointerId);
+    });
+
+    list.addEventListener('pointermove', function (e) {
+        if (!dragEl || e.pointerId !== pointerId) return;
+        e.preventDefault();
+        dragEl.style.top = (e.clientY - grabDY) + 'px';
+        positionPlaceholder(e.clientY);
+        edgeScroll(e.clientY);
+    });
+
+    function finishDrag() {
+        if (!dragEl) return;
+        clearInterval(scrollTimer);
+
+        // drop the card into the placeholder's slot
+        list.insertBefore(dragEl, placeholder);
+        placeholder.remove();
+        placeholder = null;
+
+        dragEl.classList.remove('dragging');
+        dragEl.style.position = dragEl.style.zIndex = dragEl.style.width =
+            dragEl.style.left = dragEl.style.top = dragEl.style.pointerEvents = '';
+        list.classList.remove('is-dragging');
+        dragEl = null;
+        pointerId = null;
+
+        saveOrder();
+    }
+
+    list.addEventListener('pointerup', finishDrag);
+    list.addEventListener('pointercancel', finishDrag);
+
+    /* ── persist the new order (same sort_order column as ▲▼) ── */
+    function saveOrder() {
+        const ids = Array.from(list.querySelectorAll('.ship-card'))
+                         .map(c => (c.id || '').replace('ship-', ''))
+                         .filter(Boolean);
+        if (!ids.length) return;
+
+        toast(T_SAVING, '');
+
+        const fd = new FormData();
+        fd.append('action', 'reorder');
+        ids.forEach(id => fd.append('ids[]', id));
+
+        fetch('incoming_cars.php?lang=<?= $lang ?>', { method: 'POST', body: fd })
+            .then(r => r.json())
+            .then(d => {
+                if (d && d.ok) {
+                    toast(T_SAVED, 'ok');
+                    refreshArrows();
+                } else {
+                    toast(T_ERR, 'err');
+                }
+            })
+            .catch(() => toast(T_ERR, 'err'));
+    }
+
+    /* Keep ▲ / ▼ disabled correctly on the new first/last card. */
+    function refreshArrows() {
+        const cards = Array.from(list.querySelectorAll('.ship-card'));
+        cards.forEach((card, i) => {
+            const up   = card.querySelector('input[value="up"]');
+            const down = card.querySelector('input[value="down"]');
+            if (up   && up.form)   up.form.querySelector('button').disabled   = (i === 0);
+            if (down && down.form) down.form.querySelector('button').disabled = (i === cards.length - 1);
+        });
+    }
+})();
 </script>
 </body>
 </html>
