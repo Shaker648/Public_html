@@ -304,6 +304,42 @@ function perm_catalog(): array
             ],
         ],
 
+        'ads' => [
+            'ar' => 'إدارة الإعلانات', 'en' => 'Ad Manager', 'icon' => '📣',
+            'perms' => [
+                'page.ads' => [
+                    'ar' => 'صفحة إدارة الإعلانات', 'en' => 'Ad Manager page',
+                    'dar' => 'فتح صفحة الإعلانات — إعلانات السيارات على دوبيزل وكونتكت وفيسبوك وإنستجرام',
+                    'den' => 'Open the ad manager — car listings on Dubizzle, Contact, Facebook and Instagram',
+                    'd' => [1, 0, 0],
+                ],
+                'ads.create' => [
+                    'ar' => 'إضافة وتجديد الإعلانات', 'en' => 'Create and renew ads',
+                    'dar' => 'نشر إعلان جديد لسيارة على أي منصة، وتجديد إعلان قارب على الانتهاء',
+                    'den' => 'Post a new ad for a car on any platform, and renew one that is about to expire',
+                    'd' => [1, 0, 0],
+                ],
+                'ads.close' => [
+                    'ar' => 'إغلاق الإعلانات', 'en' => 'Close ads',
+                    'dar' => 'إنهاء إعلان نشط — مثلاً عند بيع السيارة حتى لا تُصرف نقاط على سيارة لم تعد موجودة',
+                    'den' => 'End a live ad, for example once the car is sold, so points are not spent on a car you no longer have',
+                    'd' => [1, 0, 0],
+                ],
+                'ads.cost' => [
+                    'ar' => 'رؤية تكلفة الإعلانات', 'en' => 'See ad cost',
+                    'dar' => 'رؤية النقاط والمبالغ المدفوعة على كل إعلان',
+                    'den' => 'See the points and money spent on each ad',
+                    'd' => [1, 0, 0],
+                ],
+                'ads.platforms' => [
+                    'ar' => 'إعدادات المنصات', 'en' => 'Platform settings',
+                    'dar' => 'تعديل المنصات — المدة الافتراضية، نوع التكلفة، وهل الإعلان يتطلب اسم بائع',
+                    'den' => 'Edit the platforms: default duration, cost type, and whether an ad requires a salesman',
+                    'd' => [1, 0, 0],
+                ],
+            ],
+        ],
+
         'features' => [
             'ar' => 'ميزات أخرى', 'en' => 'Other Features', 'icon' => '⚙️',
             'perms' => [
