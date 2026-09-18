@@ -1306,11 +1306,6 @@ function fmtPrice($p) {
                 <span class="mi-icon">🚚</span><?= $lang === 'ar' ? 'الالوان' : 'Incoming' ?>
             </a>
             <?php endif; ?>
-            <?php if (can('page.car_images')): ?>
-            <a href="car_images.php?lang=<?= $lang ?>" class="more-item">
-                <span class="mi-icon">🖼️</span><?= $lang === 'ar' ? 'صور السيارات' : 'Car Images' ?>
-            </a>
-            <?php endif; ?>
             <?php if (can('page.ads')): ?>
             <a href="ads.php?lang=<?= $lang ?>" class="more-item">
                 <span class="mi-icon">📣</span><?= $lang === 'ar' ? 'الإعلانات' : 'Ads' ?>

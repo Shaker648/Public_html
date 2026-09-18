@@ -131,6 +131,7 @@ $t = [
         'title'         => 'مركز التحكم في الصلاحيات',
         'subtitle'      => 'تحكم كامل: من يرى كل صفحة وكل تفصيلة — حسب الدور أو لكل مستخدم',
         'users'         => 'المستخدمون',
+        'car_images'    => 'صور السيارات',
         'dashboard'     => 'الرئيسية',
         'admin'         => '👑 الأدمن',
         'manager'       => '🛡 المدير',
@@ -166,6 +167,7 @@ $t = [
         'title'         => 'Permission Control Center',
         'subtitle'      => 'Full control: who sees every page and every detail — per role or per user',
         'users'         => 'Users',
+        'car_images'    => 'Car Images',
         'dashboard'     => 'Dashboard',
         'admin'         => '👑 Admin',
         'manager'       => '🛡 Manager',
@@ -259,6 +261,7 @@ body {
 .nav-btn:hover { transform:translateY(-2px); }
 .nav-btn.dash  { background:var(--blue); }
 .nav-btn.users { background:var(--green); color:#002b14; }
+.nav-btn.imgs  { background:linear-gradient(90deg,#9333ea,#c084fc); }
 .lang-row { display:flex; gap:8px; margin-top:14px; }
 .lang-btn {
     text-decoration:none; padding:7px 14px; border-radius:10px;
@@ -400,6 +403,9 @@ body {
         <div class="nav-group">
             <a href="dashboard.php?lang=<?= $lang ?>" class="nav-btn dash">🏠 <?= $L['dashboard'] ?></a>
             <a href="users.php?lang=<?= $lang ?>" class="nav-btn users">👥 <?= $L['users'] ?></a>
+            <?php if (can('page.car_images')): ?>
+            <a href="car_images.php?lang=<?= $lang ?>" class="nav-btn imgs">🖼️ <?= $L['car_images'] ?></a>
+            <?php endif; ?>
         </div>
     </div>
     <div class="lang-row">
