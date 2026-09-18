@@ -340,6 +340,30 @@ function perm_catalog(): array
             ],
         ],
 
+        'car_images' => [
+            'ar' => 'مكتبة صور السيارات', 'en' => 'Car Image Library', 'icon' => '🖼️',
+            'perms' => [
+                'page.car_images' => [
+                    'ar' => 'صفحة مكتبة الصور', 'en' => 'Car Image Library page',
+                    'dar' => 'فتح المكتبة — صورة واحدة لكل موديل ولون تظهر تلقائياً على كل سيارة مطابقة',
+                    'den' => 'Open the library, where one image per model and colour shows on every matching car',
+                    'd' => [1, 0, 0],
+                ],
+                'car_images.upload' => [
+                    'ar' => 'رفع واستبدال الصور', 'en' => 'Upload and replace images',
+                    'dar' => 'إضافة صورة لموديل ولون، أو استبدال صورة موجودة',
+                    'den' => 'Add an image for a model and colour, or replace an existing one',
+                    'd' => [1, 0, 0],
+                ],
+                'car_images.delete' => [
+                    'ar' => 'حذف الصور', 'en' => 'Delete images',
+                    'dar' => 'حذف صورة من المكتبة نهائياً',
+                    'den' => 'Permanently remove an image from the library',
+                    'd' => [1, 0, 0],
+                ],
+            ],
+        ],
+
         'features' => [
             'ar' => 'ميزات أخرى', 'en' => 'Other Features', 'icon' => '⚙️',
             'perms' => [
