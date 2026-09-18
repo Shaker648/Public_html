@@ -1278,6 +1278,11 @@ function fmtPrice($p) {
                 <span class="mi-icon">🚚</span><?= $lang === 'ar' ? 'الالوان' : 'Incoming' ?>
             </a>
             <?php endif; ?>
+            <?php if (can('page.ads')): ?>
+            <a href="ads.php?lang=<?= $lang ?>" class="more-item">
+                <span class="mi-icon">📣</span><?= $lang === 'ar' ? 'الإعلانات' : 'Ads' ?>
+            </a>
+            <?php endif; ?>
             <?php if (can('page.attendance_admin')): ?>
             <a href="attendance_admin.php?lang=<?= $lang ?>" class="more-item">
                 <span class="mi-icon">📋</span><?= $lang === 'ar' ? 'سجل البصمة' : 'Attendance Log' ?>
