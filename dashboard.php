@@ -244,39 +244,17 @@ $params     = [];
 
 // Which car statuses is this user allowed to see on the dashboard?
 // Reserved cars stay in stock for EVERYONE — they are just painted gold.
+// Sold cars are NOT loaded here any more: sold_inventory.php is the page for
+// them, and rebuilding that whole grid at the bottom of the dashboard made the
+// scroll unbounded for no gain. The sold stat pill still links straight to it.
 $statuses = ["'available'", "'reserved'"];
-if ($canSeeAmana)    $statuses[] = "'consignment'";
-if ($canSoldSection) $statuses[] = "'sold'";
+if ($canSeeAmana) $statuses[] = "'consignment'";
 $conditions[] = "cars.status IN (" . implode(',', $statuses) . ")";
 
-if (!empty($search)) {
-    // FIX: each placeholder must be unique — PDO (no emulation) does NOT allow
-    // reusing the same named placeholder multiple times. We also search Arabic
-    // color and branch names so Arabic input works too.
-    $conditions[] = "(
-        cars.brand        LIKE :s1
-        OR cars.model     LIKE :s2
-        OR cars.trim_name LIKE :s3
-        OR cars.chassis   LIKE :s4
-        OR cars.color     LIKE :s5
-        OR cars.branch    LIKE :s6
-        OR colors.color_ar  LIKE :s7
-        OR colors.color_en  LIKE :s8
-        OR branches.name_ar LIKE :s9
-        OR branches.name_en LIKE :s10
-    )";
-    $like = "%$search%";
-    $params[':s1']  = $like;
-    $params[':s2']  = $like;
-    $params[':s3']  = $like;
-    $params[':s4']  = $like;
-    $params[':s5']  = $like;
-    $params[':s6']  = $like;
-    $params[':s7']  = $like;
-    $params[':s8']  = $like;
-    $params[':s9']  = $like;
-    $params[':s10'] = $like;
-}
+/* Searching, branch and status filtering all happen live in the browser over the
+   cards already on the page, so there is one behaviour instead of two. The
+   ?search= value is still honoured: it pre-fills the box and the filter runs on
+   load. */
 
 $whereClause = $conditions ? 'WHERE ' . implode(' AND ', $conditions) : '';
 
@@ -324,6 +302,18 @@ foreach ($availableCarsList as $c) {
     if (($c['status'] ?? '') === 'reserved') $reservedIds[] = $c['id'];
 }
 $reserveInfo = reservation_info($pdo, $reservedIds);
+
+/* Branches that actually have stock on screen, for the filter chips. No point
+   offering a branch with nothing in it. */
+$branchChips = [];
+foreach ($availableCarsList as $c) {
+    $key = (string)($c['branch'] ?? '');
+    if ($key === '') continue;
+    $label = $lang === 'ar' ? ($c['name_ar'] ?: $key) : ($c['name_en'] ?: $key);
+    if (!isset($branchChips[$key])) $branchChips[$key] = ['label' => $label, 'n' => 0];
+    $branchChips[$key]['n']++;
+}
+ksort($branchChips);
 
 /* ─── Car image library: one image per model+colour, loaded once for every
        card on the page rather than a query per card ─── */
@@ -511,6 +501,115 @@ function fmtPrice($p) {
         .stat-card { background:rgba(15,23,42,.88); border:1px solid rgba(255,255,255,.08); border-radius:22px; padding:22px; transition:border-color .2s; }
         .stat-card a { text-decoration:none; color:#fff; display:block; }
         .stat-card:hover { border-color:rgba(147,51,234,.35); }
+
+        /* ══════════════ Quote: one thin line, not a block ══════════════ */
+        .quote-line {
+            display:flex; align-items:center; gap:9px;
+            padding:7px 13px; margin-bottom:10px;
+            background:rgba(147,51,234,.07); border:1px solid rgba(147,51,234,.16);
+            border-radius:12px; font-size:12.5px; color:#c4b5fd; font-weight:600;
+        }
+        .quote-line .quote-icon { font-size:15px; flex-shrink:0; }
+        .quote-line .quote-text {
+            flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+            transition:opacity .35s;
+        }
+        .quote-line .quote-custom-tag {
+            font-size:9.5px; font-weight:800; color:#a78bfa; background:rgba(147,51,234,.16);
+            border-radius:50px; padding:2px 8px; flex-shrink:0;
+        }
+        .quote-line .quote-edit-btn {
+            background:none; border:none; cursor:pointer; color:#a78bfa;
+            font-size:13px; padding:2px 4px; flex-shrink:0;
+        }
+
+        /* ══════════════ Sticky control band ══════════════
+           Search, counts and filters travel together and stay pinned, so the
+           controls are always in reach however far down the stock you are. */
+        .control-band {
+            position:sticky; top:0; z-index:900;
+            margin:0 -16px 16px; padding:11px 16px 9px;
+            background:rgba(2,6,23,.94); backdrop-filter:blur(16px);
+            border-bottom:1px solid rgba(255,255,255,.07);
+        }
+        .control-band.stuck { box-shadow:0 10px 30px rgba(0,0,0,.45); }
+        .cb-top { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+
+        .cb-search {
+            flex:1 1 260px; min-width:0; position:relative;
+            display:flex; align-items:center; gap:9px;
+            background:rgba(15,23,42,.9); border:1px solid rgba(255,255,255,.09);
+            border-radius:14px; padding:0 13px; height:46px;
+            transition:border-color .2s, box-shadow .2s;
+        }
+        .cb-search:focus-within { border-color:rgba(147,51,234,.55); box-shadow:0 0 0 3px rgba(147,51,234,.12); }
+        .cb-search-icon { font-size:15px; opacity:.7; flex-shrink:0; }
+        .cb-search input {
+            flex:1; min-width:0; background:none; border:none; outline:none;
+            color:#f1f5f9; font-family:inherit; font-size:14.5px;
+        }
+        .cb-clear {
+            display:none; background:rgba(255,255,255,.08); border:none; cursor:pointer;
+            color:#94a3b8; width:22px; height:22px; border-radius:50%;
+            font-size:11px; line-height:1; flex-shrink:0;
+        }
+        .cb-search.has-text .cb-clear { display:block; }
+
+        /* Counts as compact pills instead of five big cards, so the layout no
+           longer changes shape depending on how many of them exist. */
+        .cb-pills { display:flex; gap:7px; flex-wrap:wrap; align-items:center; }
+        .pill {
+            display:inline-flex; align-items:center; gap:7px;
+            height:46px; padding:0 13px; border-radius:14px;
+            background:rgba(15,23,42,.9); border:1px solid rgba(255,255,255,.08);
+            color:#f1f5f9; text-decoration:none; font-family:inherit; cursor:pointer;
+            transition:transform .15s, border-color .2s, background .2s;
+        }
+        .pill:hover { transform:translateY(-2px); }
+        .pill-n { font-size:18px; font-weight:900; line-height:1; }
+        .pill-l { font-size:11px; font-weight:700; color:#94a3b8; white-space:nowrap; }
+        .pill-green .pill-n  { color:#22c55e; }
+        .pill-gold  .pill-n  { color:#eab308; }
+        .pill-amber .pill-n  { color:#f59e0b; }
+        .pill-red   .pill-n  { color:#ef4444; }
+        .pill-locked { cursor:default; opacity:.55; }
+        .pill-locked:hover { transform:none; }
+        .pill.on { border-color:rgba(147,51,234,.6); background:rgba(147,51,234,.14); }
+
+        /* Filter chips — one scrollable row so it never wraps into a wall */
+        .cb-chips {
+            display:flex; gap:7px; align-items:center; margin-top:9px;
+            overflow-x:auto; scrollbar-width:none; -webkit-overflow-scrolling:touch;
+            padding-bottom:2px;
+        }
+        .cb-chips::-webkit-scrollbar { display:none; }
+        .chip {
+            flex-shrink:0; height:33px; padding:0 13px; border-radius:50px; cursor:pointer;
+            background:rgba(255,255,255,.05); border:1px solid rgba(255,255,255,.09);
+            color:#94a3b8; font-family:inherit; font-size:12.5px; font-weight:700;
+            display:inline-flex; align-items:center; gap:6px;
+            transition:background .2s, color .2s, border-color .2s;
+        }
+        .chip:hover { background:rgba(255,255,255,.09); color:#e2e8f0; }
+        .chip.on { background:#9333ea; border-color:transparent; color:#fff; }
+        .chip-n { font-size:10.5px; font-weight:800; opacity:.75; }
+        .chip-sep { flex-shrink:0; width:1px; height:20px; background:rgba(255,255,255,.12); margin:0 3px; }
+
+        @media (max-width:768px) {
+            .control-band { padding:10px 14px 8px; margin:0 -16px 12px; }
+            .cb-top { gap:8px; }
+            .cb-search { flex:1 1 100%; height:44px; }
+            /* One scrolling row of counts beats three wrapped rows of them */
+            .cb-pills {
+                flex-wrap:nowrap; overflow-x:auto; width:100%; gap:6px;
+                scrollbar-width:none; -webkit-overflow-scrolling:touch;
+            }
+            .cb-pills::-webkit-scrollbar { display:none; }
+            .pill { height:40px; padding:0 11px; gap:6px; flex-shrink:0; }
+            .pill-n { font-size:16px; }
+            .pill-l { font-size:10px; }
+            .cb-chips { margin-top:8px; }
+        }
         .stat-title { font-size:13px; color:#94a3b8; font-weight:600; display:flex; align-items:center; gap:6px; }
         .stat-number { font-size:38px; font-weight:800; margin-top:8px; line-height:1; }
         .stat-green { color:#22c55e; }
@@ -600,6 +699,19 @@ function fmtPrice($p) {
         .amana-strip-title { font-size:15px; font-weight:800; color:#f59e0b; }
         .amana-strip-badge { background:rgba(245,158,11,.2); color:#f59e0b; font-weight:800; font-size:12px; min-width:22px; height:22px; display:inline-flex; align-items:center; justify-content:center; border-radius:11px; padding:0 7px; }
         .amana-strip-list { display:flex; flex-direction:column; gap:8px; }
+
+        /* Collapsed by default, so a long consignment list stops pushing the
+           stock down the page. The count stays visible on the closed header. */
+        .amana-strip { margin:0 0 12px; }
+        .amana-strip-head {
+            width:100%; cursor:pointer; background:none; border:none;
+            font-family:inherit; color:inherit; text-align:start; padding:0; margin:0;
+        }
+        .amana-caret { margin-inline-start:auto; font-size:12px; color:#94a3b8; transition:transform .25s; }
+        .amana-strip.open .amana-caret { transform:rotate(180deg); }
+        .amana-strip .amana-strip-list { display:none; }
+        .amana-strip.open .amana-strip-list { display:flex; margin-top:10px; animation:amanaIn .25s ease both; }
+        @keyframes amanaIn { from { opacity:0; transform:translateY(-6px); } to { opacity:1; transform:none; } }
         .amana-row { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; background:rgba(0,0,0,.18); border:1px solid rgba(245,158,11,.18); border-radius:12px; padding:9px 12px; }
         .amana-row-main { display:flex; align-items:center; gap:14px; flex-wrap:wrap; flex:1; min-width:0; }
         .amana-row-car { font-weight:800; font-size:14px; color:#fbbf24; white-space:nowrap; }
@@ -789,8 +901,15 @@ function fmtPrice($p) {
 
         /* Responsive */
         @media (max-width:768px) {
-            .header { flex-direction:column; align-items:flex-start; gap:14px; }
-            .header-right { width:100%; flex-direction:row; justify-content:space-between; align-items:center; }
+            /* One compact row rather than a stacked block: the header was the
+               tallest thing standing between the user and the stock. */
+            .header { padding:11px 14px; border-radius:18px; margin-bottom:12px; gap:8px 10px; }
+            .header-right { flex-direction:row; align-items:center; gap:8px; }
+            .logo { gap:8px; flex-shrink:0; }
+            .logo img { width:34px; height:34px; border-radius:9px; }
+            .logo-title { font-size:16px; }
+            .lang-switch a { padding:5px 8px; font-size:10.5px; }
+            .welcome-badge { font-size:11px; line-height:1.35; }
             .stats { grid-template-columns:1fr 1fr; }
             .stats .stat-card:first-child { grid-column:1/-1; }
             .inventory-grid { grid-template-columns:1fr; }
@@ -904,82 +1023,113 @@ function fmtPrice($p) {
     </div>
     <?php endif; ?>
 
-    <!-- Quote -->
-    <div class="quote-banner" id="quoteBanner">
+    <!-- Quote — one thin line, so it stops eating the top of the page -->
+    <div class="quote-line" id="quoteBanner">
         <span class="quote-icon">✨</span>
-        <div class="quote-viewport">
-            <span class="quote-text" id="quoteText"><?= htmlspecialchars($quoteOfDay) ?></span>
-        </div>
+        <span class="quote-text" id="quoteText"><?= htmlspecialchars($quoteOfDay) ?></span>
         <?php if ($isCustomQuotes): ?>
             <span class="quote-custom-tag"><?= $lang === 'ar' ? 'مخصص' : 'Custom' ?></span>
         <?php endif; ?>
         <?php if ($canQuotesEdit): ?>
-            <button type="button" class="quote-edit-btn" onclick="openQuoteEditor()" title="<?= $lang === 'ar' ? 'تعديل العبارات' : 'Edit quotes' ?>">✏️</button>
+            <button type="button" class="quote-edit-btn" onclick="openQuoteEditor()"
+                    title="<?= $lang === 'ar' ? 'تعديل العبارات' : 'Edit quotes' ?>">✏️</button>
         <?php endif; ?>
     </div>
 
-    <!-- Search -->
-    <form method="GET" class="search-box" role="search">
-        <input type="hidden" name="lang" value="<?= $lang ?>">
-        <span class="search-icon">🔍</span>
-        <input type="text" name="search" placeholder="<?= $t[$lang]['search'] ?>"
-               value="<?= htmlspecialchars($search) ?>" autocomplete="off" inputmode="search">
-    </form>
+    <!-- ════════ Control band — search, counts and filters in one sticky strip.
+         It stays pinned while you scroll, so the controls never leave. ════════ -->
+    <div class="control-band" id="controlBand">
 
-    <!-- Stats -->
-    <div class="stats">
-        <div class="stat-card">
-            <?php if ($canStatTotal): ?>
-                <div class="stat-title">🚗 <?= $t[$lang]['total_vehicles'] ?></div>
-                <div class="stat-number"><?= $totalCars ?></div>
-            <?php else: ?>
-                <a href="sold_login.php?lang=<?= $lang ?>">
-                    <div class="stat-title">🔒 <?= $t[$lang]['total_vehicles'] ?></div>
-                    <div class="stat-number">••••</div>
-                    <div class="stat-sub"><?= $t[$lang]['management_only'] ?></div>
-                </a>
+        <div class="cb-top">
+            <div class="cb-search">
+                <span class="cb-search-icon">🔍</span>
+                <input type="text" id="searchInput" placeholder="<?= $t[$lang]['search'] ?>"
+                       value="<?= htmlspecialchars($search) ?>" autocomplete="off" inputmode="search">
+                <button type="button" class="cb-clear" id="searchClear" aria-label="clear">✕</button>
+            </div>
+
+            <div class="cb-pills">
+                <?php if ($canStatTotal): ?>
+                    <button type="button" class="pill pill-total" data-status="">
+                        <span class="pill-n"><?= $totalCars ?></span>
+                        <span class="pill-l">🚗 <?= $t[$lang]['total_vehicles'] ?></span>
+                    </button>
+                <?php else: ?>
+                    <span class="pill pill-locked" title="<?= $t[$lang]['management_only'] ?>">
+                        <span class="pill-n">••••</span>
+                        <span class="pill-l">🔒 <?= $t[$lang]['total_vehicles'] ?></span>
+                    </span>
+                <?php endif; ?>
+
+                <button type="button" class="pill pill-green" data-status="available">
+                    <span class="pill-n"><?= $availableCars ?></span>
+                    <span class="pill-l">✅ <?= $t[$lang]['available'] ?></span>
+                </button>
+
+                <?php if ($reservedCars > 0): ?>
+                <button type="button" class="pill pill-gold" data-status="reserved">
+                    <span class="pill-n"><?= $reservedCars ?></span>
+                    <span class="pill-l">🔒 <?= $t[$lang]['reserved_count'] ?></span>
+                </button>
+                <?php endif; ?>
+
+                <?php if ($canStatAmana && $amanaCars > 0): ?>
+                <button type="button" class="pill pill-amber" id="pillAmana">
+                    <span class="pill-n"><?= $amanaCars ?></span>
+                    <span class="pill-l">🔶 <?= $t[$lang]['status_amana'] ?></span>
+                </button>
+                <?php endif; ?>
+
+                <?php if ($canStatSold): ?>
+                    <a class="pill pill-red" href="sold_inventory.php?lang=<?= $lang ?>">
+                        <span class="pill-n"><?= $soldCars ?></span>
+                        <span class="pill-l">💰 <?= $t[$lang]['sold_inventory'] ?></span>
+                    </a>
+                <?php else: ?>
+                    <span class="pill pill-locked" title="<?= $t[$lang]['managers_only'] ?>">
+                        <span class="pill-n">••••</span>
+                        <span class="pill-l">🔒 <?= $t[$lang]['sold_inventory'] ?></span>
+                    </span>
+                <?php endif; ?>
+            </div>
+        </div>
+
+        <div class="cb-chips" id="cbChips">
+            <button type="button" class="chip chip-status on" data-status="">
+                <?= $lang === 'ar' ? 'الكل' : 'All' ?>
+            </button>
+            <button type="button" class="chip chip-status" data-status="available">
+                ✅ <?= $t[$lang]['available'] ?>
+            </button>
+            <?php if ($reservedCars > 0): ?>
+            <button type="button" class="chip chip-status" data-status="reserved">
+                🔒 <?= $t[$lang]['status_reserved'] ?>
+            </button>
             <?php endif; ?>
-        </div>
-        <div class="stat-card">
-            <div class="stat-title">✅ <?= $t[$lang]['available'] ?></div>
-            <div class="stat-number stat-green"><?= $availableCars ?></div>
-        </div>
-        <?php if ($reservedCars > 0): ?>
-        <div class="stat-card">
-            <div class="stat-title">🔒 <?= $t[$lang]['reserved_count'] ?></div>
-            <div class="stat-number stat-reserved"><?= $reservedCars ?></div>
-        </div>
-        <?php endif; ?>
-        <?php if ($canStatAmana && $amanaCars > 0): ?>
-        <div class="stat-card">
-            <div class="stat-title">🔶 <?= $t[$lang]['status_amana'] ?></div>
-            <div class="stat-number stat-amana"><?= $amanaCars ?></div>
-        </div>
-        <?php endif; ?>
-        <div class="stat-card">
-            <?php if ($canStatSold): ?>
-                <a href="sold_inventory.php?lang=<?= $lang ?>">
-                    <div class="stat-title">💰 <?= $t[$lang]['sold_inventory'] ?></div>
-                    <div class="stat-number stat-red"><?= $soldCars ?></div>
-                </a>
-            <?php else: ?>
-                <a href="sold_login.php?lang=<?= $lang ?>">
-                    <div class="stat-title">🔒 <?= $t[$lang]['sold_inventory'] ?></div>
-                    <div class="stat-number">••••</div>
-                    <div class="stat-sub"><?= $t[$lang]['managers_only'] ?></div>
-                </a>
+
+            <?php if (count($branchChips) > 1): ?>
+                <span class="chip-sep"></span>
+                <button type="button" class="chip chip-branch on" data-branch="">
+                    📍 <?= $lang === 'ar' ? 'كل الفروع' : 'All branches' ?>
+                </button>
+                <?php foreach ($branchChips as $bKey => $b): ?>
+                <button type="button" class="chip chip-branch" data-branch="<?= htmlspecialchars($bKey, ENT_QUOTES) ?>">
+                    <?= htmlspecialchars($b['label']) ?> <span class="chip-n"><?= (int)$b['n'] ?></span>
+                </button>
+                <?php endforeach; ?>
             <?php endif; ?>
         </div>
     </div>
 
     <!-- ════════ امانة / Consignment (compact strip, top of page) ════════ -->
     <?php if ($canSeeAmana && !empty($amanaCarsList)): ?>
-    <div class="amana-strip">
-        <div class="amana-strip-head">
+    <div class="amana-strip" id="amanaStrip">
+        <button type="button" class="amana-strip-head" onclick="toggleAmana()" aria-expanded="false">
             <span class="amana-strip-title">🔶 <?= $t[$lang]['amana_section'] ?></span>
             <span class="amana-strip-badge"><?= count($amanaCarsList) ?></span>
-        </div>
-        <div class="amana-strip-list">
+            <span class="amana-caret" aria-hidden="true">▾</span>
+        </button>
+        <div class="amana-strip-list" id="amanaList">
             <?php foreach ($amanaCarsList as $car):
                 $displayBranch = $lang === 'ar' ? ($car['name_ar'] ?: $car['branch']) : ($car['name_en'] ?: $car['branch']);
                 $info          = $amanaInfo[$car['id']] ?? null;
@@ -1056,7 +1206,10 @@ function fmtPrice($p) {
                 $displayBranch.' '.($car['name_en'] ?? '').' '.($car['name_ar'] ?? '').' '.$car['chassis']
             ));
         ?>
-            <div class="vehicle-card <?= $isReserved ? 'reserved-card' : '' ?>" data-search="<?= htmlspecialchars($searchBlob) ?>">
+            <div class="vehicle-card <?= $isReserved ? 'reserved-card' : '' ?>"
+                 data-search="<?= htmlspecialchars($searchBlob) ?>"
+                 data-status="<?= $isReserved ? 'reserved' : 'available' ?>"
+                 data-branch="<?= htmlspecialchars((string)$car['branch'], ENT_QUOTES) ?>">
 
                 <?php $cardImg = car_image_url_for($carImgMap, $car); ?>
                 <?php if ($cardImg !== ''): ?>
@@ -1197,62 +1350,9 @@ function fmtPrice($p) {
 
     </div>
 
-    <!-- Sold Vehicles -->
-    <?php if ($canSoldSection && !empty($soldCarsList)): ?>
-        <div class="section-divider" style="margin-top:36px;">
-            <h2>💰 <?= $t[$lang]['sold_section'] ?></h2>
-            <div class="divider-line"></div>
-            <span class="section-count"><?= count($soldCarsList) ?></span>
-        </div>
-        <div class="inventory-grid">
-            <?php foreach ($soldCarsList as $car):
-                $displayColor  = $lang === 'ar' ? ($car['color_ar']  ?: $car['color'])  : ($car['color_en']  ?: $car['color']);
-                $displayBranch = $lang === 'ar' ? ($car['name_ar']   ?: $car['branch']) : ($car['name_en']   ?: $car['branch']);
-                $noteText      = trim((string)($car['notes'] ?? ''));
-            ?>
-                <div class="vehicle-card sold-card">
-                    <?php $cardImg = car_image_url_for($carImgMap, $car); ?>
-                    <?php if ($cardImg !== ''): ?>
-                    <div class="vehicle-photo">
-                        <img src="<?= htmlspecialchars($cardImg) ?>" loading="lazy"
-                             alt="<?= htmlspecialchars($car['brand'].' '.$car['model'].' '.$displayColor) ?>">
-                        <span class="vp-tag"><?= $lang === 'ar' ? 'صورة توضيحية' : 'Illustration' ?></span>
-                    </div>
-                    <?php endif; ?>
-                    <div class="vehicle-header">
-                        <div class="qr-sticker" title="QR"
-                             data-ch="<?= htmlspecialchars($car['chassis'], ENT_QUOTES) ?>"
-                             data-name="<?= htmlspecialchars($car['brand'].' '.$car['model'], ENT_QUOTES) ?>"
-                             data-id="<?= (int)$car['id'] ?>"><div class="qs qs-wait"></div></div>
-                        <div>
-                            <div class="vehicle-title">🚗 <?= htmlspecialchars($car['brand']) ?> <?= htmlspecialchars($car['model']) ?></div>
-                            <div class="vehicle-year-badge">📅 <?= htmlspecialchars($car['car_year']) ?></div>
-                        </div>
-                        <div class="status status-sold"><?= $t[$lang]['status_sold'] ?></div>
-                    </div>
-                    <div class="vehicle-info">
-                        <div class="info-row"><span class="info-label"><?= $t[$lang]['trim'] ?></span><span class="info-value"><?= htmlspecialchars($car['trim_name']) ?></span></div>
-                        <div class="info-row"><span class="info-label"><?= $t[$lang]['color'] ?></span><span class="info-value"><?= htmlspecialchars($displayColor) ?></span></div>
-                        <div class="info-row"><span class="info-label"><?= $t[$lang]['branch'] ?></span><span class="info-value"><?= htmlspecialchars($displayBranch) ?></span></div>
-                        <div class="info-row"><span class="info-label"><?= $t[$lang]['chassis'] ?></span><span class="info-value chassis-value"><?= htmlspecialchars($car['chassis']) ?></span></div>
-                        <div class="info-row"><span class="info-label"><?= $t[$lang]['created_by'] ?></span><span class="info-value"><?= htmlspecialchars($car['created_by']) ?></span></div>
-                        <?php if ($noteText !== ''): ?>
-                        <div class="info-row info-row-note">
-                            <span class="info-label">📝 <?= $t[$lang]['notes'] ?></span>
-                            <span class="note-value"><?= htmlspecialchars($noteText) ?></span>
-                        </div>
-                        <?php endif; ?>
-                    </div>
-                    <div class="actions">
-                        <a href="vehicle_timeline.php?id=<?= $car['id'] ?>&lang=<?= $lang ?>" class="btn btn-journey">👁 <?= $t[$lang]['journey'] ?></a>
-                        <div class="btn btn-disabled">✅ <?= $t[$lang]['status_sold'] ?></div>
-                        <div class="btn btn-disabled">🔄 <?= $t[$lang]['locked'] ?></div>
-                        <div class="btn btn-disabled">🚫 <?= $t[$lang]['locked'] ?></div>
-                    </div>
-                </div>
-            <?php endforeach; ?>
-        </div>
-    <?php endif; ?>
+    <!-- The sold-vehicles grid used to be repeated here. It now lives only on
+         sold_inventory.php, which the 💰 pill links to, so the dashboard stays
+         about current stock and the scroll stays bounded. -->
 
 </div>
 
@@ -1423,46 +1523,133 @@ function fmtPrice($p) {
         }
     }
 
-    // ── Live search: filter cards in-page, no reload (keeps keyboard open) ──
-    const searchInput = document.querySelector('input[name="search"]');
-    if (searchInput) {
-        // Stop the form from reloading the page on Enter — filtering is live.
-        const searchForm = searchInput.closest('form');
-        if (searchForm) {
-            searchForm.addEventListener('submit', (e) => { e.preventDefault(); searchInput.blur(); });
-        }
+    /* ═══════ One filter, three inputs: typed text, status chip, branch chip ═══════
+       Every card is already in the page, so filtering happens here instead of
+       reloading. That also means the search box has ONE behaviour rather than a
+       different one depending on whether you pressed enter. */
+    (function () {
+        const input   = document.getElementById('searchInput');
+        const clearBt = document.getElementById('searchClear');
+        const band    = document.getElementById('controlBand');
+        const cards   = Array.from(document.querySelectorAll('.vehicle-card[data-search]'));
+        const grid    = cards.length ? cards[0].parentElement : null;
+        const counter = document.querySelector('.section-count');
 
-        const availableCards = Array.from(document.querySelectorAll('.vehicle-card[data-search]'));
-        // The available-vehicles section divider (to hide if nothing matches)
-        let liveMsg = null;
+        let fStatus = '';
+        let fBranch = '';
+        let emptyMsg = null;
 
-        function runLiveSearch() {
-            const q = searchInput.value.trim().toLowerCase();
+        function apply() {
+            const q = input ? input.value.trim().toLowerCase() : '';
             let shown = 0;
-            availableCards.forEach(card => {
-                const hay = card.getAttribute('data-search') || '';
-                const match = q === '' || hay.indexOf(q) !== -1;
-                card.style.display = match ? '' : 'none';
-                if (match) shown++;
+
+            cards.forEach(card => {
+                const okText   = q === '' || (card.getAttribute('data-search') || '').indexOf(q) !== -1;
+                const okStatus = fStatus === '' || card.getAttribute('data-status') === fStatus;
+                const okBranch = fBranch === '' || card.getAttribute('data-branch') === fBranch;
+                const show = okText && okStatus && okBranch;
+                card.style.display = show ? '' : 'none';
+                if (show) shown++;
             });
 
-            // Show a gentle "no results" line inside the available grid
-            const grid = availableCards.length ? availableCards[0].parentElement : null;
+            if (input && input.parentElement) {
+                input.parentElement.classList.toggle('has-text', q !== '');
+            }
+            // the section count follows what is actually on screen
+            if (counter) counter.textContent = shown;
+
             if (grid) {
-                if (!liveMsg) {
-                    liveMsg = document.createElement('div');
-                    liveMsg.style.cssText = 'grid-column:1/-1;text-align:center;color:#64748b;padding:30px;font-size:15px;';
-                    liveMsg.textContent = '🔍 ' + (LANG_NO_RESULTS || 'No results');
-                    grid.appendChild(liveMsg);
+                if (!emptyMsg) {
+                    emptyMsg = document.createElement('div');
+                    emptyMsg.style.cssText = 'grid-column:1/-1;text-align:center;color:#64748b;padding:34px;font-size:15px;';
+                    emptyMsg.textContent = '🔍 ' + (LANG_NO_RESULTS || 'No results');
+                    grid.appendChild(emptyMsg);
                 }
-                liveMsg.style.display = (q !== '' && shown === 0) ? '' : 'none';
+                emptyMsg.style.display = (shown === 0 && cards.length > 0) ? '' : 'none';
             }
         }
 
-        searchInput.addEventListener('input', runLiveSearch);
-        // Run once on load in case the field is pre-filled
-        if (searchInput.value.trim() !== '') runLiveSearch();
+        if (input) input.addEventListener('input', apply);
+        if (clearBt) clearBt.addEventListener('click', function () {
+            input.value = '';
+            input.focus();
+            apply();
+        });
+
+        function setStatus(v) {
+            fStatus = v;
+            document.querySelectorAll('.chip-status').forEach(function (c) {
+                c.classList.toggle('on', (c.getAttribute('data-status') || '') === v);
+            });
+            document.querySelectorAll('.pill[data-status]').forEach(function (pl) {
+                pl.classList.toggle('on', v !== '' && (pl.getAttribute('data-status') || '') === v);
+            });
+            apply();
+        }
+
+        function setBranch(v) {
+            fBranch = v;
+            document.querySelectorAll('.chip-branch').forEach(function (c) {
+                c.classList.toggle('on', (c.getAttribute('data-branch') || '') === v);
+            });
+            apply();
+        }
+
+        document.querySelectorAll('.chip-status').forEach(function (c) {
+            c.addEventListener('click', function () { setStatus(c.getAttribute('data-status') || ''); });
+        });
+        document.querySelectorAll('.chip-branch').forEach(function (c) {
+            c.addEventListener('click', function () { setBranch(c.getAttribute('data-branch') || ''); });
+        });
+
+        /* Tapping a count applies the matching filter, so the numbers navigate
+           instead of just sitting there. Tapping the active one clears it. */
+        document.querySelectorAll('.pill[data-status]').forEach(function (pl) {
+            pl.addEventListener('click', function () {
+                const v = pl.getAttribute('data-status') || '';
+                setStatus((fStatus === v && v !== '') ? '' : v);
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+            });
+        });
+
+        /* The consignment count opens its own strip rather than filtering cards,
+           because those cars are listed there, not in the grid. */
+        const pillAmana = document.getElementById('pillAmana');
+        if (pillAmana) pillAmana.addEventListener('click', function () {
+            const strip = document.getElementById('amanaStrip');
+            if (!strip) return;
+            if (!strip.classList.contains('open')) toggleAmana();
+            strip.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        });
+
+        /* Lift the band with a shadow only once it is actually stuck */
+        if (band && band.parentElement && 'IntersectionObserver' in window) {
+            const probe = document.createElement('div');
+            probe.style.cssText = 'height:1px;';
+            band.parentElement.insertBefore(probe, band);
+            new IntersectionObserver(function (entries) {
+                band.classList.toggle('stuck', !entries[0].isIntersecting);
+            }).observe(probe);
+        }
+
+        apply();   // honour a ?search= value that arrived in the URL
+    })();
+
+    /* Consignment strip open or closed, remembered per browser */
+    function toggleAmana() {
+        const strip = document.getElementById('amanaStrip');
+        if (!strip) return;
+        const open = !strip.classList.contains('open');
+        strip.classList.toggle('open', open);
+        const head = strip.querySelector('.amana-strip-head');
+        if (head) head.setAttribute('aria-expanded', open ? 'true' : 'false');
+        try { localStorage.setItem('f1c_amana_open', open ? '1' : '0'); } catch (e) {}
     }
+    (function () {
+        let open = false;
+        try { open = localStorage.getItem('f1c_amana_open') === '1'; } catch (e) {}
+        if (open) toggleAmana();
+    })();
 
     // ── "More" menu sheet ──
     function openMore() {
