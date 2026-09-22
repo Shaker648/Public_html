@@ -118,10 +118,14 @@ if ($selectedBrand  !== '') { $where[] = "brand = ?";      $params[] = $selected
 if ($dateFrom       !== '') { $where[] = "created_at >= ?"; $params[] = $dateFrom . ' 00:00:00'; }
 if ($dateTo         !== '') { $where[] = "created_at <= ?"; $params[] = $dateTo   . ' 23:59:59'; }
 
-$sql = "SELECT * FROM cars WHERE " . implode(' AND ', $where) . " ORDER BY branch, brand, model, trim_name";
-$stmt = $pdo->prepare($sql);
-$stmt->execute($params);
-$cars = $stmt->fetchAll(PDO::FETCH_ASSOC);
+/* The filters above still describe exactly what the page shows, but they are
+   now applied instantly in the browser rather than in this query, so typing or
+   picking a branch never reloads the page. Every car in stock is sent once and
+   the script at the bottom hides, renumbers and recounts to match the filters —
+   the result on screen and on paper is the same as the old server-side filter.
+   $where / $params are kept for reference and are no longer executed. */
+$cars = $pdo->query("SELECT * FROM cars WHERE status IN ('available','reserved') ORDER BY branch, brand, model, trim_name")
+            ->fetchAll(PDO::FETCH_ASSOC);
 
 $totalCars   = count($cars);
 $branchCount = $pdo->query("SELECT COUNT(*) FROM branches")->fetchColumn();
@@ -154,9 +158,15 @@ if ($canSeeAmana) {
         WHERE " . implode(' AND ', $aWhere) . "
         ORDER BY c.branch, c.brand, c.model, c.trim_name
     ";
-    $aStmt = $pdo->prepare($aSql);
-    $aStmt->execute($aParams);
-    $amanaCars = $aStmt->fetchAll(PDO::FETCH_ASSOC);
+    // Same as above: every consignment car is sent, the filters apply live.
+    $aSql = "
+        SELECT c.*, cn.dealer_name, cn.salesman, cn.started_at
+        FROM cars c
+        LEFT JOIN consignments cn ON cn.car_id = c.id AND cn.status = 'active'
+        WHERE c.status = 'consignment'
+        ORDER BY c.branch, c.brand, c.model, c.trim_name
+    ";
+    $amanaCars = $pdo->query($aSql)->fetchAll(PDO::FETCH_ASSOC);
 }
 
 /* ─── Look-ups done once for the whole page ───
@@ -214,6 +224,43 @@ foreach ($cars as $c)      $addCard($c, ($c['status'] ?? '') === 'reserved' ? 'r
 foreach ($amanaCars as $c) $addCard($c, 'consignment');
 
 $canEditCar = can('page.edit_vehicle');
+
+/** A display swatch for a colour name; unknown names fall back to neutral grey. */
+function sr_swatch(string $colorEn): string
+{
+    static $map = [
+        'white' => '#f8fafc', 'pearl white' => '#f1f5f9', 'black' => '#111827', 'silver' => '#cbd5e1',
+        'grey' => '#6b7280', 'gray' => '#6b7280', 'red' => '#dc2626', 'blue' => '#2563eb', 'navy' => '#1e3a8a',
+        'green' => '#16a34a', 'gold' => '#d4af37', 'beige' => '#e0d5c0', 'brown' => '#78350f',
+        'orange' => '#ea580c', 'yellow' => '#eab308', 'purple' => '#7c3aed', 'bronze' => '#a97142', 'champagne' => '#e6d7b8',
+    ];
+    return $map[mb_strtolower(trim($colorEn))] ?? '#64748b';
+}
+
+/* What each row carries for the live filter, the hover preview and the badges.
+   The searchable text covers the same fields the old SQL search did, plus the
+   Arabic colour and branch names so searching in Arabic works too. */
+$rowAttrs = function (array $car, string $kind) use ($cardData, $colorLabel, $branchLabel): string {
+    $fields = [$car['brand'], $car['model'], $car['trim_name'], $car['car_year'], $car['color'],
+               $car['chassis'], $car['branch'], $colorLabel((string)$car['color']), $branchLabel((string)$car['branch'])];
+    $fields[] = $kind === 'amana' ? ($car['dealer_name'] ?? '') : ($car['notes'] ?? '');
+    $cd   = $cardData[(int)$car['id']] ?? [];
+    $date = $kind === 'amana' ? ($car['started_at'] ?? '') : ($car['created_at'] ?? '');
+    return ' data-branch="' . htmlspecialchars((string)$car['branch'], ENT_QUOTES) . '"'
+         . ' data-brand="'  . htmlspecialchars((string)$car['brand'], ENT_QUOTES) . '"'
+         . ' data-date="'   . htmlspecialchars((string)$date, ENT_QUOTES) . '"'
+         . ' data-age="'    . (isset($cd['days']) && $cd['days'] !== null ? (int)$cd['days'] : '') . '"'
+         . ' data-sw="'     . sr_swatch((string)$car['color']) . '"'
+         . ' data-cl="'     . htmlspecialchars($colorLabel((string)$car['color']), ENT_QUOTES) . '"'
+         . ' data-img="'    . htmlspecialchars((string)($cd['img'] ?? ''), ENT_QUOTES) . '"'
+         . ' data-search="' . htmlspecialchars(mb_strtolower(implode(' ', array_map('strval', $fields))), ENT_QUOTES) . '"';
+};
+$agePill = function (array $car) use ($cardData): string {
+    $d = $cardData[(int)$car['id']]['days'] ?? null;
+    if ($d === null) return '';
+    $cls = $d < 30 ? 'g' : ($d < 90 ? 'a' : 'r');
+    return '<span class="age-pill ' . $cls . ' scr">' . $d . '</span>';
+};
 $canQrCard  = can('qr.manage');
 
 /* ─── Auto-trigger print dialog when ?print=1 ─── */
@@ -813,7 +860,17 @@ input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(1) opacit
     </div>
 
     <!-- ── STATS ─────────────────────────────────────── -->
-    <div class="stats-row">
+    <div class="kpi-row scr" id="kpiRow">
+        <div class="kpi k-total"><div class="kpi-n" data-k="total">0</div><div class="kpi-l">🚗 <?= $t[$lang]['available_only'] ?></div></div>
+        <div class="kpi k-av"><div class="kpi-n" data-k="av">0</div><div class="kpi-l">✅ <?= $lang === 'ar' ? 'متاحة' : 'Available' ?></div></div>
+        <div class="kpi k-res"><div class="kpi-n" data-k="res">0</div><div class="kpi-l">🔒 <?= $t[$lang]['reserved'] ?></div></div>
+        <?php if ($canSeeAmana && !empty($amanaCars)): ?>
+        <div class="kpi k-am"><div class="kpi-n" data-k="am">0</div><div class="kpi-l">🔶 <?= $lang === 'ar' ? 'أمانة' : 'Consignment' ?></div></div>
+        <?php endif; ?>
+        <div class="kpi k-age"><div class="kpi-n" data-k="age">0</div><div class="kpi-l">⏱ <?= $lang === 'ar' ? 'متوسط الأيام في المخزون' : 'Average days in stock' ?></div></div>
+    </div>
+
+    <div class="stats-row prn">
         <div class="stat-card c-total">
             <div class="stat-label"><?= $t[$lang]['total_cars'] ?></div>
             <div class="stat-number"><?= $totalCars ?></div>
@@ -882,6 +939,9 @@ input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(1) opacit
         </div>
     </form>
 
+    <!-- ── Branch jump bar: tap to glide to a branch; it lights up as you scroll ── -->
+    <nav class="jumpbar scr" id="jumpBar" aria-label="branches"></nav>
+
     <!-- ── TABLE ─────────────────────────────────────── -->
     <div class="table-card">
         <?php if (count($cars) === 0): ?>
@@ -902,10 +962,13 @@ input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(1) opacit
 
                     $counter = 1;
         ?>
-                    <div class="branch-section">
+                    <div class="branch-section" data-branch="<?= htmlspecialchars((string)$currentBranch, ENT_QUOTES) ?>" data-label="<?= htmlspecialchars($bDisplay, ENT_QUOTES) ?>">
                     <div class="branch-header">
+                        <span class="bh-ring scr"></span>
                         <div class="branch-title">📍 <?= htmlspecialchars($bDisplay) ?></div>
-                        <div class="branch-badge"><?= $branchTotal ?> <?= $t[$lang]['cars_count'] ?></div>
+                        <span class="bh-dots scr"></span>
+                        <div class="branch-badge"><span class="bb-n"><?= $branchTotal ?></span> <?= $t[$lang]['cars_count'] ?></div>
+                        <button type="button" class="bh-fold scr" aria-label="fold">▾</button>
                     </div>
                     <table class="inv-table">
                         <thead>
@@ -926,7 +989,7 @@ input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(1) opacit
                             $noteText   = trim((string)($car['notes'] ?? ''));
                             $isReserved = (($car['status'] ?? '') === 'reserved');
                         ?>
-                        <tr class="car-row <?= $isReserved ? 'res-row' : '' ?>" data-id="<?= (int)$car['id'] ?>" tabindex="0">
+                        <tr class="car-row <?= $isReserved ? 'res-row' : '' ?>" data-id="<?= (int)$car['id'] ?>" tabindex="0"<?= $rowAttrs($car, 'stock') ?>>
                             <td class="num-cell"><?= $counter++ ?></td>
                             <td class="brand-cell">
                                 <?php if ($isReserved): ?><span class="res-badge">🔒 <?= $t[$lang]['reserved'] ?></span> <?php endif; ?>
@@ -936,9 +999,9 @@ input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(1) opacit
                             <td><?= htmlspecialchars($car['trim_name']) ?></td>
                             <td><?= htmlspecialchars($car['car_year']) ?></td>
                             <td>
-                            <?= htmlspecialchars($colorLabel((string)$car['color'])) ?>
+                            <i class="sw scr" style="background:<?= sr_swatch((string)$car['color']) ?>"></i><?= htmlspecialchars($colorLabel((string)$car['color'])) ?>
                             </td>
-                            <td class="chassis-cell"><?= htmlspecialchars($car['chassis']) ?></td>
+                            <td class="chassis-cell"><span class="ch-chip"><?= htmlspecialchars($car['chassis']) ?></span><?= $agePill($car) ?></td>
                             <td class="notes-cell <?= $noteText !== '' ? 'has-note' : '' ?>">
                                 <?= $noteText !== '' ? '📝 ' . htmlspecialchars($noteText) : '—' ?>
                             </td>
@@ -948,15 +1011,22 @@ input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(1) opacit
                     </table>
                     </div>
         <?php endif; ?>
+        <div class="empty-state live-empty" style="display:none">
+            <div class="e-icon">🚗</div>
+            <p><?= $t[$lang]['no_cars'] ?></p>
+        </div>
     </div><!-- /.table-card -->
 
     <?php if ($canSeeAmana && !empty($amanaCars)): ?>
     <!-- ── امانة / CONSIGNMENT (admin/manager only) ─────── -->
     <div class="table-card amana-report-card">
-        <div class="branch-section">
+        <div class="branch-section" data-branch="__amana__" data-label="<?= htmlspecialchars(strip_tags($t[$lang]['amana_section']), ENT_QUOTES) ?>">
             <div class="branch-header amana-report-header">
+                <span class="bh-ring scr"></span>
                 <div class="branch-title"><?= $t[$lang]['amana_section'] ?></div>
-                <div class="branch-badge amana-report-badge"><?= count($amanaCars) ?> <?= $t[$lang]['cars_count'] ?></div>
+                <span class="bh-dots scr"></span>
+                <div class="branch-badge amana-report-badge"><span class="bb-n"><?= count($amanaCars) ?></span> <?= $t[$lang]['cars_count'] ?></div>
+                <button type="button" class="bh-fold scr" aria-label="fold">▾</button>
             </div>
             <table class="inv-table">
                 <thead>
@@ -980,14 +1050,14 @@ input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(1) opacit
 
                         $sinceFmt = !empty($car['started_at']) ? date('Y-m-d', strtotime($car['started_at'])) : '—';
                     ?>
-                    <tr class="car-row" data-id="<?= (int)$car['id'] ?>" tabindex="0">
+                    <tr class="car-row" data-id="<?= (int)$car['id'] ?>" tabindex="0"<?= $rowAttrs($car, 'amana') ?>>
                         <td class="num-cell"><?= $ac++ ?></td>
                         <td class="brand-cell"><?= htmlspecialchars($car['brand']) ?></td>
                         <td><?= htmlspecialchars($car['model']) ?></td>
                         <td><?= htmlspecialchars($car['trim_name']) ?></td>
                         <td><?= htmlspecialchars($car['car_year']) ?></td>
-                        <td><?= htmlspecialchars($cDisplay) ?></td>
-                        <td class="chassis-cell"><?= htmlspecialchars($car['chassis']) ?></td>
+                        <td><i class="sw scr" style="background:<?= sr_swatch((string)$car['color']) ?>"></i><?= htmlspecialchars($cDisplay) ?></td>
+                        <td class="chassis-cell"><span class="ch-chip"><?= htmlspecialchars($car['chassis']) ?></span><?= $agePill($car) ?></td>
                         <td><?= htmlspecialchars($bDisplay) ?></td>
                         <td class="amana-dealer-cell"><?= htmlspecialchars($car['dealer_name'] ?? '—') ?></td>
                         <td><?= htmlspecialchars($sinceFmt) ?></td>
@@ -998,7 +1068,7 @@ input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(1) opacit
         </div>
     </div>
 
-    <div class="grand-card amana-grand-card">
+    <div class="grand-card amana-grand-card prn">
         <div class="grand-label"><?= $t[$lang]['amana_total'] ?></div>
         <div class="grand-number"><?= count($amanaCars) ?></div>
     </div>
@@ -1018,7 +1088,7 @@ input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(1) opacit
     </div>
 
     <!-- ── GRAND TOTAL ───────────────────────────────── -->
-    <div class="grand-card">
+    <div class="grand-card prn">
         <div class="grand-label">🚗 <?= $t[$lang]['available_only'] ?></div>
         <div class="grand-number"><?= $totalCars ?></div>
     </div>
@@ -1033,12 +1103,428 @@ input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(1) opacit
 <?php endif; ?>
 </script>
 
+<!-- ══════════ Screen-only polish. Nothing below changes what prints. ══════════ -->
+<style>
+@media print { .scr { display:none !important; } }
+@media screen {
+    .prn { display:none !important; }
+
+    /* ambient light behind the page, like the dashboard */
+    body::before {
+        content:''; position:fixed; inset:0; z-index:-1; pointer-events:none;
+        background:
+            radial-gradient(ellipse 55% 40% at 88% -6%, rgba(147,51,234,.16), transparent 70%),
+            radial-gradient(ellipse 45% 35% at 6% 2%, rgba(34,197,94,.11), transparent 70%),
+            radial-gradient(ellipse 60% 45% at 50% 110%, rgba(59,130,246,.08), transparent 70%);
+    }
+
+    /* ── headline numbers ── */
+    .kpi-row { display:grid; grid-template-columns:repeat(auto-fit,minmax(165px,1fr)); gap:12px; margin-bottom:18px; }
+    .kpi {
+        position:relative; overflow:hidden; padding:18px 20px 16px; border-radius:20px;
+        background:linear-gradient(160deg, rgba(20,30,52,.95), rgba(10,16,32,.95));
+        border:1px solid rgba(255,255,255,.07); box-shadow:0 8px 30px rgba(0,0,0,.4);
+    }
+    .kpi::before { content:''; position:absolute; inset-inline:0; top:0; height:3px; background:var(--kc); }
+    .kpi::after  { content:''; position:absolute; width:140px; height:140px; border-radius:50%; top:-70px; inset-inline-end:-40px;
+                   background:radial-gradient(circle, var(--kc) 0%, transparent 70%); opacity:.14; }
+    .kpi-n { font-size:40px; font-weight:900; line-height:1; color:var(--kc); font-variant-numeric:tabular-nums; letter-spacing:-.02em; }
+    .kpi-l { font-size:12.5px; font-weight:800; color:#94a3b8; margin-top:8px; }
+    .k-total { --kc:#e2e8f0; } .k-av { --kc:#22c55e; } .k-res { --kc:#eab308; } .k-am { --kc:#f59e0b; } .k-age { --kc:#38bdf8; }
+    .k-total .kpi-n { background:linear-gradient(90deg,#fff,#c4b5fd); -webkit-background-clip:text; background-clip:text; -webkit-text-fill-color:transparent; }
+
+    /* ── branch jump bar, pinned ── */
+    .jumpbar {
+        position:sticky; top:0; z-index:60; display:flex; gap:8px; align-items:center;
+        margin:0 -20px 16px; padding:10px 20px; overflow-x:auto; scrollbar-width:none;
+        background:rgba(2,6,23,.9); backdrop-filter:blur(16px); -webkit-backdrop-filter:blur(16px);
+        border-bottom:1px solid rgba(255,255,255,.07);
+    }
+    .jumpbar::-webkit-scrollbar { display:none; }
+    .jumpbar:empty { display:none; }
+    .jp {
+        flex-shrink:0; display:inline-flex; align-items:center; gap:8px; height:36px; padding:0 14px 0 10px;
+        border-radius:50px; border:1px solid rgba(255,255,255,.1); background:rgba(255,255,255,.04);
+        color:#cbd5e1; font-family:inherit; font-size:13px; font-weight:800; cursor:pointer;
+        transition:background .25s, color .25s, border-color .25s, box-shadow .25s, transform .15s;
+    }
+    .jp:hover { transform:translateY(-1px); color:#fff; }
+    .jp i { width:10px; height:10px; border-radius:50%; background:var(--bc); box-shadow:0 0 0 3px color-mix(in srgb, var(--bc) 25%, transparent); }
+    .jp b { font-size:11.5px; font-weight:900; padding:2px 8px; border-radius:50px; background:rgba(255,255,255,.08); color:#e2e8f0; }
+    .jp.on { color:#fff; border-color:transparent; background:linear-gradient(90deg, color-mix(in srgb, var(--bc) 85%, #000), var(--bc)); box-shadow:0 6px 20px color-mix(in srgb, var(--bc) 40%, transparent); }
+    .jp.on i { background:#fff; box-shadow:none; }
+    .jp.on b { background:rgba(0,0,0,.22); }
+
+    /* ── each branch is its own panel ── */
+    .table-card { background:none !important; border:none !important; box-shadow:none !important; padding:0 !important; }
+    .branch-section {
+        position:relative; margin-bottom:18px !important; padding:0 18px 12px;
+        background:linear-gradient(180deg, rgba(15,23,42,.94), rgba(10,16,32,.94));
+        border:1px solid rgba(255,255,255,.07); border-radius:22px; box-shadow:0 10px 36px rgba(0,0,0,.4);
+        scroll-margin-top:calc(var(--jb-h, 56px) + 10px);
+        transition:opacity .6s ease, transform .6s cubic-bezier(.22,1,.36,1);
+    }
+    .branch-section::before {                 /* branch colour down the leading edge */
+        content:''; position:absolute; top:18px; bottom:18px; inset-inline-start:0; width:3px; border-radius:3px;
+        background:linear-gradient(180deg, var(--bc,#22c55e), transparent);
+    }
+    .branch-section.rv-wait { opacity:0; transform:translateY(22px); }
+
+    .branch-header {
+        position:sticky; top:var(--jb-h, 56px); z-index:40;
+        margin:0 -18px 10px !important; padding:14px 18px !important;
+        justify-content:flex-start !important; gap:12px !important;
+        background:linear-gradient(90deg, color-mix(in srgb, var(--bc,#22c55e) 13%, #0c1426), #0c1426 70%) !important;
+        border-bottom:1px solid rgba(255,255,255,.07) !important; border-radius:22px 22px 0 0;
+        backdrop-filter:blur(14px);
+    }
+    .amana-report-header { background:linear-gradient(90deg, rgba(245,158,11,.18), #0c1426 70%) !important; }
+    .branch-section.folded .branch-header { border-radius:22px; border-bottom-color:transparent !important; margin-bottom:0 !important; }
+    .branch-section.folded { padding-bottom:0; }
+    .branch-section.folded .inv-table { display:none !important; }
+    .branch-title { font-size:20px !important; }
+    .branch-badge { margin-inline-start:auto; font-size:13px !important; }
+
+    .bh-ring { position:relative; width:46px; height:46px; flex-shrink:0; }
+    .bh-ring svg { transform:rotate(-90deg); display:block; }
+    .bh-ring .bg { stroke:rgba(255,255,255,.08); }
+    .bh-ring .fg { stroke:var(--bc,#22c55e); stroke-linecap:round; transition:stroke-dashoffset 1.1s cubic-bezier(.22,1,.36,1); }
+    .bh-ring em { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; font-style:normal; font-size:11px; font-weight:900; color:#e2e8f0; }
+    .bh-dots { display:flex; gap:5px; align-items:center; flex-wrap:wrap; }
+    .bh-dots span { display:inline-flex; align-items:center; gap:4px; height:24px; padding:0 8px 0 4px; border-radius:50px; background:rgba(255,255,255,.05); border:1px solid rgba(255,255,255,.07); font-size:11px; font-weight:900; color:#cbd5e1; }
+    .bh-dots span i { width:14px; height:14px; border-radius:50%; border:1px solid rgba(255,255,255,.3); }
+    .bh-fold { width:34px; height:34px; border-radius:11px; border:1px solid rgba(255,255,255,.12); background:rgba(255,255,255,.05); color:#cbd5e1; cursor:pointer; font-size:14px; flex-shrink:0; transition:transform .3s, background .2s; }
+    .bh-fold:hover { background:rgba(255,255,255,.1); }
+    .branch-section.folded .bh-fold { transform:rotate(-90deg); }
+    html[dir="rtl"] .branch-section.folded .bh-fold { transform:rotate(90deg); }
+
+    /* ── the tables: same columns, sharper ── */
+    .inv-table thead th { background:#0d1526; }
+    .inv-table tbody tr.car-row.zb:not(.res-row) td { background:rgba(255,255,255,.018); }
+    .inv-table tbody tr.car-row:hover td { background:rgba(147,51,234,.07) !important; }
+    .sw { display:inline-block; width:12px; height:12px; border-radius:50%; border:1px solid rgba(255,255,255,.35); vertical-align:-1px; margin-inline-end:7px; box-shadow:0 0 0 2px rgba(0,0,0,.25); }
+    .ch-chip { display:inline-block; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:12px; letter-spacing:.05em; color:#bef264; background:rgba(163,230,53,.07); border:1px solid rgba(163,230,53,.2); border-radius:8px; padding:3px 8px; }
+    .age-pill { display:inline-flex; align-items:center; height:20px; padding:0 7px; margin-inline-start:7px; border-radius:50px; font-size:10.5px; font-weight:900; font-family:inherit; letter-spacing:0; vertical-align:1px; }
+    .age-pill::after { content:attr(data-u); margin-inline-start:3px; font-weight:800; opacity:.8; }
+    .age-pill.g { background:rgba(34,197,94,.13); color:#4ade80; }
+    .age-pill.a { background:rgba(245,158,11,.14); color:#fbbf24; }
+    .age-pill.r { background:rgba(239,68,68,.15); color:#f87171; }
+
+    /* reserved rows keep their gold, with a slow light sweeping across */
+    .inv-table tbody tr.res-row {
+        background-image:linear-gradient(100deg, transparent 35%, rgba(253,224,71,.17) 50%, transparent 65%) !important;
+        background-size:250% 100% !important; background-repeat:no-repeat !important;
+        animation:resSweep 5s ease-in-out infinite;
+    }
+    .inv-table tbody tr.res-row td:first-child { box-shadow:inset 3px 0 0 #eab308; }
+    html[dir="rtl"] .inv-table tbody tr.res-row td:first-child { box-shadow:inset -3px 0 0 #eab308; }
+    @keyframes resSweep { 0% { background-position:130% 0; } 55%,100% { background-position:-130% 0; } }
+
+    /* hover preview of the car photo, on computers only */
+    .peek {
+        position:fixed; z-index:450; width:230px; height:140px; border-radius:18px; overflow:hidden; pointer-events:none;
+        background:radial-gradient(ellipse 85% 60% at 50% 104%, #cbd5e1, transparent 72%), linear-gradient(180deg,#fff,#e2e8f0);
+        border:1px solid rgba(255,255,255,.25); box-shadow:0 18px 50px rgba(0,0,0,.6);
+        opacity:0; transform:scale(.92) translateY(6px); transition:opacity .18s ease, transform .2s ease;
+    }
+    .peek.on { opacity:1; transform:none; }
+    .peek img { width:100%; height:100%; object-fit:contain; padding:14px 16px; mix-blend-mode:multiply; }
+    .peek span { position:absolute; bottom:7px; inset-inline-start:10px; font-size:10.5px; font-weight:900; color:#334155; background:rgba(255,255,255,.8); border-radius:50px; padding:2px 8px; }
+
+    @media (max-width:700px) {
+        .jumpbar { margin:0 -20px 14px; padding:9px 14px; }
+        .kpi-row { grid-template-columns:repeat(2,1fr); gap:9px; }
+        .kpi { padding:14px 14px 12px; border-radius:16px; }
+        .kpi-n { font-size:30px; }
+        .kpi-l { font-size:11px; }
+        .k-total { grid-column:1 / -1; }
+        .branch-section { padding:0 10px 10px; border-radius:18px; }
+        .branch-header { margin:0 -10px 8px !important; padding:11px 12px !important; border-radius:18px 18px 0 0; flex-wrap:wrap !important; }
+        .bh-ring { width:40px; height:40px; }
+        .branch-title { font-size:17px !important; }
+        .bh-dots { order:5; width:100%; }
+    }
+    @media (min-width:701px) {
+        .inv-table thead th { position:sticky; top:calc(var(--jb-h, 56px) + var(--bh-h, 74px)); z-index:30; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+        .inv-table tbody tr.res-row { animation:none; }
+        .branch-section, .bh-ring .fg { transition:none; }
+        .branch-section.rv-wait { opacity:1; transform:none; }
+    }
+}
+</style>
+
+<div class="peek scr" id="peek"><img alt=""><span></span></div>
+
+<script>
+(function () {
+    const AR = <?= json_encode($lang === 'ar') ?>;
+    const DAY = AR ? 'يوم' : 'd';
+    const PALETTE = ['#22c55e','#8b5cf6','#3b82f6','#f59e0b','#ec4899','#14b8a6','#ef4444','#a3e635','#f97316','#06b6d4'];
+
+    const form     = document.querySelector('.filters-card');
+    const stockSec = Array.from(document.querySelectorAll('.table-card:not(.amana-report-card) .branch-section[data-branch]'));
+    const amSec    = document.querySelector('.amana-report-card .branch-section');
+    const amCard   = document.querySelector('.amana-report-card');
+    const amGrand  = document.querySelector('.amana-grand-card');
+    const allSec   = stockSec.concat(amSec ? [amSec] : []);
+    const empty    = document.querySelector('.live-empty');
+    const jump     = document.getElementById('jumpBar');
+
+    // a colour per branch, shared by the ring, the edge, the pills
+    stockSec.forEach((sec, i) => sec.style.setProperty('--bc', PALETTE[i % PALETTE.length]));
+    if (amSec) amSec.style.setProperty('--bc', '#f59e0b');
+    document.querySelectorAll('.age-pill').forEach(p => p.setAttribute('data-u', DAY));
+
+    /* ════ live filter: the same five fields, applied instantly ════ */
+    function val(name) { const el = form && form.elements[name]; return el ? String(el.value || '').trim() : ''; }
+    function matches(tr, st) {
+        if (st.q && (tr.getAttribute('data-search') || '').indexOf(st.q) === -1) return false;
+        if (st.branch && tr.getAttribute('data-branch') !== st.branch) return false;
+        if (st.brand && tr.getAttribute('data-brand') !== st.brand) return false;
+        const d = tr.getAttribute('data-date') || '';
+        if (st.from && (!d || d < st.from + ' 00:00:00')) return false;
+        if (st.to   && (!d || d > st.to   + ' 23:59:59')) return false;
+        return true;
+    }
+    function runSection(sec, st) {
+        let n = 0;
+        sec.querySelectorAll('tr.car-row').forEach(tr => {
+            const ok = matches(tr, st);
+            tr.style.display = ok ? '' : 'none';
+            if (ok) {
+                n++;
+                const num = tr.querySelector('.num-cell'); if (num) num.textContent = n;   // numbering restarts per branch, as before
+                tr.classList.toggle('zb', n % 2 === 0);
+            }
+        });
+        const bn = sec.querySelector('.bb-n'); if (bn) bn.textContent = n;
+        sec.style.display = n ? '' : 'none';
+        sec._n = n;
+        return n;
+    }
+
+    const shown = { total: 0, av: 0, res: 0, am: 0, age: 0 };
+    function apply(silentUrl) {
+        const st = { q: val('search').toLowerCase(), branch: val('branch'), brand: val('brand'), from: val('date_from'), to: val('date_to') };
+        let total = 0;
+        stockSec.forEach(sec => total += runSection(sec, st));
+        const am = amSec ? runSection(amSec, st) : 0;
+        if (amCard)  amCard.style.display  = am ? '' : 'none';
+        if (amGrand) { amGrand.style.display = am ? '' : 'none'; const g = amGrand.querySelector('.grand-number'); if (g) g.textContent = am; }
+
+        // the numbers that print: total card and grand total follow the filters, exactly as before
+        const tc = document.querySelector('.c-total .stat-number'); if (tc) tc.textContent = total;
+        document.querySelectorAll('.grand-card:not(.amana-grand-card) .grand-number').forEach(g => g.textContent = total);
+        if (empty) empty.style.display = (total === 0 && stockSec.length) ? '' : 'none';
+
+        // headline numbers
+        const vis = stockSec.flatMap(sec => Array.from(sec.querySelectorAll('tr.car-row')).filter(tr => tr.style.display !== 'none'));
+        const res = vis.filter(tr => tr.classList.contains('res-row')).length;
+        const ages = vis.map(tr => tr.getAttribute('data-age')).filter(a => a !== '' && a != null).map(Number);
+        countTo('total', total); countTo('av', total - res); countTo('res', res); countTo('am', am);
+        countTo('age', ages.length ? Math.round(ages.reduce((a, b) => a + b, 0) / ages.length) : 0);
+
+        allSec.forEach(sec => decorate(sec, total));
+        buildJump();
+        if (!silentUrl) syncUrl(st);
+    }
+
+    /* ════ ring + colour dots on each branch header ════ */
+    function decorate(sec, total) {
+        const n = sec._n || 0;
+        const isAm = sec.getAttribute('data-branch') === '__amana__';
+        const pct = isAm ? 100 : (total ? Math.round(n * 100 / total) : 0);
+        const ring = sec.querySelector('.bh-ring');
+        if (ring) {
+            const r = 18, c = 2 * Math.PI * r;
+            if (!ring._built) {
+                ring.innerHTML = '<svg width="100%" height="100%" viewBox="0 0 46 46"><circle class="bg" cx="23" cy="23" r="' + r + '" fill="none" stroke-width="5"></circle>' +
+                                 '<circle class="fg" cx="23" cy="23" r="' + r + '" fill="none" stroke-width="5" stroke-dasharray="' + c.toFixed(1) + '" stroke-dashoffset="' + c.toFixed(1) + '"></circle></svg><em></em>';
+                ring._built = true;
+            }
+            ring.querySelector('em').textContent = isAm ? n : pct + '%';
+            const fg = ring.querySelector('.fg');
+            requestAnimationFrame(() => fg.setAttribute('stroke-dashoffset', (c * (1 - pct / 100)).toFixed(1)));
+            ring.title = isAm ? '' : (AR ? 'حصة الفرع من المخزون' : "branch's share of stock");
+        }
+        const dots = sec.querySelector('.bh-dots');
+        if (dots) {
+            const m = {};
+            sec.querySelectorAll('tr.car-row').forEach(tr => {
+                if (tr.style.display === 'none') return;
+                const k = tr.getAttribute('data-sw') + '|' + tr.getAttribute('data-cl');
+                m[k] = (m[k] || 0) + 1;
+            });
+            const list = Object.entries(m).sort((a, b) => b[1] - a[1]);
+            dots.innerHTML = list.slice(0, 7).map(([k, v]) => {
+                const [sw, cl] = k.split('|');
+                return '<span title="' + cl.replace(/"/g, '&quot;') + '"><i style="background:' + sw + '"></i>' + v + '</span>';
+            }).join('') + (list.length > 7 ? '<span>+' + (list.length - 7) + '</span>' : '');
+        }
+    }
+
+    /* ════ jump bar + scroll tracking ════ */
+    function buildJump() {
+        if (!jump) return;
+        const act = jump.querySelector('.jp.on');
+        const activeKey = act ? act.getAttribute('data-b') : null;
+        jump.innerHTML = allSec.filter(sec => (sec._n || 0) > 0).map(sec =>
+            '<button type="button" class="jp" data-b="' + sec.getAttribute('data-branch').replace(/"/g, '&quot;') + '" style="--bc:' + getComputedStyle(sec).getPropertyValue('--bc').trim() + '">' +
+            '<i></i>' + (sec.getAttribute('data-label') || '') + ' <b>' + sec._n + '</b></button>').join('');
+        jump.querySelectorAll('.jp').forEach(b => {
+            if (b.getAttribute('data-b') === activeKey) b.classList.add('on');
+            b.addEventListener('click', () => {
+                const sec = allSec.find(s => s.getAttribute('data-branch') === b.getAttribute('data-b'));
+                if (!sec) return;
+                jump._hold = { key: b.getAttribute('data-b'), until: Date.now() + 900 };
+                spy();
+                sec.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            });
+        });
+        spy();
+    }
+    function spy() {
+        if (!jump) return;
+        const line = (parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--jb-h')) || 56) + 90;
+        const visible = allSec.filter(s => s.style.display !== 'none');
+        let cur = null;
+        visible.forEach(sec => { if (sec.getBoundingClientRect().top <= line) cur = sec; });
+        if (!cur) cur = visible[0] || null;
+        // at the very bottom the last sections can't reach the top line, so the last one wins
+        if (innerHeight + scrollY >= document.documentElement.scrollHeight - 4 && visible.length) cur = visible[visible.length - 1];
+        // a pill that was just tapped stays lit while the page glides to it
+        if (jump._hold && Date.now() < jump._hold.until) cur = allSec.find(s => s.getAttribute('data-branch') === jump._hold.key) || cur;
+        const key = cur ? cur.getAttribute('data-branch') : null;
+        jump.querySelectorAll('.jp').forEach(b => {
+            const on = b.getAttribute('data-b') === key;
+            if (on && !b.classList.contains('on')) {
+                const l = b.offsetLeft - jump.clientWidth / 2 + b.offsetWidth / 2;
+                jump.scrollTo({ left: l, behavior: 'smooth' });
+            }
+            b.classList.toggle('on', on);
+        });
+    }
+    let spyT = null;
+    window.addEventListener('scroll', () => { if (spyT) return; spyT = requestAnimationFrame(() => { spyT = null; spy(); }); }, { passive: true });
+
+    /* ════ pinned offsets: the jump bar, then the branch header, then the column titles ════ */
+    function measure() {
+        const root = document.documentElement.style;
+        root.setProperty('--jb-h', (jump && jump.offsetHeight ? jump.offsetHeight : 0) + 'px');
+        const h = document.querySelector('.table-card:not(.amana-report-card) .branch-section:not(.folded) .branch-header');
+        if (h) root.setProperty('--bh-h', h.offsetHeight + 'px');
+    }
+    window.addEventListener('resize', measure);
+
+    /* ════ numbers count up ════ */
+    function countTo(k, target) {
+        const el = document.querySelector('.kpi-n[data-k="' + k + '"]'); if (!el) return;
+        const from = shown[k] || 0; shown[k] = target;
+        if (from === target) { el.textContent = target; return; }
+        const t0 = performance.now(), dur = from === 0 ? 1100 : 450;
+        (function step(t) {
+            const p = Math.min(1, (t - t0) / dur), e = 1 - Math.pow(1 - p, 3);
+            el.textContent = Math.round(from + (target - from) * e);
+            if (p < 1) requestAnimationFrame(step);
+        })(t0);
+    }
+
+    /* ════ fold a branch away, remembered per browser ════ */
+    allSec.forEach(sec => {
+        const key = 'sr_fold_' + sec.getAttribute('data-branch');
+        try { if (localStorage.getItem(key) === '1') sec.classList.add('folded'); } catch (e) {}
+        const btn = sec.querySelector('.bh-fold');
+        if (btn) btn.addEventListener('click', ev => {
+            ev.stopPropagation();
+            const f = sec.classList.toggle('folded');
+            try { localStorage.setItem(key, f ? '1' : '0'); } catch (e) {}
+            measure(); spy();
+        });
+    });
+
+    /* ════ inputs: no more reloads ════ */
+    function syncUrl(st) {
+        try {
+            const p = new URLSearchParams(location.search);
+            [['search', val('search')], ['branch', st.branch], ['brand', st.brand], ['date_from', st.from], ['date_to', st.to]]
+                .forEach(([k, v]) => v ? p.set(k, v) : p.delete(k));
+            p.delete('print');
+            history.replaceState(null, '', location.pathname + '?' + p.toString());
+            document.querySelectorAll('.lang-row a').forEach(a => {
+                const q = new URLSearchParams(p); q.set('lang', new URL(a.href, location.href).searchParams.get('lang') || 'ar');
+                a.href = location.pathname + '?' + q.toString();
+            });
+        } catch (e) {}
+    }
+    if (form) {
+        let t = null;
+        form.addEventListener('submit', e => { e.preventDefault(); apply(); });
+        if (form.elements.search) form.elements.search.addEventListener('input', () => { clearTimeout(t); t = setTimeout(apply, 110); });
+        ['branch', 'brand', 'date_from', 'date_to'].forEach(n => { if (form.elements[n]) form.elements[n].addEventListener('change', () => apply()); });
+        const reset = form.querySelector('.btn-reset');
+        if (reset) reset.addEventListener('click', e => {
+            e.preventDefault();
+            ['search', 'branch', 'brand', 'date_from', 'date_to'].forEach(n => { if (form.elements[n]) form.elements[n].value = ''; });
+            apply();
+        });
+    }
+
+    /* ════ entrance: branch panels rise in one after another ════ */
+    const reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if ('IntersectionObserver' in window && !reduce) {
+        let q = 0;
+        const io = new IntersectionObserver(entries => entries.forEach(en => {
+            if (!en.isIntersecting) return;
+            const el = en.target; io.unobserve(el);
+            setTimeout(() => el.classList.remove('rv-wait'), (q++ % 6) * 90);
+        }), { rootMargin: '0px 0px -40px 0px' });
+        allSec.forEach(sec => { sec.classList.add('rv-wait'); io.observe(sec); });
+        window.addEventListener('beforeprint', () => allSec.forEach(s => s.classList.remove('rv-wait')));
+    }
+
+    /* ════ hover preview of the car photo (computers only) ════ */
+    const peek = document.getElementById('peek');
+    if (peek && window.matchMedia && window.matchMedia('(hover: hover) and (pointer: fine)').matches) {
+        const pimg = peek.querySelector('img'), plab = peek.querySelector('span');
+        let cur = null;
+        document.querySelectorAll('tr.car-row[data-img]').forEach(tr => {
+            const src = tr.getAttribute('data-img'); if (!src) return;
+            tr.addEventListener('mouseenter', () => {
+                cur = tr; pimg.src = src; plab.textContent = tr.getAttribute('data-cl') || '';
+                peek.classList.add('on');
+            });
+            tr.addEventListener('mousemove', e => {
+                const w = 230, h = 140, pad = 18;
+                let x = e.clientX + pad, y = e.clientY - h - 12;
+                if (AR) x = e.clientX - w - pad;
+                if (x + w > innerWidth - 8) x = e.clientX - w - pad;
+                if (x < 8) x = e.clientX + pad;
+                if (y < 8) y = e.clientY + 22;
+                peek.style.left = x + 'px'; peek.style.top = y + 'px';
+            });
+            tr.addEventListener('mouseleave', () => { if (cur === tr) peek.classList.remove('on'); });
+            tr.addEventListener('click', () => peek.classList.remove('on'));
+        });
+        pimg.addEventListener('error', () => peek.classList.remove('on'));
+    }
+
+    measure();
+    apply(true);      // reproduce whatever the URL asked for, before anything is drawn or printed
+    measure();
+    window.addEventListener('load', () => { measure(); spy(); });
+})();
+</script>
+
 <!-- ══════════ Car card: opens when any row is tapped ══════════ -->
 <style>
-.car-row { cursor:pointer; }
-.car-row:focus-visible { outline:2px solid #9333ea; outline-offset:-2px; }
-.inv-table tbody tr.car-row:hover td:first-child { box-shadow:inset 3px 0 0 #9333ea; }
-html[dir="rtl"] .inv-table tbody tr.car-row:hover td:first-child { box-shadow:inset -3px 0 0 #9333ea; }
+@media screen {
+    .car-row { cursor:pointer; }
+    .car-row:focus-visible { outline:2px solid #9333ea; outline-offset:-2px; }
+    .inv-table tbody tr.car-row:hover td:first-child { box-shadow:inset 3px 0 0 #9333ea; }
+    html[dir="rtl"] .inv-table tbody tr.car-row:hover td:first-child { box-shadow:inset -3px 0 0 #9333ea; }
+}
 
 .cc-ov { position:fixed; inset:0; z-index:500; background:rgba(2,6,23,.74); backdrop-filter:blur(6px);
          display:none; align-items:center; justify-content:center; padding:18px; }
