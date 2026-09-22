@@ -2,6 +2,7 @@
 
 require 'auth.php';
 require 'config.php';
+require 'car_images_helpers.php';
 
 perm_require('page.add_vehicle');
 
@@ -225,6 +226,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             );
         }
     }
+}
+
+/* ─── Car image library, exported for the live preview ─── */
+$carImgJs = [];
+foreach (car_images_map($pdo) as $k => $row) {
+    $u = car_image_url($row, true);
+    if ($u !== '') $carImgJs[$k] = $u;
 }
 
 $isRTL = ($lang === 'ar');
@@ -779,6 +787,19 @@ html[dir="rtl"] .select-loading { left: 40px; }
 .submit-btn:active { transform: translateY(0); }
 
 /* ── PREVIEW CARD ────────────────────────────────────── */
+.preview-photo {
+    display: none; position: relative; aspect-ratio: 16/9; overflow: hidden;
+    border-radius: 16px; margin-bottom: 14px; background: #0d1526;
+    animation: ppFade .35s ease both;
+}
+.preview-photo.on { display: block; }
+.preview-photo img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.preview-photo .pp-tag {
+    position: absolute; top: 7px; inset-inline-start: 7px;
+    background: rgba(2,6,23,.72); color: #94a3b8; font-size: 9px; font-weight: 800;
+    padding: 3px 8px; border-radius: 6px;
+}
+@keyframes ppFade { from { opacity: 0; transform: scale(.97); } to { opacity: 1; transform: none; } }
 .preview-card {
     position: sticky;
     top: 20px;
@@ -1280,6 +1301,11 @@ html[dir="rtl"] .select-loading { left: 40px; }
                 <?= $t[$lang]['preview'] ?>
             </div>
 
+            <div class="preview-photo" id="previewPhoto">
+                <img id="previewPhotoImg" alt="">
+                <span class="pp-tag"><?= $lang === 'ar' ? 'صورة توضيحية' : 'Illustration' ?></span>
+            </div>
+
             <div class="preview-vehicle-name" id="previewVehicle">—</div>
 
             <div class="vehicle-badge">
@@ -1354,6 +1380,37 @@ html[dir="rtl"] .select-loading { left: 40px; }
     const pBranch   = document.getElementById('previewBranch');
     const pChassis  = document.getElementById('previewChassis');
 
+    const pPhoto    = document.getElementById('previewPhoto');
+    const pPhotoImg = document.getElementById('previewPhotoImg');
+
+    /* The image library, keyed "brand|model|trim|year|colour" (lower case).
+       An empty slot in a key means that row applies to any value there. */
+    const CAR_IMAGES = <?= json_encode($carImgJs, JSON_UNESCAPED_UNICODE) ?>;
+
+    const imgNorm = v => String(v == null ? '' : v).trim().toLowerCase();
+
+    /* Same order as car_image_resolve() in car_images_helpers.php. */
+    function findCarImage(brand, model, trim, year, color) {
+        const b = imgNorm(brand), m = imgNorm(model);
+        if (!b || !m) return '';
+        const t = imgNorm(trim), y = imgNorm(year), c = imgNorm(color);
+        const p = b + '|' + m + '|';
+        const tries = [
+            p + t + '|' + y + '|' + c,
+            p + t + '||' + c,
+            p + '|' + y + '|' + c,
+            p + '||' + c,
+            p + t + '|' + y + '|',
+            p + t + '||',
+            p + '|' + y + '|',
+            p + '||'
+        ];
+        for (let i = 0; i < tries.length; i++) {
+            if (CAR_IMAGES[tries[i]]) return CAR_IMAGES[tries[i]];
+        }
+        return '';
+    }
+
     const progressFill  = document.getElementById('progressFill');
     const progressLabel = document.getElementById('progressLabel');
     const chassisHint   = document.getElementById('chassisHint');
@@ -1419,6 +1476,16 @@ html[dir="rtl"] .select-loading { left: 40px; }
 
         if (vehicleName) {
             pVehicle.style.color = 'var(--green)';
+        }
+
+        /* Show the library image for exactly this model and colour. */
+        const imgUrl = findCarImage(brandSel.value, modelSel.value, trimSel.value, yearSel.value, colorSel.value);
+        if (imgUrl) {
+            if (pPhotoImg.getAttribute('src') !== imgUrl) pPhotoImg.src = imgUrl;
+            pPhoto.classList.add('on');
+        } else {
+            pPhoto.classList.remove('on');
+            pPhotoImg.removeAttribute('src');
         }
 
         updateProgress();

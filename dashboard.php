@@ -3,6 +3,7 @@
 require 'auth.php';
 require 'config.php';
 require 'reserve_helpers.php';
+require 'car_images_helpers.php';
 
 $lang = $_GET['lang'] ?? 'ar';
 
@@ -324,6 +325,10 @@ foreach ($availableCarsList as $c) {
 }
 $reserveInfo = reservation_info($pdo, $reservedIds);
 
+/* ─── Car image library: one image per model+colour, loaded once for every
+       card on the page rather than a query per card ─── */
+$carImgMap = car_images_map($pdo);
+
 /* ─── Pull active امانة details (dealer, since-when, who) for the cards ─── */
 $amanaInfo = [];
 if (!empty($amanaCarsList)) {
@@ -525,6 +530,12 @@ function fmtPrice($p) {
         /* Vehicle card */
         .vehicle-card { background:rgba(15,23,42,.88); border:1px solid rgba(255,255,255,.08); border-radius:26px; padding:20px; transition:transform .25s,border-color .25s,box-shadow .25s; backdrop-filter:blur(15px); display:flex; flex-direction:column; gap:16px; }
         .vehicle-card:hover { transform:translateY(-4px); border-color:rgba(147,51,234,.4); box-shadow:0 12px 40px rgba(147,51,234,.1); }
+        /* Car photo banner — the model+colour image from the image library */
+        .vehicle-photo { position:relative; margin:-20px -20px 0; aspect-ratio:16/9; overflow:hidden; border-radius:26px 26px 0 0; background:#0d1526; }
+        .vehicle-photo img { width:100%; height:100%; object-fit:cover; display:block; }
+        .vehicle-photo::after { content:''; position:absolute; inset:0; background:linear-gradient(to bottom,transparent 55%,rgba(15,23,42,.9)); pointer-events:none; }
+        .vehicle-photo .vp-tag { position:absolute; top:8px; inset-inline-start:8px; z-index:2; background:rgba(2,6,23,.7); color:#94a3b8; font-size:9px; font-weight:800; padding:3px 8px; border-radius:6px; letter-spacing:.02em; }
+        .vehicle-card.sold-card .vehicle-photo img { filter:grayscale(.45); }
         .vehicle-card.sold-card { opacity:.85; border-color:rgba(239,68,68,.15); }
         .vehicle-card.sold-card:hover { border-color:rgba(239,68,68,.4); box-shadow:0 12px 40px rgba(239,68,68,.1); }
         .vehicle-header { display:flex; justify-content:space-between; align-items:flex-start; gap:10px; }
@@ -1047,6 +1058,15 @@ function fmtPrice($p) {
         ?>
             <div class="vehicle-card <?= $isReserved ? 'reserved-card' : '' ?>" data-search="<?= htmlspecialchars($searchBlob) ?>">
 
+                <?php $cardImg = car_image_url_for($carImgMap, $car); ?>
+                <?php if ($cardImg !== ''): ?>
+                <div class="vehicle-photo">
+                    <img src="<?= htmlspecialchars($cardImg) ?>" loading="lazy"
+                         alt="<?= htmlspecialchars($car['brand'].' '.$car['model'].' '.$displayColor) ?>">
+                    <span class="vp-tag"><?= $lang === 'ar' ? 'صورة توضيحية' : 'Illustration' ?></span>
+                </div>
+                <?php endif; ?>
+
                 <div class="vehicle-header">
                     <div class="qr-sticker" title="QR"
                          data-ch="<?= htmlspecialchars($car['chassis'], ENT_QUOTES) ?>"
@@ -1191,6 +1211,14 @@ function fmtPrice($p) {
                 $noteText      = trim((string)($car['notes'] ?? ''));
             ?>
                 <div class="vehicle-card sold-card">
+                    <?php $cardImg = car_image_url_for($carImgMap, $car); ?>
+                    <?php if ($cardImg !== ''): ?>
+                    <div class="vehicle-photo">
+                        <img src="<?= htmlspecialchars($cardImg) ?>" loading="lazy"
+                             alt="<?= htmlspecialchars($car['brand'].' '.$car['model'].' '.$displayColor) ?>">
+                        <span class="vp-tag"><?= $lang === 'ar' ? 'صورة توضيحية' : 'Illustration' ?></span>
+                    </div>
+                    <?php endif; ?>
                     <div class="vehicle-header">
                         <div class="qr-sticker" title="QR"
                              data-ch="<?= htmlspecialchars($car['chassis'], ENT_QUOTES) ?>"
@@ -1276,6 +1304,11 @@ function fmtPrice($p) {
             <?php if (can('page.incoming_cars')): ?>
             <a href="incoming_cars.php?lang=<?= $lang ?>" class="more-item">
                 <span class="mi-icon">🚚</span><?= $lang === 'ar' ? 'الالوان' : 'Incoming' ?>
+            </a>
+            <?php endif; ?>
+            <?php if (can('page.installments')): ?>
+            <a href="installments.php?lang=<?= $lang ?>" class="more-item">
+                <span class="mi-icon">🏦</span><?= $lang === 'ar' ? 'التقسيط' : 'Installments' ?>
             </a>
             <?php endif; ?>
             <?php if (can('page.ads')): ?>

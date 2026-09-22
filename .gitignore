@@ -1,0 +1,3 @@
+# Uploaded car images live on the server, not in the repository.
+# (This repo is public — uploads must never be committed.)
+uploads/
