@@ -364,6 +364,42 @@ function perm_catalog(): array
             ],
         ],
 
+        'installments' => [
+            'ar' => 'التقسيط وموافقات البنوك', 'en' => 'Installments & Bank Approvals', 'icon' => '🏦',
+            'perms' => [
+                'page.installments' => [
+                    'ar' => 'صفحة التقسيط', 'en' => 'Installments page',
+                    'dar' => 'فتح صفحة التقسيط — طلبات موافقة البنوك على تقسيط العملاء',
+                    'den' => 'Open the installments page, where bank approval requests for customers live',
+                    'd' => [1, 1, 1],
+                ],
+                'installments.create' => [
+                    'ar' => 'إضافة طلب تقسيط', 'en' => 'Create an installment request',
+                    'dar' => 'تسجيل طلب جديد لعميل وسيارة، واختيار البنوك ونسبة المقدم لكل بنك',
+                    'den' => 'File a new request for a customer and car, picking the banks and each bank\'s down payment',
+                    'd' => [1, 1, 1],
+                ],
+                'installments.decide' => [
+                    'ar' => 'قبول أو رفض طلبات البنوك', 'en' => 'Accept or reject bank requests',
+                    'dar' => 'الرد على طلب بنك بالقبول أو الرفض مع ملاحظة اختيارية',
+                    'den' => 'Answer a bank line with approve or reject, with an optional note',
+                    'd' => [1, 1, 0],
+                ],
+                'installments.view_all' => [
+                    'ar' => 'رؤية كل الطلبات', 'en' => 'See everyone\'s requests',
+                    'dar' => 'رؤية طلبات كل الموظفين — بدون هذه الصلاحية يرى الموظف طلباته فقط',
+                    'den' => 'See every employee\'s requests. Without it, a user only sees their own',
+                    'd' => [1, 1, 0],
+                ],
+                'installments.delete' => [
+                    'ar' => 'حذف طلب تقسيط', 'en' => 'Delete an installment request',
+                    'dar' => 'حذف الطلب وكل بنوكه نهائياً',
+                    'den' => 'Permanently delete a request and all of its bank lines',
+                    'd' => [1, 0, 0],
+                ],
+            ],
+        ],
+
         'features' => [
             'ar' => 'ميزات أخرى', 'en' => 'Other Features', 'icon' => '⚙️',
             'perms' => [
