@@ -1487,11 +1487,6 @@ function fmtPrice($p) {
                 <span class="mi-icon">🏦</span><?= $lang === 'ar' ? 'التقسيط' : 'Installments' ?>
             </a>
             <?php endif; ?>
-            <?php if (can('page.notifications')): ?>
-            <a href="notifications.php?lang=<?= $lang ?>" class="more-item">
-                <span class="mi-icon">🔔</span><?= $lang === 'ar' ? 'الإشعارات' : 'Notifications' ?>
-            </a>
-            <?php endif; ?>
             <?php if (can('page.ads')): ?>
             <a href="ads.php?lang=<?= $lang ?>" class="more-item">
                 <span class="mi-icon">📣</span><?= $lang === 'ar' ? 'الإعلانات' : 'Ads' ?>
