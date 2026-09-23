@@ -63,7 +63,7 @@ body{min-height:100vh;background:var(--bg);color:var(--txt);font-family:<?= ($la
 .nf-step .v{height:58px;display:grid;place-items:center;margin-bottom:8px}
 .nf-step .v svg{height:46px;width:auto}
 .nf-step .v .pill{display:inline-flex;align-items:center;gap:6px;white-space:nowrap;padding:8px 11px;border-radius:12px;background:#1c1c1e;color:#fff;font-size:13px;font-weight:600;border:1px solid #3a3a3c}
-.nf-step .v .app{width:50px;height:50px;border-radius:13px;background:url(icons/icon-192.png?v=2) center/cover;box-shadow:0 6px 18px rgba(0,0,0,.4)}
+.nf-step .v .app{width:50px;height:50px;border-radius:13px;background:url(icons/logo.png?v=3) center/cover;box-shadow:0 6px 18px rgba(0,0,0,.4)}
 .nf-step p{font-size:13px;line-height:1.6;color:#e2e8f0}
 .nf-step p b{color:var(--g2)}
 .nf-msg{font-size:13px;font-weight:700;margin-top:10px;min-height:18px}
