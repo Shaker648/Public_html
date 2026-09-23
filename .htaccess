@@ -24,3 +24,11 @@ Options -Indexes
     Header set X-Frame-Options "SAMEORIGIN"
     Header set Referrer-Policy "strict-origin-when-cross-origin"
 </IfModule>
+
+# App files for phone notifications: always check for a new version, so a
+# changed logo / service worker reaches every phone straight away.
+<FilesMatch "^(sw\.js|manifest\.json|push_client\.js)$">
+    <IfModule mod_headers.c>
+        Header set Cache-Control "no-cache, must-revalidate"
+    </IfModule>
+</FilesMatch>

@@ -5,5 +5,5 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="First 1 Car">
-<link rel="apple-touch-icon" href="icons/logo.png?v=3">
-<link rel="icon" type="image/png" sizes="1254x1254" href="icons/logo.png?v=3">
+<link rel="apple-touch-icon" sizes="180x180" href="icons/apple-touch-icon.png?v=4">
+<link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png?v=4">
