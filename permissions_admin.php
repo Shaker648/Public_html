@@ -278,6 +278,15 @@ body {
 
 /* Tabs */
 .tabs { display:flex; gap:8px; margin-bottom:18px; flex-wrap:wrap; }
+.notif-card { display:flex; align-items:center; gap:16px; margin-bottom:18px; padding:16px 18px; border-radius:18px; text-decoration:none; color:#e2e8f0;
+    background:linear-gradient(120deg,rgba(22,163,74,.18),rgba(8,145,178,.14) 55%,rgba(147,51,234,.16)); border:1px solid rgba(34,197,94,.35);
+    box-shadow:0 10px 30px rgba(0,0,0,.25); transition:transform .15s, box-shadow .15s; }
+.notif-card:hover { transform:translateY(-2px); box-shadow:0 14px 36px rgba(34,197,94,.18); }
+.notif-card img { width:58px; height:58px; border-radius:14px; flex-shrink:0; box-shadow:0 6px 16px rgba(0,0,0,.4); }
+.notif-card .nc-t { font-size:17px; font-weight:800; }
+.notif-card .nc-s { font-size:13px; color:#94a3b8; margin-top:3px; line-height:1.6; }
+.notif-card .nc-go { margin-inline-start:auto; flex-shrink:0; padding:10px 16px; border-radius:12px; font-weight:800; font-size:14px; color:#fff; background:linear-gradient(90deg,#16a34a,#0891b2); white-space:nowrap; }
+@media (max-width:560px) { .notif-card { flex-wrap:wrap; } .notif-card .nc-go { width:100%; text-align:center; margin-inline-start:0; } }
 .tab {
     text-decoration:none; padding:12px 20px; border-radius:14px; font-weight:800; font-size:14px;
     background:var(--bg-card); border:1px solid var(--border); color:var(--muted-l);
@@ -422,6 +431,17 @@ body {
     <div class="flash"><?= $L['saved'] ?></div>
 <?php elseif ($flash === 'reset'): ?>
     <div class="flash"><?= $L['was_reset'] ?></div>
+<?php endif; ?>
+
+<?php if (can('page.notifications_admin')): ?>
+<a class="notif-card" href="notifications_admin.php?lang=<?= $lang ?>">
+    <img src="icons/icon-192.png?v=2" alt="">
+    <div>
+        <div class="nc-t">🔔 <?= $lang === 'ar' ? 'التحكم في الإشعارات' : 'Notification control' ?></div>
+        <div class="nc-s"><?= $lang === 'ar' ? 'من يستلم أي إشعار (المبيعات / المديرين / الأدمن أو أشخاص بعينهم)، ساعات الهدوء، الأجهزة المفعّلة، إشعار تجربة وسجل كل ما أُرسل' : 'Who receives which notification (sales / managers / admins or specific people), quiet hours, enabled phones, a test notification and a log of everything sent' ?></div>
+    </div>
+    <span class="nc-go"><?= $lang === 'ar' ? 'فتح ←' : 'Open →' ?></span>
+</a>
 <?php endif; ?>
 
 <!-- Tabs -->
