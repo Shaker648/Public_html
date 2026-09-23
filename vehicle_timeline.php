@@ -4,6 +4,7 @@ require 'auth.php';
 require 'config.php';
 require 'sold_helpers.php';
 require_once 'car_images_helpers.php';
+require_once 'car_edits_helpers.php';
 
 $lang = $_GET['lang'] ?? 'ar';
 if ($lang !== 'en') $lang = 'ar';
@@ -83,6 +84,11 @@ $t = [
         'act_qr'           => 'QR',
         'share'            => 'نسخ ملخص الرحلة',
         'print'            => 'طباعة',
+        'edit_event'       => 'تعديل بيانات السيارة',
+        'edit_f_brand'     => 'الماركة',
+        'edit_f_model'     => 'الموديل',
+        'edit_f_year'      => 'السنة',
+        'edit_f_trim'      => 'الفئة',
     ],
     'en' => [
         'title'            => 'Vehicle Journey',
@@ -150,6 +156,11 @@ $t = [
         'act_qr'           => 'QR',
         'share'            => 'Copy journey summary',
         'print'            => 'Print',
+        'edit_event'       => 'Vehicle details edited',
+        'edit_f_brand'     => 'Brand',
+        'edit_f_model'     => 'Model',
+        'edit_f_year'      => 'Year',
+        'edit_f_trim'      => 'Trim',
     ],
 ];
 
@@ -247,6 +258,15 @@ foreach ($soldRows as $sr) {
         'sold' => $sr,
     ];
 }
+/* Data edits from the edit page (a branch edit already shows as its own transfer) */
+$transferTimes = array_map(fn($mv) => strtotime($mv['created_at']) ?: 0, $transferMoves);
+foreach (car_edits_for($pdo, $id, 100) as $eg) {
+    $ts = strtotime($eg['at']) ?: 0;
+    $fields = $eg['fields'];
+    if (isset($fields['branch'])) foreach ($transferTimes as $tt) if (abs($tt - $ts) <= 10) { unset($fields['branch']); break; }
+    if ($fields) $timelineEvents[] = ['ts' => $ts, 'kind' => 'edit', 'edit' => ['by' => $eg['by'], 'fields' => $fields]];
+}
+
 /* Official price changes for this model while the car was here */
 $canPriceHist = can('page.price_history');
 $carStart = strtotime($car['created_at']) ?: time();
@@ -936,7 +956,7 @@ body {
                 $kind = $ev['kind'];
 
                 // For movement-based events, prep labels + hide امانة from sales.
-                if ($kind !== 'sold' && $kind !== 'price') {
+                if ($kind !== 'sold' && $kind !== 'price' && $kind !== 'edit') {
                     $mv = $ev['mv'];
                     if (($kind === 'amana_out' || $kind === 'amana_return') && !$canSeeAmana) {
                         continue;
@@ -1121,6 +1141,42 @@ body {
                 </div>
             </div>
 
+            <?php /* ─── Data edited from the edit page ─── */ elseif ($kind === 'edit'):
+                $ed = $ev['edit'];
+                $edLabel = ['brand' => $t[$lang]['edit_f_brand'], 'model' => $t[$lang]['edit_f_model'], 'car_year' => $t[$lang]['edit_f_year'], 'trim_name' => $t[$lang]['edit_f_trim'],
+                            'color' => $t[$lang]['color'], 'branch' => $t[$lang]['branch'], 'notes' => $t[$lang]['notes'], 'chassis' => $t[$lang]['chassis']];
+                $edShow = function ($f, $v) use ($pdo, $lang, &$branchCache) {
+                    if ($v === '') return '—';
+                    if ($f === 'branch') return getBranchName($pdo, $v, $lang, $branchCache);
+                    if ($f === 'color') {
+                        static $cm = null;
+                        if ($cm === null) { $cm = []; foreach ($pdo->query("SELECT color_en, color_ar FROM colors") as $c) $cm[$c['color_en']] = $lang === 'ar' ? $c['color_ar'] : $c['color_en']; }
+                        return $cm[$v] ?? $v;
+                    }
+                    return mb_strlen($v) > 60 ? mb_substr($v, 0, 60) . '…' : $v;
+                };
+            ?>
+            <div class="tl-item" data-k="edit" data-ts="<?= $ev['ts'] ?>">
+                <div class="tl-dot-wrap">
+                    <div class="tl-dot ev-edit">✏️</div>
+                </div>
+                <div class="tl-body">
+                    <div class="tl-title ev-edit"><?= $t[$lang]['edit_event'] ?></div>
+                    <div class="tl-date">📅 <?= date('d M Y · h:i A', $ev['ts']) ?></div>
+                    <div class="tl-edits">
+                        <?php foreach ($ed['fields'] as $f => [$o, $n]): ?>
+                        <div><span class="k"><?= htmlspecialchars($edLabel[$f] ?? $f) ?></span><span class="o"><?= htmlspecialchars($edShow($f, $o)) ?></span><i><?= $dir === 'rtl' ? '←' : '→' ?></i><span class="n"><?= htmlspecialchars($edShow($f, $n)) ?></span></div>
+                        <?php endforeach; ?>
+                    </div>
+                    <div class="tl-facts">
+                        <div class="tl-fact">
+                            <span class="tl-fact-label"><?= $t[$lang]['by'] ?></span>
+                            <span class="tl-fact-value"><?= htmlspecialchars($ed['by']) ?></span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
             <?php /* ─── Official price change for this model ─── */ elseif ($kind === 'price'):
                 $pr = $ev['price']; $up = (float)$pr['new_official'] > (float)$pr['old_official'];
             ?>
@@ -1251,6 +1307,14 @@ body {
 .tl-dot.ev-price.down { background: rgba(34,197,94,.12); border-color: rgba(34,197,94,.6); }
 .tl-title.ev-price.up { color: #fca5a5; } .tl-title.ev-price.down { color: var(--green-lt); }
 .tl-body-price { background: linear-gradient(135deg, rgba(255,255,255,.02), var(--bg-input)); border-style: dashed; }
+.tl-dot.ev-edit { background: rgba(245,158,11,.12); border-color: rgba(245,158,11,.6); }
+.tl-title.ev-edit { color: #fcd34d; }
+.tl-edits { display: flex; flex-direction: column; gap: 5px; margin: 6px 0 10px; }
+.tl-edits > div { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13px; }
+.tl-edits .k { min-width: 64px; color: var(--muted); font-weight: 700; font-size: 12px; }
+.tl-edits .o { color: #94a3b8; text-decoration: line-through; text-decoration-color: rgba(239,68,68,.6); }
+.tl-edits i { font-style: normal; color: var(--purple-lt); font-weight: 900; }
+.tl-edits .n { font-weight: 800; background: rgba(34,197,94,.1); border-radius: 7px; padding: 1px 8px; }
 .tl-note-amana { background: rgba(245,158,11,.08); border-color: rgba(245,158,11,.3); color: #fcd34d; }
 .tl-item.rv { opacity: 0; transform: translateY(14px); }
 .tl-item { transition: opacity .5s ease, transform .5s cubic-bezier(.22,1,.36,1); }
@@ -1290,11 +1354,11 @@ body {
     const AR = <?= json_encode($lang === 'ar') ?>;
     const arDays = d => d === 1 ? 'يوم' : d === 2 ? 'يومين' : d + (d >= 3 && d <= 10 ? ' أيام' : ' يوم');
     const T = AR ? {
-        all: 'الكل', add: 'إضافة', transfer: 'نقل', reserve: 'حجز', amana: 'أمانة', sale: 'بيع', price: 'السعر',
+        all: 'الكل', add: 'إضافة', transfer: 'نقل', reserve: 'حجز', amana: 'أمانة', sale: 'بيع', price: 'السعر', edit: 'تعديل',
         ago: s => { const d = Math.floor(s / 86400); if (d < 1) { const h = Math.floor(s / 3600); return h < 1 ? 'الآن' : 'منذ ' + (h === 1 ? 'ساعة' : h === 2 ? 'ساعتين' : h + (h <= 10 ? ' ساعات' : ' ساعة')); } if (d === 1) return 'أمس'; if (d < 30) return 'منذ ' + arDays(d); const m = Math.round(d / 30); return m < 12 ? 'منذ ' + (m === 1 ? 'شهر' : m === 2 ? 'شهرين' : m + (m <= 10 ? ' أشهر' : ' شهر')) : 'منذ ' + (d / 365).toFixed(1) + ' سنة'; },
         after: d => '⏳ بعد ' + arDays(d), latest: 'الأحدث', copied: '✓ تم نسخ ملخص الرحلة', chassis: 'الشاسيه', route: 'المسار', days: 'يوم'
     } : {
-        all: 'All', add: 'Added', transfer: 'Transfers', reserve: 'Reservations', amana: 'Consignment', sale: 'Sale', price: 'Price',
+        all: 'All', add: 'Added', transfer: 'Transfers', reserve: 'Reservations', amana: 'Consignment', sale: 'Sale', price: 'Price', edit: 'Edits',
         ago: s => { const d = Math.floor(s / 86400); if (d < 1) { const h = Math.floor(s / 3600); return h < 1 ? 'just now' : h + 'h ago'; } if (d === 1) return 'yesterday'; if (d < 30) return d + ' days ago'; const m = Math.round(d / 30); return m < 12 ? m + ' months ago' : (d / 365).toFixed(1) + ' years ago'; },
         after: d => '⏳ ' + d + (d === 1 ? ' day later' : ' days later'), latest: 'Latest', copied: '✓ Journey summary copied', chassis: 'Chassis', route: 'Route', days: 'days'
     };
@@ -1347,7 +1411,7 @@ body {
 
     /* ═══ filter chips ═══ */
     const counts = {}; items.forEach(it => counts[it.dataset.k] = (counts[it.dataset.k] || 0) + 1);
-    const kinds = ['transfer', 'reserve', 'amana', 'sale', 'price'].filter(k => counts[k]);
+    const kinds = ['transfer', 'reserve', 'amana', 'sale', 'price', 'edit'].filter(k => counts[k]);
     const chips = $('tlChips');
     if (kinds.length >= 2) {
         chips.innerHTML = '<button type="button" class="tl-chip on" data-k="">' + esc(T.all) + ' <b>' + items.length + '</b></button>' +
