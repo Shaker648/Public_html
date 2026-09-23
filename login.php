@@ -1,14 +1,17 @@
-
 <?php
 /*
  * login.php — handles POST login form submission only.
  *
- * FIX: last_login is now written to the DB on every successful login.
+ *  • last_login is written to the DB on every successful login.
+ *  • Failed attempts are counted in the database (per username and per
+ *    device), so clearing cookies no longer resets the limit.
+ *  • "Remember me" keeps the user signed in on that device for 30 days.
+ *  • After login the user goes back to the page they had opened (e.g. a car
+ *    from a QR sticker), in the language they chose.
  */
 
-if (session_status() === PHP_SESSION_NONE) {
-    session_start();
-}
+require_once __DIR__ . '/auth_remember.php';
+f1c_session_start();
 
 require 'config.php';
 
@@ -19,22 +22,30 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
 
 $username = trim($_POST['username'] ?? '');
 $password = trim($_POST['password'] ?? '');
+$lang     = ($_POST['lang'] ?? 'ar') === 'en' ? 'en' : 'ar';
+$next     = f1c_safe_next($_POST['next'] ?? '');
 
-// ── Rate limiting: max 5 failed attempts, then 15-minute lockout ──
-$attempts  = $_SESSION['login_attempts']  ?? 0;
-$lockUntil = $_SESSION['login_lock_until'] ?? 0;
-
-if ($lockUntil && time() < $lockUntil) {
-    $wait = ceil(($lockUntil - time()) / 60);
-    $_SESSION['error'] = "⏳ Too many failed attempts. Try again in {$wait} minute(s).";
-    header('Location: index.php');
+// back to the login page, keeping language, return page and the typed username
+$back = function (array $err) use ($lang, $next, $username) {
+    $_SESSION['login_err']  = $err;
+    $_SESSION['login_user'] = $username;
+    header('Location: index.php?lang=' . $lang . ($next !== '' ? '&next=' . urlencode($next) : ''));
     exit;
+};
+
+// ── Form token ──
+if (empty($_SESSION['login_csrf']) || !hash_equals($_SESSION['login_csrf'], (string)($_POST['csrf'] ?? ''))) {
+    $back(['code' => 'expired']);
 }
 
-if ($lockUntil && time() >= $lockUntil) {
-    $_SESSION['login_attempts']   = 0;
-    $_SESSION['login_lock_until'] = 0;
-    $attempts = 0;
+if ($username === '' || $password === '') {
+    $back(['code' => 'empty']);
+}
+
+// ── Too many failed attempts? (server-side, per username and per device) ──
+$lockLeft = f1c_lock_left($pdo, $username);
+if ($lockLeft > 0) {
+    $back(['code' => 'locked', 'until' => time() + $lockLeft]);
 }
 
 // ── Lookup user — only active accounts ──
@@ -62,30 +73,35 @@ if ($valid) {
     $_SESSION['user_id']  = $user['id'];
     $_SESSION['username'] = $user['username'];
     $_SESSION['role']     = $user['role'];
+    unset($_SESSION['login_err'], $_SESSION['login_user'], $_SESSION['login_csrf'],
+          $_SESSION['login_attempts'], $_SESSION['login_lock_until']);
 
-    // ── FIX: record the login timestamp ──────────────────────────────
+    // ── record the login timestamp ──
     $pdo->prepare("UPDATE users SET last_login = NOW() WHERE id = ?")
         ->execute([$user['id']]);
-    // ─────────────────────────────────────────────────────────────────
+    f1c_log_attempt($pdo, $username, true);
 
-    unset($_SESSION['login_attempts'], $_SESSION['login_lock_until']);
+    // ── stay signed in on this device ──
+    if (!empty($_POST['remember'])) {
+        try { f1c_remember_issue($pdo, (int)$user['id']); }
+        catch (Throwable $e) { error_log('remember issue failed: ' . $e->getMessage()); }
+    }
+    // the login page greets this user by name next time (the username only, never the password)
+    // (readable by the page so "Not you?" can clear it — it holds no secret)
+    f1c_cookie(F1C_LASTUSER_COOKIE, $user['username'], time() + 90 * 86400, false);
 
-    header('Location: dashboard.php');
+    if ($next !== '') {
+        header('Location: ' . $next . (strpos($next, 'lang=') === false ? (strpos($next, '?') === false ? '?' : '&') . 'lang=' . $lang : ''));
+    } else {
+        header('Location: dashboard.php?lang=' . $lang);
+    }
     exit;
 }
 
 // ── Failed login ──
-$_SESSION['login_attempts'] = $attempts + 1;
-
-if ($_SESSION['login_attempts'] >= 5) {
-    $_SESSION['login_lock_until'] = time() + (15 * 60);
-    $_SESSION['error'] = "⛔ Too many failed attempts. Account locked for 15 minutes.";
-} else {
-    $remaining = 5 - $_SESSION['login_attempts'];
-    $_SESSION['error'] =
-        "❌ اسم المستخدم أو كلمة المرور غير صحيحة ({$remaining} محاولات متبقية)<br>" .
-        "❌ Invalid username or password ({$remaining} attempt(s) remaining)";
+f1c_log_attempt($pdo, $username, false);
+$lockLeft = f1c_lock_left($pdo, $username);
+if ($lockLeft > 0) {
+    $back(['code' => 'locked', 'until' => time() + $lockLeft]);
 }
-
-header('Location: index.php');
-exit;
+$back(['code' => 'bad', 'left' => f1c_fails_left($pdo, $username)]);

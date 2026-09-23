@@ -2,34 +2,42 @@
 /*
  * auth.php — included at the top of EVERY protected page.
  *
- * Fixes applied:
- *  1. Starts session if not already started.
- *  2. Checks session exists (user_id set).
+ *  1. Starts session if not already started (safe cookie flags).
+ *  2. Checks session exists (user_id set) — or restores it from a valid
+ *     "remember me" token on this device.
  *  3. Re-queries the DB on EVERY request to verify the user is still active.
  *     → If an admin disables the account, the next page load logs them out.
- *  4. Destroys session and redirects to login on any failure.
+ *  4. Destroys session and redirects to login on any failure, remembering the
+ *     page that was opened so login can bring the user straight back to it.
  */
 
-if (session_status() === PHP_SESSION_NONE) {
-    session_start();
-}
+require_once __DIR__ . '/auth_remember.php';
+f1c_session_start();
 
-// Step 1: Must be logged in
-if (!isset($_SESSION['user_id'])) {
-    header('Location: index.php');
+require_once __DIR__ . '/config.php';   // safe to include multiple times — once is fine
+
+// Step 1: Must be logged in (a remembered device signs itself back in)
+if (!isset($_SESSION['user_id']) && !f1c_remember_login($pdo)) {
+    $next = '';
+    if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'GET') {
+        $next = f1c_safe_next(ltrim(basename(parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH) ?: ''), '/')
+              . (($q = parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_QUERY)) ? '?' . $q : ''));
+    }
+    $lang = ($_GET['lang'] ?? 'ar') === 'en' ? 'en' : 'ar';
+    header('Location: index.php?lang=' . $lang . ($next !== '' ? '&next=' . urlencode($next) : ''));
     exit;
 }
 
 // Step 2: Verify user is still active in DB on every request
 // This is what makes disabled-user lockout work immediately.
-require_once __DIR__ . '/config.php';   // safe to include multiple times — once is fine
-
 $stmt = $pdo->prepare("SELECT id, username, role, active FROM users WHERE id = ? LIMIT 1");
 $stmt->execute([$_SESSION['user_id']]);
 $currentUser = $stmt->fetch(PDO::FETCH_ASSOC);
 
 if (!$currentUser || (int)$currentUser['active'] !== 1) {
-    // User not found OR has been disabled — kill session and redirect
+    // User not found OR has been disabled — kill session (and this device's
+    // remember-me token) and redirect
+    f1c_remember_forget($pdo);
     session_unset();
     session_destroy();
     header('Location: index.php?disabled=1');
