@@ -541,6 +541,41 @@ function notify_test(PDO $pdo, int $userId, ?int $subId = null, string $lang = '
                                         'lang' => $lang, 'dir' => $lang === 'ar' ? 'rtl' : 'ltr', 'ts' => time() * 1000]);
 }
 
+/**
+ * A message the admin writes, sent right away to the chosen people (ignores
+ * quiet hours — the admin is sending it on purpose). Kept in the log and in
+ * each person's inbox. Returns [people, devices, delivered, failed].
+ */
+function notify_custom(PDO $pdo, array $userIds, string $title, string $body, string $actor = ''): array
+{
+    push_tables($pdo);
+    $ids = array_values(array_unique(array_filter(array_map('intval', $userIds))));
+    if (!$ids) return [0, 0, 0, 0];
+    $in  = implode(',', $ids);
+    $ids = array_map('intval', $pdo->query("SELECT id FROM users WHERE active = 1 AND id IN ($in)")->fetchAll(PDO::FETCH_COLUMN));
+    if (!$ids) return [0, 0, 0, 0];
+    $in  = implode(',', $ids);
+
+    $pdo->prepare("INSERT INTO notify_log (event, title, body, url, actor, recipients) VALUES ('message', ?, ?, 'dashboard.php', ?, ?)")
+        ->execute([$title, $body, $actor, count($ids)]);
+    $logId = (int)$pdo->lastInsertId();
+    $ins = $pdo->prepare("INSERT INTO notify_inbox (log_id, user_id) VALUES (?, ?)");
+    foreach ($ids as $id) $ins->execute([$logId, $id]);
+
+    $subs = $pdo->query("SELECT id, user_id, endpoint, p256dh, auth FROM push_subscriptions WHERE user_id IN ($in)")->fetchAll(PDO::FETCH_ASSOC);
+    $pdo->prepare("UPDATE notify_log SET devices = ? WHERE id = ?")->execute([count($subs), $logId]);
+    if (!$subs) return [count($ids), 0, 0, 0];
+
+    $rtl = (bool)preg_match('/\p{Arabic}/u', $title . $body);
+    $res = push_send_many($pdo, $subs, [
+        'title' => $title, 'body' => $body, 'url' => 'dashboard.php', 'tag' => 'msg-' . $logId,
+        'lang' => $rtl ? 'ar' : 'en', 'dir' => $rtl ? 'rtl' : 'ltr', 'ts' => time() * 1000,
+    ]);
+    $ok = count(array_filter($res, fn($r) => $r[0] >= 200 && $r[0] < 300));
+    $pdo->prepare("UPDATE notify_log SET delivered = ?, failed = ? WHERE id = ?")->execute([$ok, count($res) - $ok, $logId]);
+    return [count($ids), count($subs), $ok, count($res) - $ok];
+}
+
 /** A short, human name for a device from its browser string. */
 function push_device_name(string $ua): string
 {
