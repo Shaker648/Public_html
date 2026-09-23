@@ -262,6 +262,7 @@ body {
 .nav-btn.dash  { background:var(--blue); }
 .nav-btn.users { background:var(--green); color:#002b14; }
 .nav-btn.imgs  { background:linear-gradient(90deg,#9333ea,#c084fc); }
+.nav-btn.notif { background:linear-gradient(90deg,#16a34a,#0891b2); }
 .lang-row { display:flex; gap:8px; margin-top:14px; }
 .lang-btn {
     text-decoration:none; padding:7px 14px; border-radius:10px;
@@ -405,6 +406,9 @@ body {
             <a href="users.php?lang=<?= $lang ?>" class="nav-btn users">👥 <?= $L['users'] ?></a>
             <?php if (can('page.car_images')): ?>
             <a href="car_images.php?lang=<?= $lang ?>" class="nav-btn imgs">🖼️ <?= $L['car_images'] ?></a>
+            <?php endif; ?>
+            <?php if (can('page.notifications_admin')): ?>
+            <a href="notifications_admin.php?lang=<?= $lang ?>" class="nav-btn notif">🔔 <?= $lang === 'ar' ? 'الإشعارات' : 'Notifications' ?></a>
             <?php endif; ?>
         </div>
     </div>

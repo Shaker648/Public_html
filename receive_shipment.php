@@ -30,6 +30,7 @@
 
 require 'auth.php';
 require 'config.php';
+require_once __DIR__ . '/push_helpers.php';
 
 $lang = $_GET['lang'] ?? 'ar';
 if (!in_array($lang, ['ar', 'en'], true)) $lang = 'ar';
@@ -197,6 +198,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
 
         $pdo->commit();
+
+        notify_event($pdo, 'shipment_received', [
+            'car'    => ['brand' => $ship['brand'], 'model' => $ship['model'], 'car_year' => $year, 'trim_name' => $ship['trim_name'], 'branch' => $branch],
+            'count'  => count($clean),
+            'colors' => array_values(array_unique(array_column($clean, 'color'))),
+        ]);
 
         echo json_encode([
             'ok'            => true,

@@ -2,6 +2,7 @@
 
 require 'auth.php';
 require 'config.php';
+require_once __DIR__ . '/push_helpers.php';
 require 'car_images_helpers.php';
 
 perm_require('page.add_vehicle');
@@ -11,6 +12,26 @@ $lang = $_GET['lang'] ?? 'ar';
 $error   = '';
 $success = '';
 $addedVehicle = null;
+
+/* Form token (same session key the other pages use) */
+if (empty($_SESSION['csrf_token'])) {
+    $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+}
+$csrfToken = $_SESSION['csrf_token'];
+
+/* ─── Live chassis check (asked while typing) ───
+   Same rule as the save below: an exact, case-insensitive match in cars. */
+if (($_GET['ajax'] ?? '') === 'chassis') {
+    header('Content-Type: application/json; charset=utf-8');
+    $q = strtoupper(trim((string)($_GET['q'] ?? '')));
+    if (strlen($q) < 4) { echo json_encode(['exists' => false]); exit; }
+    $st = $pdo->prepare("SELECT id, brand, model, car_year, trim_name, color, branch, status
+                         FROM cars WHERE UPPER(chassis) = UPPER(?) LIMIT 1");
+    $st->execute([$q]);
+    $hit = $st->fetch(PDO::FETCH_ASSOC);
+    echo json_encode($hit ? ['exists' => true, 'car' => $hit] : ['exists' => false], JSON_UNESCAPED_UNICODE);
+    exit;
+}
 
 /* ─────────────────────────────────────────────────────────────
    MOTIVATIONAL QUOTES  ← edit freely
@@ -67,6 +88,7 @@ $t = [
         'add_vehicle'    => 'إضافة السيارة',
         'fill_required'  => 'يرجى استكمال جميع البيانات المطلوبة',
         'chassis_exists' => 'رقم الشاسيه مسجّل بالفعل في النظام',
+        'token_expired'  => 'انتهت صلاحية الصفحة — حدّث الصفحة وحاول مرة أخرى',
         'scan_title'     => 'مسح باركود الشاسيه',
         'scan_hint'      => 'التقط صورة قريبة وواضحة لباركود الشاسيه — قرّب حتى يملأ الباركود الصورة وتجنّب الانعكاسات',
         'scan_close'     => 'إغلاق',
@@ -113,6 +135,7 @@ $t = [
         'add_vehicle'    => 'Add Vehicle',
         'fill_required'  => 'Please complete all required fields',
         'chassis_exists' => 'This chassis number already exists in the system',
+        'token_expired'  => 'This page expired — refresh it and try again',
         'scan_title'     => 'Scan Chassis Barcode',
         'scan_hint'      => 'Take a close, sharp photo of the chassis barcode — fill the frame with it and avoid reflections',
         'scan_close'     => 'Close',
@@ -163,7 +186,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $notes      = trim($_POST['notes']      ?? '');
     $created_by = $_SESSION['username'];
 
-    if (empty($brand) || empty($model) || empty($car_year) ||
+    if (!hash_equals($csrfToken, (string)($_POST['csrf_token'] ?? ''))) {
+
+        $error = $t[$lang]['token_expired'];
+
+    } elseif (empty($brand) || empty($model) || empty($car_year) ||
         empty($trim_name) || empty($color) || empty($branch) || empty($chassis)) {
 
         $error = $t[$lang]['fill_required'];
@@ -224,8 +251,87 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $addedVehicle = compact(
                 'brand','model','car_year','trim_name','color','branch','chassis'
             );
+
+            /* Show the result on a fresh GET, so a refresh never re-sends the form */
+            notify_event($pdo, 'car_added', ['car' => $addedVehicle + ['id' => (int)$carId]]);
+            $_SESSION['av_added'] = [
+                'car'  => $addedVehicle + ['id' => (int)$carId],
+                'keep' => !empty($_POST['keep']),
+            ];
+            header('Location: add_vehicle.php?lang=' . urlencode($lang));
+            exit;
         }
     }
+}
+
+/* ─── After the redirect: the car that was just added ─── */
+$avKeep = null;
+if ($_SERVER['REQUEST_METHOD'] !== 'POST' && !empty($_SESSION['av_added'])) {
+    $flash = $_SESSION['av_added'];
+    unset($_SESSION['av_added']);
+    $addedVehicle = $flash['car'];
+    $success      = $t[$lang]['success'];
+    if (!empty($flash['keep'])) $avKeep = $addedVehicle;
+}
+
+/* What the form starts with: the same car again ("add another like this"),
+   or, after an error, everything that was typed so nothing is lost. */
+$avPrefill = null;
+if ($avKeep) {
+    $avPrefill = ['brand' => $avKeep['brand'], 'model' => $avKeep['model'], 'car_year' => $avKeep['car_year'],
+                  'trim_name' => $avKeep['trim_name'], 'branch' => $avKeep['branch'], 'focus' => 'color'];
+} elseif ($error && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    $avPrefill = [];
+    foreach (['brand', 'model', 'car_year', 'trim_name', 'color', 'branch', 'chassis', 'notes'] as $f) {
+        $avPrefill[$f] = trim((string)($_POST[$f] ?? ''));
+    }
+}
+
+/* ─── Context for the preview: price, stock, today's cars ─── */
+$avKey = fn(...$p) => implode('|', array_map(fn($v) => mb_strtolower(trim((string)$v)), $p));
+
+$avPrices = [];
+if (can('page.prices')) {
+    try {
+        foreach ($pdo->query("SELECT brand, model_name, trim_name, car_year, official_price, customer_price FROM pricing") as $r) {
+            $avPrices[$avKey($r['brand'], $r['model_name'], $r['trim_name'], $r['car_year'])] = [
+                'off'  => ($r['official_price'] !== null && $r['official_price'] !== '') ? number_format((float)$r['official_price']) : '',
+                'cust' => (string)($r['customer_price'] ?? ''),   // the label exactly as written
+            ];
+        }
+    } catch (Throwable $e) { /* no pricing table: no price line */ }
+}
+
+$avStock = [];
+try {
+    $sq = $pdo->query("SELECT brand, model, trim_name, car_year, branch, color, COUNT(*) AS n
+                       FROM cars WHERE status IN ('available','reserved')
+                       GROUP BY brand, model, trim_name, car_year, branch, color");
+    foreach ($sq as $r) {
+        $avStock[$avKey($r['brand'], $r['model'], $r['trim_name'], $r['car_year'])][] = [(string)$r['branch'], (string)$r['color'], (int)$r['n']];
+    }
+} catch (Throwable $e) { error_log('add_vehicle: stock context failed: ' . $e->getMessage()); }
+
+$avToday = [];
+try {
+    $tq = $pdo->prepare("SELECT id, brand, model, car_year, trim_name, color, branch, chassis, created_at
+                         FROM cars WHERE created_by = ? AND created_at >= CURDATE()
+                         ORDER BY id DESC LIMIT 40");
+    $tq->execute([$_SESSION['username']]);
+    $avToday = $tq->fetchAll(PDO::FETCH_ASSOC);
+} catch (Throwable $e) { error_log('add_vehicle: today list failed: ' . $e->getMessage()); }
+$avCanEdit = can('page.edit_vehicle');
+
+/** A display swatch for a colour name; unknown names fall back to neutral grey. */
+function av_swatch(string $colorEn): string
+{
+    static $map = [
+        'white' => '#f8fafc', 'pearl white' => '#f1f5f9', 'black' => '#111827', 'silver' => '#cbd5e1',
+        'grey' => '#6b7280', 'gray' => '#6b7280', 'red' => '#dc2626', 'blue' => '#2563eb', 'navy' => '#1e3a8a',
+        'green' => '#16a34a', 'gold' => '#d4af37', 'beige' => '#e0d5c0', 'brown' => '#78350f',
+        'orange' => '#ea580c', 'yellow' => '#eab308', 'purple' => '#7c3aed', 'bronze' => '#a97142', 'champagne' => '#e6d7b8',
+    ];
+    return $map[mb_strtolower(trim($colorEn))] ?? '#64748b';
 }
 
 /* ─── Car image library, exported for the live preview ─── */
@@ -1109,15 +1215,21 @@ html[dir="rtl"] .select-loading { left: 40px; }
     <?php endif; ?>
 
     <?php if ($success && $addedVehicle): ?>
-    <div class="added-banner">
-        <span class="added-banner-icon">🎉</span>
-        <div>
+    <div class="added-banner" id="addedBanner">
+        <div class="ab-photo" id="abPhoto"><span class="added-banner-icon">🎉</span></div>
+        <div class="ab-body">
             <div class="added-banner-title"><?= $t[$lang]['success'] ?></div>
             <div class="added-banner-details">
                 <?= htmlspecialchars($addedVehicle['brand']) ?> <?= htmlspecialchars($addedVehicle['model']) ?> <?= htmlspecialchars($addedVehicle['car_year']) ?> —
                 <?= htmlspecialchars($addedVehicle['trim_name']) ?> /
                 <?= htmlspecialchars($addedVehicle['color']) ?> |
                 <?= $t[$lang]['chassis'] ?>: <?= htmlspecialchars($addedVehicle['chassis']) ?>
+            </div>
+            <div class="ab-actions">
+                <button type="button" class="ab-btn ab-again" id="abAgain">➕ <?= $lang === 'ar' ? 'أضف سيارة مماثلة' : 'Add another like this' ?></button>
+                <?php if ($avCanEdit && !empty($addedVehicle['id'])): ?>
+                <a class="ab-btn" href="edit_vehicle.php?id=<?= (int)$addedVehicle['id'] ?>&lang=<?= $lang ?>">✏️ <?= $lang === 'ar' ? 'تعديل' : 'Edit' ?></a>
+                <?php endif; ?>
             </div>
         </div>
     </div>
@@ -1170,6 +1282,8 @@ html[dir="rtl"] .select-loading { left: 40px; }
             </div>
 
             <form method="POST" id="vehicleForm" novalidate>
+                <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken) ?>">
+                <input type="hidden" name="keep" id="keepInput" value="">
 
                 <div class="form-grid">
 
@@ -1294,6 +1408,7 @@ html[dir="rtl"] .select-loading { left: 40px; }
             </form>
         </div>
 
+        <div class="side-col">
         <!-- PREVIEW CARD -->
         <div class="card preview-card">
             <div class="section-title">
@@ -1301,7 +1416,23 @@ html[dir="rtl"] .select-loading { left: 40px; }
                 <?= $t[$lang]['preview'] ?>
             </div>
 
-            <div class="preview-photo" id="previewPhoto">
+            <div class="preview-photo av-stage" id="previewPhoto">
+                <div class="av-floor"></div>
+                <svg class="av-sil" id="avSil" viewBox="0 0 320 130" aria-hidden="true">
+                    <defs>
+                        <linearGradient id="avShine" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="0" stop-color="#fff" stop-opacity=".38"/><stop offset=".45" stop-color="#fff" stop-opacity=".06"/><stop offset="1" stop-color="#000" stop-opacity=".35"/>
+                        </linearGradient>
+                    </defs>
+                    <ellipse cx="163" cy="119" rx="142" ry="7" fill="#000" opacity=".5"/>
+                    <path class="av-body" d="M20,92 L22,72 Q24,62 36,60 L80,55 L112,31 Q118,26 128,26 L222,26 Q234,26 242,34 L268,57 L292,61 Q306,64 306,78 L306,92 Q306,98 300,98 L277,98 A27,27 0 0 0 223,98 L105,98 A27,27 0 0 0 51,98 L26,98 Q20,98 20,92 Z"/>
+                    <path d="M20,92 L22,72 Q24,62 36,60 L80,55 L112,31 Q118,26 128,26 L222,26 Q234,26 242,34 L268,57 L292,61 Q306,64 306,78 L306,92 Q306,98 300,98 L277,98 A27,27 0 0 0 223,98 L105,98 A27,27 0 0 0 51,98 L26,98 Q20,98 20,92 Z" fill="url(#avShine)"/>
+                    <path d="M88,57 L116,35 Q120,32 126,32 L166,32 L166,57 Z M174,32 L221,32 Q229,32 235,38 L256,57 L174,57 Z" fill="#0b1220" opacity=".82"/>
+                    <path d="M292,70 L304,72" stroke="#fde68a" stroke-width="4" stroke-linecap="round"/>
+                    <path d="M22,74 L30,73" stroke="#f87171" stroke-width="4" stroke-linecap="round"/>
+                    <g><circle cx="78" cy="98" r="21" fill="#0b1220" stroke="#1e293b" stroke-width="5"/><circle cx="78" cy="98" r="9" fill="#94a3b8"/></g>
+                    <g><circle cx="250" cy="98" r="21" fill="#0b1220" stroke="#1e293b" stroke-width="5"/><circle cx="250" cy="98" r="9" fill="#94a3b8"/></g>
+                </svg>
                 <img id="previewPhotoImg" alt="">
                 <span class="pp-tag"><?= $lang === 'ar' ? 'صورة توضيحية' : 'Illustration' ?></span>
             </div>
@@ -1312,6 +1443,8 @@ html[dir="rtl"] .select-loading { left: 40px; }
                 <span class="badge-dot"></span>
                 <?= $t[$lang]['available'] ?>
             </div>
+
+            <div class="av-ctx" id="avCtx"></div>
 
             <div class="preview-items">
                 <div class="preview-item">
@@ -1353,6 +1486,37 @@ html[dir="rtl"] .select-loading { left: 40px; }
             </div>
         </div>
 
+        <!-- TODAY -->
+        <div class="card av-today" id="avToday">
+            <div class="section-title" style="margin-bottom:14px">
+                <div class="section-title-icon" style="background:var(--blue-dim);border-color:rgba(59,130,246,0.25)">🗓</div>
+                <?= $lang === 'ar' ? 'أضفتها اليوم' : 'Added by you today' ?>
+                <span class="avt-count" id="avtCount"><?= count($avToday) ?></span>
+            </div>
+            <div class="avt-list" id="avtList">
+            <?php if (!$avToday): ?>
+                <div class="avt-empty"><?= $lang === 'ar' ? 'لم تُضف أي سيارة اليوم بعد — أول سيارة ستظهر هنا' : 'Nothing added yet today — your first car will show here' ?></div>
+            <?php endif; ?>
+            <?php foreach ($avToday as $i => $tc):
+                $cLabel = $tc['color'];
+                foreach ($colors as $c) if (strcasecmp($c['color_en'], $tc['color']) === 0) { $cLabel = $isRTL ? $c['color_ar'] : $c['color_en']; break; }
+                $bLabel = $tc['branch'];
+                foreach ($branches as $br) if ($br['name'] === $tc['branch']) { $bLabel = $isRTL ? $br['name_ar'] : $br['name_en']; break; }
+                $tag = $avCanEdit ? 'a' : 'div';
+            ?>
+                <<?= $tag ?> class="avt-item<?= ($i === 0 && $addedVehicle && (int)($addedVehicle['id'] ?? 0) === (int)$tc['id']) ? ' fresh' : '' ?>"<?= $avCanEdit ? ' href="edit_vehicle.php?id=' . (int)$tc['id'] . '&lang=' . $lang . '"' : '' ?>>
+                    <i class="avt-dot" style="background:<?= av_swatch((string)$tc['color']) ?>"></i>
+                    <div class="avt-main">
+                        <div class="avt-name"><?= htmlspecialchars($tc['brand'] . ' ' . $tc['model'] . ' ' . $tc['car_year']) ?> <span><?= htmlspecialchars($tc['trim_name']) ?></span></div>
+                        <div class="avt-sub"><?= htmlspecialchars($cLabel) ?> · <?= htmlspecialchars($bLabel) ?> · <?= date('h:i A', strtotime($tc['created_at'])) ?></div>
+                    </div>
+                    <span class="avt-ch"><?= htmlspecialchars($tc['chassis']) ?></span>
+                </<?= $tag ?>>
+            <?php endforeach; ?>
+            </div>
+        </div>
+        </div><!-- /side-col -->
+
     </div><!-- /main-grid -->
 
 </div><!-- /container -->
@@ -1385,7 +1549,7 @@ html[dir="rtl"] .select-loading { left: 40px; }
 
     /* The image library, keyed "brand|model|trim|year|colour" (lower case).
        An empty slot in a key means that row applies to any value there. */
-    const CAR_IMAGES = <?= json_encode($carImgJs, JSON_UNESCAPED_UNICODE) ?>;
+    const CAR_IMAGES = window.__AV_IMAGES = <?= json_encode($carImgJs, JSON_UNESCAPED_UNICODE) ?>;
 
     const imgNorm = v => String(v == null ? '' : v).trim().toLowerCase();
 
@@ -1570,7 +1734,7 @@ html[dir="rtl"] .select-loading { left: 40px; }
 
         trimLoading.style.display = 'inline';
 
-        fetch('get_trims.php?model=' + encodeURIComponent(modelVal))
+        fetch('get_trims.php?brand=' + encodeURIComponent(brandSel.value) + '&model=' + encodeURIComponent(modelVal))
             .then(r => {
                 if (!r.ok) throw new Error('Network error');
                 return r.json();
@@ -2352,6 +2516,469 @@ html[dir="rtl"] .select-loading { left: 40px; }
     document.getElementById('btnScanChassis').addEventListener('click', openScanner);
     document.getElementById('scanClose').addEventListener('click', closeScanner);
     modal.addEventListener('click', function (e) { if (e.target === modal) closeScanner(); });
+})();
+</script>
+
+<style>
+/* ═══════════ Add-vehicle extras (form fields and order unchanged) ═══════════ */
+.side-col { position: sticky; top: 20px; display: flex; flex-direction: column; gap: 18px; }
+.side-col .preview-card { position: static; }
+@media (max-width:1100px) { .side-col { position: static; } }
+
+/* filled fields get a calm green edge and a tick */
+.form-group label { display: flex; align-items: center; gap: 6px; }
+.form-group label .av-tick { margin-inline-start: auto; width: 18px; height: 18px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center;
+    font-size: 10px; font-weight: 900; color: #052e16; background: var(--green); transform: scale(0); transition: transform .25s cubic-bezier(.34,1.56,.64,1); }
+.form-group.done label .av-tick { transform: scale(1); }
+.form-group.done select, .form-group.done input { border-color: rgba(34,197,94,.38); box-shadow: 0 0 0 3px rgba(34,197,94,.06); }
+.form-group.bad input { border-color: rgba(239,68,68,.6) !important; box-shadow: 0 0 0 3px rgba(239,68,68,.1) !important; }
+
+/* progress: turns into a "ready" state */
+.form-progress.ready .progress-bar-fill { box-shadow: 0 0 14px rgba(34,197,94,.7); }
+.form-progress.ready .progress-label { color: var(--green); }
+.progress-label { direction: ltr; unicode-bidi: isolate; }
+.submit-btn.ready { animation: avReady 2.4s ease-in-out infinite; }
+@keyframes avReady { 0%,100% { box-shadow: 0 4px 20px rgba(34,197,94,.25); } 50% { box-shadow: 0 6px 34px rgba(34,197,94,.55); } }
+
+/* colour: a dot inside the field + tap-to-pick chips */
+.av-selwrap { position: relative; }
+.av-seldot { position: absolute; top: 50%; inset-inline-start: 15px; width: 16px; height: 16px; margin-top: -8px; border-radius: 50%;
+    border: 2px solid rgba(255,255,255,.25); box-shadow: 0 0 0 3px rgba(0,0,0,.25); pointer-events: none; display: none; }
+.av-selwrap.has .av-seldot { display: block; }
+.av-selwrap.has select { padding-inline-start: 42px; }
+.av-sw { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 9px; }
+.av-sw button { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 11px 0 9px; border-radius: 999px; cursor: pointer;
+    background: rgba(255,255,255,.03); border: 1px solid var(--border); color: var(--text-soft); font: inherit; font-size: 12px; font-weight: 700; transition: var(--transition); }
+.av-sw button i { width: 13px; height: 13px; border-radius: 50%; border: 1px solid rgba(255,255,255,.3); flex-shrink: 0; }
+.av-sw button:hover { border-color: rgba(255,255,255,.2); color: var(--text); }
+.av-sw button.on { border-color: var(--sw); color: var(--text); background: color-mix(in srgb, var(--sw) 16%, transparent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--sw) 18%, transparent); }
+
+/* chassis: bigger, monospaced, with a live status line */
+#chassis { font-family: 'SFMono-Regular', Consolas, 'Courier New', monospace; font-size: 19px; font-weight: 800; letter-spacing: .12em; }
+.chassis-hint { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; min-height: 20px; }
+.chassis-hint.checking { color: var(--text-soft); }
+.chassis-hint.dup { color: #fca5a5; }
+.chassis-hint .ch-car { display: inline-flex; align-items: center; gap: 6px; background: rgba(239,68,68,.1); border: 1px solid rgba(239,68,68,.3); border-radius: 8px; padding: 2px 9px; color: #fecaca; font-weight: 700; }
+.chassis-hint .ch-car i { width: 10px; height: 10px; border-radius: 50%; }
+.av-spin { width: 12px; height: 12px; border-radius: 50%; border: 2px solid rgba(148,163,184,.3); border-top-color: var(--text-soft); animation: avSpin .7s linear infinite; display: inline-block; }
+@keyframes avSpin { to { transform: rotate(360deg); } }
+
+/* preview: a showroom stage that is always there */
+.preview-photo.av-stage { display: block; --car: #64748b; aspect-ratio: 16/9.4;
+    background: radial-gradient(ellipse 80% 70% at 50% 18%, color-mix(in srgb, var(--car) 22%, #1a2744), #0a1120 72%); border: 1px solid var(--border); }
+.av-stage .av-floor { position: absolute; inset-inline: 0; bottom: 0; height: 34%;
+    background: radial-gradient(ellipse 60% 55% at 50% 30%, color-mix(in srgb, var(--car) 30%, transparent), transparent 70%), linear-gradient(to bottom, rgba(255,255,255,.02), rgba(0,0,0,.3)); }
+.av-stage .av-sil { position: absolute; inset-inline: 7%; bottom: 7%; width: 86%; height: auto; transition: opacity .3s, transform .45s cubic-bezier(.22,1,.36,1); }
+.av-stage .av-body { fill: var(--car); transition: fill .45s; }
+.av-stage.on .av-sil { opacity: 0; transform: translateX(-18px); }
+.av-stage img { display: none; }
+.av-stage.on img { display: block; position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; padding: 14px 18px 8px; }
+.av-stage.on.scene img { object-fit: cover; padding: 0; }
+.av-stage.on.studio { background: linear-gradient(#fff, #eef1f5); }
+.av-stage.on.matte { background: var(--stage-bg, #0d1526); }
+.av-stage.on.studio .av-floor, .av-stage.on.matte .av-floor, .av-stage.on.scene .av-floor { display: none; }
+.av-stage .pp-tag { z-index: 2; }
+.av-stage.pop .av-sil { animation: avPop .5s cubic-bezier(.34,1.56,.64,1); }
+@keyframes avPop { 40% { transform: scale(1.04); } }
+.av-stage .av-cname { position: absolute; bottom: 8px; inset-inline-end: 10px; z-index: 2; display: none; align-items: center; gap: 6px;
+    background: rgba(2,6,23,.7); backdrop-filter: blur(6px); color: #e2e8f0; font-size: 11px; font-weight: 800; padding: 4px 10px; border-radius: 999px; }
+.av-stage .av-cname i { width: 10px; height: 10px; border-radius: 50%; background: var(--car); border: 1px solid rgba(255,255,255,.35); }
+.av-stage.hasc .av-cname { display: inline-flex; }
+
+/* chassis in the preview looks like a plate */
+.preview-chassis-value:not(.empty) { font-family: 'SFMono-Regular', Consolas, monospace; letter-spacing: .12em; padding: 3px 10px; border-radius: 7px;
+    background: linear-gradient(#fefce8, #fef3c7); color: #111827 !important; border: 2px solid #1f2937; box-shadow: 0 0 0 1px #fde68a; }
+.preview-value .pv-dot { display: inline-block; width: 11px; height: 11px; border-radius: 50%; margin-inline-end: 6px; vertical-align: -1px; border: 1px solid rgba(255,255,255,.3); }
+
+/* price + stock context */
+.av-ctx { display: flex; flex-direction: column; gap: 10px; margin: -8px 0 18px; }
+.av-ctx:empty { display: none; }
+.av-box { border-radius: 16px; padding: 12px 14px; border: 1px solid var(--border); background: rgba(255,255,255,.025); animation: ppFade .3s ease both; }
+.av-box .h { font-size: 11px; font-weight: 800; color: var(--text-muted); margin-bottom: 6px; display: flex; align-items: center; gap: 6px; }
+.av-box .h a { margin-inline-start: auto; color: #a78bfa; text-decoration: none; font-size: 11px; }
+.av-price .v { font-size: 22px; font-weight: 900; color: var(--green); font-variant-numeric: tabular-nums; }
+.av-price .v small { font-size: 11px; color: var(--text-soft); margin-inline-start: 4px; font-weight: 700; }
+.av-price .tag { display: inline-block; margin-top: 6px; font-size: 12px; font-weight: 800; padding: 3px 10px; border-radius: 8px; background: rgba(148,163,184,.1); color: #cbd5e1; }
+.av-price .tag.disc { background: rgba(245,158,11,.12); color: #fbbf24; } .av-price .tag.offer { background: rgba(56,189,248,.12); color: #7dd3fc; }
+.av-price.none { border-color: rgba(245,158,11,.3); background: rgba(245,158,11,.06); }
+.av-price.none .v { font-size: 13px; color: #fbbf24; }
+.av-stock .big { font-size: 13px; color: var(--text); font-weight: 800; }
+.av-stock .big b { font-size: 20px; color: #60a5fa; margin-inline-end: 4px; }
+.av-stock .rows { display: flex; flex-direction: column; gap: 5px; margin-top: 8px; }
+.av-stock .r { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-soft); padding: 5px 8px; border-radius: 9px; }
+.av-stock .r.me { background: rgba(59,130,246,.1); color: var(--text); }
+.av-stock .r .bn { font-weight: 800; min-width: 0; flex: 1; }
+.av-stock .r .cs { display: flex; gap: 4px; flex-wrap: wrap; }
+.av-stock .r .cs span { display: inline-flex; align-items: center; gap: 3px; font-weight: 800; font-size: 11px; }
+.av-stock .r .cs i { width: 10px; height: 10px; border-radius: 50%; border: 1px solid rgba(255,255,255,.3); }
+.av-stock .same { margin-top: 8px; font-size: 12px; font-weight: 800; color: #fbbf24; }
+.av-stock.zero .big { color: var(--text-soft); }
+
+/* today */
+.av-today { padding: 22px; }
+.avt-count { margin-inline-start: auto; font-size: 12px; font-weight: 900; background: var(--blue-dim); color: #93c5fd; padding: 3px 11px; border-radius: 999px; }
+.avt-list { display: flex; flex-direction: column; gap: 6px; max-height: 330px; overflow-y: auto; margin: 0 -6px; padding: 0 6px; }
+.avt-empty { font-size: 13px; color: var(--text-muted); text-align: center; padding: 18px 8px; border: 1px dashed var(--border); border-radius: 14px; }
+.avt-item { display: flex; align-items: center; gap: 10px; padding: 9px 11px; border-radius: 13px; background: rgba(255,255,255,.025); border: 1px solid transparent; text-decoration: none; color: inherit; transition: var(--transition); }
+a.avt-item:hover { border-color: rgba(59,130,246,.35); background: rgba(59,130,246,.07); }
+.avt-item.fresh { border-color: rgba(34,197,94,.45); background: rgba(34,197,94,.08); animation: avFresh 1.6s ease 2; }
+@keyframes avFresh { 50% { box-shadow: 0 0 0 4px rgba(34,197,94,.18); } }
+.avt-dot { width: 14px; height: 14px; border-radius: 50%; flex-shrink: 0; border: 2px solid rgba(255,255,255,.2); }
+.avt-main { flex: 1; min-width: 0; }
+.avt-name { font-size: 13px; font-weight: 800; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.avt-name span { color: var(--text-muted); font-weight: 700; }
+.avt-sub { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+.avt-ch { font-family: 'SFMono-Regular', Consolas, monospace; font-size: 12px; font-weight: 800; color: #fbbf24; letter-spacing: .06em; direction: ltr; }
+
+/* success banner */
+.added-banner { align-items: center; position: relative; overflow: hidden; background: linear-gradient(120deg, rgba(34,197,94,.14), rgba(13,20,40,.9) 60%); }
+.ab-photo { width: 132px; aspect-ratio: 16/10; border-radius: 14px; flex-shrink: 0; overflow: hidden; background: #0d1526; display: flex; align-items: center; justify-content: center; position: relative; }
+.ab-photo img { width: 100%; height: 100%; object-fit: contain; }
+.ab-photo svg { width: 88%; }
+.ab-body { flex: 1; min-width: 0; }
+.ab-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+.ab-btn { height: 36px; padding: 0 14px; border-radius: 11px; display: inline-flex; align-items: center; gap: 6px; font: inherit; font-size: 13px; font-weight: 800; cursor: pointer;
+    text-decoration: none; background: rgba(255,255,255,.05); border: 1px solid var(--border); color: var(--text); transition: var(--transition); }
+.ab-btn:hover { border-color: rgba(255,255,255,.2); }
+.ab-btn.ab-again { background: var(--green); border-color: var(--green); color: #052e16; }
+.ab-btn.ab-again:hover { filter: brightness(1.08); }
+.av-confetti { position: absolute; top: -10px; width: 7px; height: 12px; border-radius: 2px; opacity: .9; pointer-events: none; animation: avFall 1.8s cubic-bezier(.25,.6,.4,1) forwards; }
+@keyframes avFall { to { transform: translateY(160px) rotate(540deg); opacity: 0; } }
+
+/* confirm sheet */
+.av-ov { position: fixed; inset: 0; z-index: 900; background: rgba(2,6,23,.78); backdrop-filter: blur(7px); display: none; align-items: center; justify-content: center; padding: 18px; }
+.av-ov.on { display: flex; animation: avFade .2s ease both; }
+@keyframes avFade { from { opacity: 0; } }
+.av-sheet { width: 100%; max-width: 480px; max-height: 92vh; overflow-y: auto; border-radius: 26px; background: linear-gradient(170deg, #111b33, #0a1122); border: 1px solid rgba(255,255,255,.1);
+    box-shadow: 0 40px 100px rgba(0,0,0,.6); animation: avIn .3s cubic-bezier(.22,1,.36,1) both; }
+@keyframes avIn { from { transform: translateY(22px) scale(.97); opacity: 0; } }
+.av-sheet .preview-photo { border-radius: 26px 26px 0 0; margin: 0; border: 0; border-bottom: 1px solid var(--border); }
+.av-sb { padding: 18px 22px 22px; }
+.av-st { font-size: 22px; font-weight: 900; color: var(--text); }
+.av-ss { font-size: 13px; color: var(--text-soft); font-weight: 700; margin-top: 2px; }
+.av-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 16px 0 12px; }
+.av-grid div { background: rgba(255,255,255,.03); border: 1px solid var(--border); border-radius: 13px; padding: 9px 12px; }
+.av-grid small { display: block; font-size: 10px; font-weight: 800; color: var(--text-muted); margin-bottom: 3px; }
+.av-grid b { font-size: 14px; color: var(--text); display: flex; align-items: center; gap: 6px; }
+.av-grid b i { width: 12px; height: 12px; border-radius: 50%; border: 1px solid rgba(255,255,255,.3); }
+.av-plate { text-align: center; margin: 4px 0 6px; }
+.av-plate small { display: block; font-size: 11px; font-weight: 800; color: var(--text-muted); margin-bottom: 6px; }
+.av-plate span { display: inline-block; direction: ltr; font-family: 'SFMono-Regular', Consolas, monospace; font-size: 30px; font-weight: 900; letter-spacing: .16em; color: #111827;
+    background: linear-gradient(#fefce8, #fde68a); border: 3px solid #1f2937; border-radius: 12px; padding: 6px 18px; box-shadow: 0 0 0 2px #fde68a, 0 12px 30px rgba(0,0,0,.4); word-break: break-all; }
+.av-note { font-size: 12px; color: var(--text-soft); background: rgba(255,255,255,.03); border-radius: 11px; padding: 8px 12px; margin-top: 10px; white-space: pre-wrap; }
+.av-warn { margin-top: 12px; font-size: 13px; font-weight: 800; color: #fecaca; background: rgba(239,68,68,.12); border: 1px solid rgba(239,68,68,.35); border-radius: 12px; padding: 10px 12px; }
+.av-actions { display: flex; flex-direction: column; gap: 8px; margin-top: 16px; }
+.av-actions button { height: 50px; border-radius: 14px; border: 1px solid var(--border); font: inherit; font-size: 15px; font-weight: 800; cursor: pointer; transition: var(--transition);
+    display: flex; align-items: center; justify-content: center; gap: 8px; }
+.av-ok { background: linear-gradient(135deg, var(--green), #16a34a); color: #fff; border: 0 !important; box-shadow: 0 8px 26px rgba(34,197,94,.3); }
+.av-ok2 { background: rgba(34,197,94,.1); color: #86efac; border-color: rgba(34,197,94,.3) !important; }
+.av-back { background: transparent; color: var(--text-soft); }
+.av-actions button:disabled { opacity: .45; cursor: not-allowed; box-shadow: none; }
+.av-actions button.busy .av-spin { border-color: rgba(255,255,255,.35); border-top-color: #fff; }
+.av-toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%) translateY(20px); z-index: 950; background: #0f2a1a; border: 1px solid rgba(34,197,94,.4); color: #dcfce7;
+    font-size: 13px; font-weight: 800; padding: 11px 18px; border-radius: 999px; opacity: 0; transition: all .3s; pointer-events: none; max-width: calc(100% - 32px); text-align: center; }
+.av-toast.on { opacity: 1; transform: translateX(-50%); }
+
+@media (max-width:768px) {
+    .submit-btn { position: sticky; bottom: 12px; z-index: 50; box-shadow: 0 10px 30px rgba(0,0,0,.55), 0 4px 20px rgba(34,197,94,.3); }
+    .added-banner { flex-direction: column; align-items: stretch; }
+    .ab-photo { width: 100%; }
+    .av-ov { align-items: flex-end; padding: 0; }
+    .av-sheet { max-width: none; border-radius: 26px 26px 0 0; animation: avUp .34s cubic-bezier(.22,1,.36,1) both; }
+    @keyframes avUp { from { transform: translateY(100%); } }
+    .av-plate span { font-size: 24px; }
+    .av-sw button { height: 34px; }
+}
+@media (prefers-reduced-motion: reduce) { .submit-btn.ready, .avt-item.fresh { animation: none; } .av-confetti { display: none; } }
+</style>
+
+<div class="av-ov" id="avOv" aria-hidden="true"><div class="av-sheet" id="avSheet" role="dialog" aria-modal="true"></div></div>
+<div class="av-toast" id="avToast"></div>
+
+<script>
+(function () {
+    'use strict';
+    const AR = <?= json_encode($isRTL) ?>, LANG = <?= json_encode($lang) ?>;
+    const COLORS = <?= json_encode(array_map(fn($c) => ['en' => (string)$c['color_en'], 'ar' => (string)$c['color_ar'], 'hex' => av_swatch((string)$c['color_en'])], $colors), JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>;
+    const BRANCHES = <?= json_encode(array_map(fn($b) => ['name' => (string)$b['name'], 'ar' => (string)$b['name_ar'], 'en' => (string)$b['name_en']], $branches), JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>;
+    const PRICES = <?= json_encode((object)$avPrices, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>;
+    const STOCK = <?= json_encode((object)$avStock, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>;
+    const CAN_PRICE = <?= can('page.prices') ? 'true' : 'false' ?>;
+    const PREFILL = <?= json_encode($avPrefill, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>;
+    const ADDED = <?= json_encode($addedVehicle, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>;
+    const KEPT = <?= $avKeep ? 'true' : 'false' ?>;
+    const CUR = AR ? 'جنيه' : 'EGP';
+    const T = AR ? {
+        checking: 'جارٍ التحقق من الرقم…', fresh: '✓ رقم جديد — غير مسجّل في النظام', dup: '⚠️ مسجّل بالفعل:', st: { available: 'متاحة', reserved: 'محجوزة', sold: 'مباعة', consignment: 'أمانة' },
+        price: '💰 السعر الرسمي', noPrice: '⚠️ هذه الفئة لم تُسعّر بعد لهذه السنة', toPrices: 'صفحة الأسعار ←', stock: '📦 في المخزون الآن', none: 'لا توجد سيارة مماثلة في المخزون حالياً — هذه الأولى',
+        cars: 'سيارة', same: n => '⚠️ عندك ' + n + ' بنفس اللون في نفس الفرع', confirmT: 'راجع البيانات قبل الإضافة', chassis: 'رقم الشاسيه',
+        ok: '✓ تأكيد وإضافة', ok2: '✓ إضافة ثم إضافة سيارة مماثلة', back: '✏️ رجوع للتعديل', saving: 'جارٍ الحفظ…', dupWarn: '⚠️ رقم الشاسيه مسجّل بالفعل — لا يمكن إضافته مرة أخرى',
+        kept: '✓ نفس السيارة جاهزة — اختر اللون ورقم الشاسيه', branch: 'الفرع', color: 'اللون', trim: 'الفئة', year: 'السنة', notes: 'ملاحظات'
+    } : {
+        checking: 'Checking the number…', fresh: '✓ New number — not in the system', dup: '⚠️ Already registered:', st: { available: 'Available', reserved: 'Reserved', sold: 'Sold', consignment: 'Consignment' },
+        price: '💰 Official price', noPrice: '⚠️ This trim has no price for this year yet', toPrices: 'Prices page →', stock: '📦 In stock right now', none: 'None of this car in stock right now — this is the first',
+        cars: 'cars', same: n => '⚠️ You already have ' + n + ' in this colour at this branch', confirmT: 'Check the details before adding', chassis: 'Chassis No.',
+        ok: '✓ Confirm & add', ok2: '✓ Add, then add another like this', back: '✏️ Back to edit', saving: 'Saving…', dupWarn: '⚠️ This chassis number is already registered — it cannot be added again',
+        kept: '✓ Same car ready — pick the colour and chassis', branch: 'Branch', color: 'Colour', trim: 'Trim', year: 'Year', notes: 'Notes'
+    };
+    const $ = id => document.getElementById(id);
+    const esc = v => String(v == null ? '' : v).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    const norm = v => String(v == null ? '' : v).trim().toLowerCase();
+    const key = (...p) => p.map(norm).join('|');
+    const colorOf = en => COLORS.find(c => norm(c.en) === norm(en));
+    const hexOf = en => (colorOf(en) || {}).hex || '#64748b';
+    const colorLabel = en => { const c = colorOf(en); return c ? (AR ? c.ar : c.en) : en; };
+    const branchLabel = n => { const b = BRANCHES.find(x => x.name === n); return b ? (AR ? b.ar : b.en) : n; };
+    const dealKind = v => /خصم|discount/i.test(v) ? 'disc' : (/أوفر|offer/i.test(v) ? 'offer' : '');
+    function toast(m) { const t = $('avToast'); t.textContent = m; t.classList.add('on'); clearTimeout(toast._t); toast._t = setTimeout(() => t.classList.remove('on'), 2600); }
+
+    const form = $('vehicleForm');
+    const f = { brand: $('brand'), model: $('model'), car_year: $('car_year'), trim_name: $('trim'), color: $('color'), branch: $('branch'), chassis: $('chassis'), notes: $('notes') };
+    const stageEl = $('previewPhoto'), stageImg = $('previewPhotoImg'), hint = $('chassisHint'), submitBtn = $('submitBtn');
+
+    /* ═══ ticks on filled fields + ready state ═══ */
+    const req = ['brand', 'model', 'car_year', 'trim_name', 'color', 'branch', 'chassis'];
+    req.forEach(k => { const lb = f[k].closest('.form-group').querySelector('label'); if (lb) lb.insertAdjacentHTML('beforeend', '<span class="av-tick">✓</span>'); });
+    let dup = null;   // the car that already has this chassis, if any
+    function refresh() {
+        let n = 0;
+        req.forEach(k => { const ok = !!f[k].value.trim() && !(k === 'chassis' && dup); f[k].closest('.form-group').classList.toggle('done', ok); if (ok) n++; });
+        f.chassis.closest('.form-group').classList.toggle('bad', !!dup);
+        const ready = n === req.length;
+        const fp = document.querySelector('.form-progress'); if (fp) fp.classList.toggle('ready', ready);
+        submitBtn.classList.toggle('ready', ready);
+        paintColor(); context();
+    }
+    Object.values(f).forEach(el => { el.addEventListener('change', refresh); el.addEventListener('input', refresh); });
+
+    /* ═══ colour: dot inside the field, tap-to-pick chips, tinted stage ═══ */
+    const cw = f.color.closest('.field-wrap'); cw.classList.add('av-selwrap'); cw.insertAdjacentHTML('afterbegin', '<i class="av-seldot" id="avSelDot"></i>');
+    const sw = document.createElement('div'); sw.className = 'av-sw';
+    sw.innerHTML = COLORS.map(c => '<button type="button" data-v="' + esc(c.en) + '" style="--sw:' + c.hex + '"><i style="background:' + c.hex + '"></i>' + esc(AR ? c.ar : c.en) + '</button>').join('');
+    cw.parentElement.appendChild(sw);
+    sw.addEventListener('click', e => { const b = e.target.closest('button'); if (!b) return; f.color.value = b.dataset.v; f.color.dispatchEvent(new Event('change', { bubbles: true })); });
+    stageEl.insertAdjacentHTML('beforeend', '<span class="av-cname"><i></i><b id="avCName"></b></span>');
+    let lastColor = null;
+    function paintColor() {
+        const v = f.color.value, hx = v ? hexOf(v) : '#64748b';
+        cw.classList.toggle('has', !!v); $('avSelDot').style.background = hx;
+        sw.querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.v === v));
+        stageEl.style.setProperty('--car', hx); stageEl.classList.toggle('hasc', !!v); $('avCName').textContent = v ? colorLabel(v) : '';
+        if (v !== lastColor) { stageEl.classList.remove('pop'); void stageEl.offsetWidth; if (v) stageEl.classList.add('pop'); lastColor = v; }
+        const pc = $('previewColor');
+        if (pc && v && !pc.querySelector('.pv-dot')) pc.insertAdjacentHTML('afterbegin', '<i class="pv-dot" style="background:' + hx + '"></i>');
+        else if (pc && pc.querySelector('.pv-dot')) pc.querySelector('.pv-dot').style.background = hx;
+    }
+    // the existing preview rewrites the colour text; keep the dot in front of it
+    new MutationObserver(() => { const pc = $('previewColor'); if (f.color.value && pc && !pc.querySelector('.pv-dot')) paintColor(); })
+        .observe($('previewColor'), { childList: true });
+
+    /* ═══ library photo on the stage ═══ */
+    function stage(img, st, pad) {
+        st.classList.remove('scene', 'studio', 'matte', 'ready'); st.style.removeProperty('--stage-bg'); img.removeAttribute('style');
+        function go() {
+            try {
+                const w = 120, h = Math.max(24, Math.round(w * img.naturalHeight / img.naturalWidth));
+                const cv = document.createElement('canvas'); cv.width = w; cv.height = h;
+                const cx = cv.getContext('2d', { willReadFrequently: true }); cx.drawImage(img, 0, 0, w, h);
+                const dd = cx.getImageData(0, 0, w, h).data, at = (x, y) => { const i = (y * w + x) * 4; return [dd[i], dd[i + 1], dd[i + 2]]; };
+                const ring = [];
+                for (let x = 1; x < w - 1; x += 5) { ring.push(at(x, 1)); ring.push(at(x, h - 2)); }
+                for (let y = 1; y < h - 1; y += 3) { ring.push(at(1, y)); ring.push(at(w - 2, y)); }
+                const m = [0, 1, 2].map(k => ring.reduce((a, p) => a + p[k], 0) / ring.length);
+                const spread = Math.sqrt(ring.reduce((a, p) => a + (p[0] - m[0]) ** 2 + (p[1] - m[1]) ** 2 + (p[2] - m[2]) ** 2, 0) / ring.length);
+                if (spread > 34) st.classList.add('scene');
+                else {
+                    if (.299 * m[0] + .587 * m[1] + .114 * m[2] > 226) st.classList.add('studio');
+                    else { st.classList.add('matte'); st.style.setProperty('--stage-bg', 'rgb(' + m.map(Math.round).join(',') + ')'); }
+                    let x0 = w, y0 = h, x1 = -1, y1 = -1;
+                    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) { const p = at(x, y);
+                        if (Math.abs(p[0] - m[0]) + Math.abs(p[1] - m[1]) + Math.abs(p[2] - m[2]) > 60) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; } }
+                    const fw = (x1 - x0 + 1) / w, fh = (y1 - y0 + 1) / h;
+                    if (x1 > 0 && fw > .08 && fh > .08 && !(fw > .97 && fh > .97)) {
+                        const sw_ = st.clientWidth - pad.x * 2, sh = st.clientHeight - pad.t - pad.b, nw = img.naturalWidth, nh = img.naturalHeight;
+                        const cw_ = (x1 + 1 - x0) / w * nw, ch = (y1 + 1 - y0) / h * nh;
+                        // never zoom past 1.5x a plain fit (a white car on white can hide its own edges)
+                        const k = Math.min(sw_ / cw_, sh / ch, 1.5 * Math.min(st.clientWidth / nw, st.clientHeight / nh));
+                        Object.assign(img.style, { position: 'absolute', inset: 'auto', maxWidth: 'none', padding: '0', objectFit: 'fill', width: (nw * k) + 'px', height: (nh * k) + 'px',
+                            left: (pad.x + (sw_ - cw_ * k) / 2 - x0 / w * nw * k) + 'px', top: (pad.t + (sh - ch * k) - y0 / h * nh * k) + 'px' });
+                    }
+                }
+            } catch (e) {}
+            st.classList.add('ready');
+        }
+        if (img.complete && img.naturalWidth) go(); else img.addEventListener('load', go, { once: true });
+    }
+    new MutationObserver(() => { if (stageImg.getAttribute('src')) stage(stageImg, stageEl, { x: 22, t: 18, b: 14 }); })
+        .observe(stageImg, { attributes: true, attributeFilter: ['src'] });
+    addEventListener('resize', () => { if (stageEl.classList.contains('on')) stage(stageImg, stageEl, { x: 22, t: 18, b: 14 }); });
+
+    /* ═══ live chassis check ═══ */
+    let seq = 0, tmr = null, pending = null;
+    function check(v) {
+        const my = ++seq;
+        pending = fetch('add_vehicle.php?ajax=chassis&q=' + encodeURIComponent(v), { credentials: 'same-origin' })
+            .then(r => r.json()).then(j => {
+                if (my !== seq || f.chassis.value.trim() !== v) return;
+                dup = j && j.exists ? j.car : null;
+                if (dup) {
+                    hint.className = 'chassis-hint dup';
+                    hint.innerHTML = esc(T.dup) + ' <span class="ch-car"><i style="background:' + hexOf(dup.color) + '"></i>' +
+                        esc([dup.brand, dup.model, dup.car_year, dup.trim_name].join(' ')) + ' · ' + esc(colorLabel(dup.color)) + ' · ' + esc(branchLabel(dup.branch)) + ' · ' + esc(T.st[dup.status] || dup.status) + '</span>';
+                } else if (v.length >= 5 && v.length <= 17) {
+                    hint.className = 'chassis-hint valid'; hint.textContent = T.fresh;
+                }
+                refresh();
+            }).catch(() => {}).finally(() => { if (my === seq) pending = null; });
+        return pending;
+    }
+    f.chassis.addEventListener('input', () => {
+        const v = f.chassis.value.trim(); dup = null; clearTimeout(tmr); seq++;
+        if (v.length >= 4) {
+            if (v.length >= 5 && v.length <= 17) { hint.className = 'chassis-hint checking'; hint.innerHTML = '<span class="av-spin"></span> ' + esc(T.checking); }
+            tmr = setTimeout(() => check(v), 320);
+        }
+        refresh();
+    });
+
+    /* ═══ price + stock for exactly this car ═══ */
+    const ctx = $('avCtx');
+    function context() {
+        const b = f.brand.value, m = f.model.value, tr = f.trim_name.value, y = f.car_year.value;
+        if (!b || !m || !tr || !y) { ctx.innerHTML = ''; return; }
+        const k = key(b, m, tr, y);
+        let h = '';
+        if (CAN_PRICE) {
+            const p = PRICES[k];
+            if (p && p.off) {
+                h += '<div class="av-box av-price"><div class="h">' + esc(T.price) + '</div><div class="v">' + esc(p.off) + '<small>' + esc(CUR) + '</small></div>' +
+                     (p.cust ? '<span class="tag ' + dealKind(p.cust) + '">' + esc(p.cust) + '</span>' : '') + '</div>';
+            } else {
+                h += '<div class="av-box av-price none"><div class="h">' + esc(T.price) + '<a href="prices.php?lang=' + LANG + '&search=' + encodeURIComponent(m) + '">' + esc(T.toPrices) + '</a></div><div class="v">' + esc(T.noPrice) + '</div></div>';
+            }
+        }
+        const rows = STOCK[k] || [];
+        const total = rows.reduce((a, r) => a + r[2], 0);
+        if (!total) h += '<div class="av-box av-stock zero"><div class="h">' + esc(T.stock) + '</div><div class="big">' + esc(T.none) + '</div></div>';
+        else {
+            const byB = {}; rows.forEach(([br, c, n]) => { (byB[br] = byB[br] || { n: 0, c: {} }).n += n; byB[br].c[c] = (byB[br].c[c] || 0) + n; });
+            const selB = f.branch.value, selC = f.color.value;
+            const sameN = selB && selC && byB[selB] ? Object.entries(byB[selB].c).filter(([c]) => norm(c) === norm(selC)).reduce((a, [, n]) => a + n, 0) : 0;
+            h += '<div class="av-box av-stock"><div class="h">' + esc(T.stock) + '</div><div class="big"><b>' + total + '</b>' + esc(T.cars) + '</div><div class="rows">' +
+                 Object.entries(byB).sort((a, b2) => b2[1].n - a[1].n).map(([br, o]) => '<div class="r' + (br === selB ? ' me' : '') + '"><span class="bn">📍 ' + esc(branchLabel(br)) + ' · ' + o.n + '</span><span class="cs">' +
+                 Object.entries(o.c).map(([c, n]) => '<span title="' + esc(colorLabel(c)) + '"><i style="background:' + hexOf(c) + '"></i>' + n + '</span>').join('') + '</span></div>').join('') + '</div>' +
+                 (sameN ? '<div class="same">' + esc(T.same(sameN)) + '</div>' : '') + '</div>';
+        }
+        if (ctx._h !== h) { ctx.innerHTML = h; ctx._h = h; }
+    }
+
+    /* ═══ confirm before saving (and a one-time lock) ═══ */
+    const ov = $('avOv'), sheet = $('avSheet');
+    let locked = false;
+    function closeSheet() { if (locked) return; ov.classList.remove('on'); ov.setAttribute('aria-hidden', 'true'); document.body.style.overflow = ''; }
+    function openSheet() {
+        const v = k => f[k].value.trim();
+        const tx = el => { const o = el.options[el.selectedIndex]; return o ? o.text.trim() : ''; };
+        const photo = stageEl.classList.contains('on') ? stageImg.getAttribute('src') : '';
+        const k = key(v('brand'), v('model'), v('trim_name'), v('car_year')), p = CAN_PRICE ? PRICES[k] : null;
+        let h = '<div class="preview-photo av-stage' + (photo ? ' on' : '') + ' hasc" id="avSStage" style="--car:' + hexOf(v('color')) + '">' +
+                '<div class="av-floor"></div>' + $('avSil').outerHTML.replace('id="avSil"', '') + (photo ? '<img id="avSImg" src="' + esc(photo) + '" alt="">' : '') +
+                '<span class="av-cname"><i></i><b>' + esc(colorLabel(v('color'))) + '</b></span></div>';
+        h += '<div class="av-sb"><div class="av-ss">' + esc(T.confirmT) + '</div><div class="av-st">' + esc([tx(f.brand), v('model'), v('car_year')].join(' ')) + '</div>';
+        h += '<div class="av-grid">' +
+             '<div><small>' + esc(T.trim) + '</small><b>' + esc(v('trim_name')) + '</b></div>' +
+             '<div><small>' + esc(T.color) + '</small><b><i style="background:' + hexOf(v('color')) + '"></i>' + esc(tx(f.color)) + '</b></div>' +
+             '<div><small>' + esc(T.branch) + '</small><b>📍 ' + esc(tx(f.branch)) + '</b></div>' +
+             '<div><small>' + esc(T.price) + '</small><b>' + (p && p.off ? esc(p.off) + ' <span style="font-size:11px;color:#94a3b8">' + esc(CUR) + '</span>' : '—') + '</b></div></div>';
+        h += '<div class="av-plate"><small>🔑 ' + esc(T.chassis) + '</small><span>' + esc(v('chassis')) + '</span></div>';
+        if (v('notes')) h += '<div class="av-note">📝 ' + esc(v('notes')) + '</div>';
+        if (dup) h += '<div class="av-warn">' + esc(T.dupWarn) + '</div>';
+        h += '<div class="av-actions"><button type="button" class="av-ok" data-keep="">' + esc(T.ok) + '</button>' +
+             '<button type="button" class="av-ok2" data-keep="1">' + esc(T.ok2) + '</button>' +
+             '<button type="button" class="av-back">' + esc(T.back) + '</button></div></div>';
+        sheet.innerHTML = h;
+        sheet.querySelectorAll('[data-keep]').forEach(b => { if (dup) b.disabled = true; b.addEventListener('click', () => go(b)); });
+        sheet.querySelector('.av-back').addEventListener('click', closeSheet);
+        ov.classList.add('on'); ov.setAttribute('aria-hidden', 'false'); document.body.style.overflow = 'hidden';
+        const si = $('avSImg'); if (si) requestAnimationFrame(() => stage(si, $('avSStage'), { x: 30, t: 22, b: 16 }));
+        setTimeout(() => { const ok = sheet.querySelector('.av-ok'); if (ok && !ok.disabled) ok.focus(); }, 60);
+    }
+    function go(btn) {
+        if (locked || dup) return;
+        locked = true;
+        $('keepInput').value = btn.dataset.keep;
+        sheet.querySelectorAll('button').forEach(b => b.disabled = true);
+        btn.classList.add('busy'); btn.innerHTML = '<span class="av-spin"></span> ' + esc(T.saving);
+        submitBtn.disabled = true;
+        form.submit();
+    }
+    ov.addEventListener('click', e => { if (e.target === ov) closeSheet(); });
+    document.addEventListener('keydown', e => { if (e.key === 'Escape' && ov.classList.contains('on')) closeSheet(); });
+    // runs after the page's own validation; only a valid form reaches the sheet
+    form.addEventListener('submit', e => {
+        if (e.defaultPrevented) return;
+        e.preventDefault();
+        if (locked) return;
+        const v = f.chassis.value.trim();
+        const wait = pending || (v.length >= 4 && !dup ? check(v) : null);
+        Promise.resolve(wait).then(openSheet, openSheet);
+    });
+
+    /* ═══ fill the form: same car again, or what was typed before an error ═══ */
+    const sleep = ms => new Promise(r => setTimeout(r, ms));
+    async function setSel(el, val) {
+        if (!val) return false;
+        for (let i = 0; i < 50; i++) {
+            if (!el.disabled && Array.from(el.options).some(o => o.value === val)) { el.value = val; el.dispatchEvent(new Event('change', { bubbles: true })); return true; }
+            await sleep(100);
+        }
+        return false;
+    }
+    async function fill(d) {
+        if (!d) return;
+        if (d.car_year) await setSel(f.car_year, String(d.car_year));
+        if (d.branch) await setSel(f.branch, d.branch);
+        if (d.color) await setSel(f.color, d.color);
+        if (await setSel(f.brand, d.brand) && await setSel(f.model, d.model)) await setSel(f.trim_name, d.trim_name);
+        if (d.chassis) { f.chassis.value = d.chassis; f.chassis.dispatchEvent(new Event('input', { bubbles: true })); }
+        if (d.notes) f.notes.value = d.notes;
+        refresh();
+    }
+    function again() {
+        fill({ brand: ADDED.brand, model: ADDED.model, car_year: ADDED.car_year, trim_name: ADDED.trim_name, branch: ADDED.branch }).then(() => {
+            const g = f.color.closest('.form-group'); g.scrollIntoView({ behavior: 'smooth', block: 'center' }); toast(T.kept);
+        });
+    }
+    if (PREFILL) fill(PREFILL).then(() => {
+        if (KEPT) { toast(T.kept); f.color.closest('.form-group').scrollIntoView({ behavior: 'smooth', block: 'center' }); }
+    });
+
+    /* ═══ the success banner: photo, confetti, "add another like this" ═══ */
+    if (ADDED && $('addedBanner')) {
+        const ab = $('addedBanner'), ph = $('abPhoto');
+        const lib = (function () { try { return findImg(ADDED); } catch (e) { return ''; } })();
+        ph.style.setProperty('--car', hexOf(ADDED.color));
+        ph.innerHTML = lib ? '<img src="' + esc(lib) + '" alt="">' : $('avSil').outerHTML.replace('id="avSil"', '').replace('class="av-body"', 'class="av-body" style="fill:' + hexOf(ADDED.color) + '"');
+        const again_ = $('abAgain'); if (again_) again_.addEventListener('click', again);
+        if (!(matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches)) {
+            const cols = ['#22c55e', '#a855f7', '#3b82f6', '#f59e0b', '#f472b6', hexOf(ADDED.color)];
+            for (let i = 0; i < 26; i++) {
+                const c = document.createElement('i'); c.className = 'av-confetti';
+                c.style.left = (Math.random() * 100) + '%'; c.style.background = cols[i % cols.length]; c.style.animationDelay = (Math.random() * .5) + 's';
+                ab.appendChild(c); setTimeout(() => c.remove(), 2600);
+            }
+        }
+    }
+    // same lookup order as findCarImage() above, for the car that was just saved
+    function findImg(car) {
+        const lib = window.__AV_IMAGES || {};
+        const p = norm(car.brand) + '|' + norm(car.model) + '|', t = norm(car.trim_name), y = norm(car.car_year), c = norm(car.color);
+        const tries = [p + t + '|' + y + '|' + c, p + t + '||' + c, p + '|' + y + '|' + c, p + '||' + c, p + t + '|' + y + '|', p + t + '||', p + '|' + y + '|', p + '||'];
+        for (const k of tries) if (lib[k]) return lib[k];
+        return '';
+    }
+
+    refresh();
 })();
 </script>
 

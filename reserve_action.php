@@ -16,6 +16,7 @@
 
 require 'auth.php';
 require 'config.php';
+require_once __DIR__ . '/push_helpers.php';
 require 'reserve_helpers.php';
 
 $lang = $_POST['lang'] ?? $_GET['lang'] ?? 'ar';
@@ -86,6 +87,7 @@ if ($action === 'reserve') {
         ")->execute([$car_id, $car['branch'], $car['branch'], $_SESSION['username'] ?? '']);
 
         $pdo->commit();
+        notify_event($pdo, 'car_reserved', ['car' => $car]);
     } catch (Exception $e) {
         $pdo->rollBack();
         error_log('Reserve failed: ' . $e->getMessage());
@@ -117,6 +119,7 @@ if ($action === 'cancel') {
         ")->execute([$car_id, $car['branch'], $car['branch'], $_SESSION['username'] ?? '']);
 
         $pdo->commit();
+        notify_event($pdo, 'reserve_cancelled', ['car' => $car]);
     } catch (Exception $e) {
         $pdo->rollBack();
         error_log('Reserve cancel failed: ' . $e->getMessage());

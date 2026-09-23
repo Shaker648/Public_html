@@ -1,6 +1,8 @@
 <?php
 require 'auth.php';
 require 'config.php';
+require_once __DIR__ . '/push_helpers.php';
+require 'car_images_helpers.php';
 
 $lang = $_GET['lang'] ?? 'ar';
 $dir  = $lang === 'ar' ? 'rtl' : 'ltr';
@@ -229,6 +231,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
         }
     } catch (Exception $e) { error_log('pricing_history write failed: ' . $e->getMessage()); }
 
+    if (!empty($changed)) {
+        notify_event($pdo, 'price_changed', [
+            'brand' => $brand, 'model' => $model_name, 'trim' => $trim_name, 'year' => $car_year,
+            'old' => ($oldVals['official'] ?? '') !== $newVals['official'] ? (string)($oldVals['official'] ?? '') : '',
+            'new' => (string)$official_price,
+            'customer' => (string)($customer_price ?? ''),
+            'type' => $type ?? 'update',
+        ]);
+    }
     echo json_encode(['ok' => true, 'updated_by' => $updated_by, 'updated_at' => date('d M Y h:i A'), 'car_year' => $car_year]);
     exit;
 }
@@ -315,14 +326,12 @@ $filterBrand  = trim($_GET['brand']  ?? '');
 $filterSearch = trim($_GET['search'] ?? '');
 
 /* ─── Load models grouped by brand ─── */
+/* Every active model is sent once. The search and brand filters still work
+   exactly as before (search matches model or trim, brand is exact), but they
+   are applied instantly in the browser, so filtering never reloads the page.
+   A ?brand= or ?search= link still opens with that filter applied. */
 $mWhere  = ["m.active = 1"];
 $mParams = [];
-if ($filterBrand !== '') { $mWhere[] = "m.brand = ?"; $mParams[] = $filterBrand; }
-if ($filterSearch !== '') {
-    $mWhere[] = "(m.model_name LIKE ? OR m.trim_name LIKE ?)";
-    $mParams[] = "%$filterSearch%";
-    $mParams[] = "%$filterSearch%";
-}
 
 $mSQL = "
     SELECT m.brand, m.model_name, m.trim_name,
@@ -390,6 +399,138 @@ for ($y = $currentYear + 2; $y >= 2015; $y--) {
 /* ── NEW: discount / offer amount steps (1,000 → 300,000) ── */
 $offerSteps = [];
 for ($v = 1000; $v <= 300000; $v += 1000) { $offerSteps[] = $v; }
+
+/* ═══════════════ Context for each price line (screen extras) ═══════════════
+   All read once for the page. Nothing here is used by saving or reordering. */
+$pxKey = fn($b, $m, $tr, $y = '') => mb_strtolower(trim((string)$b) . '|' . trim((string)$m) . '|' . trim((string)$tr) . '|' . trim((string)$y));
+
+// 1. what is in stock right now, per brand / model / trim / year, split by branch
+$pxStock = [];      // yearKey => ['n'=>, 'br'=>[label=>n]]
+$pxColors = [];     // trimKey(no year) => [colour => n]
+try {
+    $sr = $pdo->query("
+        SELECT c.brand, c.model, c.trim_name, c.car_year, c.branch, c.color, COUNT(*) AS n,
+               b.name_ar, b.name_en
+        FROM cars c LEFT JOIN branches b ON b.name = c.branch
+        WHERE c.status IN ('available','reserved')
+        GROUP BY c.brand, c.model, c.trim_name, c.car_year, c.branch, c.color, b.name_ar, b.name_en
+    ")->fetchAll(PDO::FETCH_ASSOC);
+    foreach ($sr as $r) {
+        $k  = $pxKey($r['brand'], $r['model'], $r['trim_name'], $r['car_year']);
+        $bl = $lang === 'ar' ? ($r['name_ar'] ?: $r['branch']) : ($r['name_en'] ?: $r['branch']);
+        $pxStock[$k]['n'] = ($pxStock[$k]['n'] ?? 0) + (int)$r['n'];
+        $pxStock[$k]['br'][$bl] = ($pxStock[$k]['br'][$bl] ?? 0) + (int)$r['n'];
+        $tk = $pxKey($r['brand'], $r['model'], $r['trim_name']);
+        $pxColors[$tk][$r['color']] = ($pxColors[$tk][$r['color']] ?? 0) + (int)$r['n'];
+    }
+} catch (Throwable $e) { error_log('prices: stock context failed: ' . $e->getMessage()); }
+
+// 2. recent price changes, newest first (last 180 days)
+$pxHist = [];       // yearKey => list
+try {
+    $hr = $pdo->query("
+        SELECT brand, model_name, trim_name, car_year, change_type,
+               old_official, new_official, old_customer, new_customer, old_trade, new_trade,
+               changed_by, changed_at
+        FROM pricing_history
+        WHERE changed_at >= NOW() - INTERVAL 180 DAY
+        ORDER BY changed_at DESC, id DESC
+    ")->fetchAll(PDO::FETCH_ASSOC);
+    foreach ($hr as $r) {
+        $k = $pxKey($r['brand'], $r['model_name'], $r['trim_name'], $r['car_year']);
+        if (count($pxHist[$k] ?? []) >= 8) continue;
+        $pxHist[$k][] = [
+            't'  => (string)$r['change_type'],
+            'y'  => (string)$r['car_year'],
+            'o0' => (string)($r['old_official'] ?? ''), 'o1' => (string)($r['new_official'] ?? ''),
+            'c0' => (string)($r['old_customer'] ?? ''), 'c1' => (string)($r['new_customer'] ?? ''),
+            // the trade price never leaves the server for users who cannot see it
+            'd0' => $isSales ? '' : (string)($r['old_trade'] ?? ''), 'd1' => $isSales ? '' : (string)($r['new_trade'] ?? ''),
+            'by' => (string)$r['changed_by'],
+            'at' => (string)$r['changed_at'],
+        ];
+    }
+} catch (Throwable $e) { /* no history table yet: nothing to show */ }
+
+// 3. a photo per trim from the image library: the colour most in stock that has
+//    one, else the model's fallback image, else any image of that model
+$pxImgMap = car_images_map($pdo);
+$pxImage  = function ($brand, $model, $trim) use ($pxImgMap, $pxColors, $pxKey) {
+    $cols = $pxColors[$pxKey($brand, $model, $trim)] ?? [];
+    arsort($cols);
+    foreach (array_keys($cols) as $c) {
+        $u = car_image_url_for($pxImgMap, ['brand' => $brand, 'model' => $model, 'trim_name' => $trim, 'color' => $c], true);
+        if ($u !== '') return $u;
+    }
+    $u = car_image_url_for($pxImgMap, ['brand' => $brand, 'model' => $model, 'trim_name' => $trim, 'color' => ''], true);
+    if ($u !== '') return $u;
+    $pre = car_image_norm($brand) . '|' . car_image_norm($model) . '|';
+    foreach ($pxImgMap as $k => $row) {
+        if (strpos($k, $pre) === 0) { $u = car_image_url($row, true); if ($u !== '') return $u; }
+    }
+    return '';
+};
+
+$pxDealKind = function ($v) {
+    $v = (string)$v;
+    if ($v === '') return '';
+    if (mb_strpos($v, 'خصم') !== false || stripos($v, 'Discount') !== false) return 'disc';
+    if (mb_strpos($v, 'أوفر') !== false || stripos($v, 'Offer') !== false)    return 'offer';
+    return '';
+};
+
+$pxData   = [];     // trimKey (the page's own data-trim-key) => everything the extras need
+$pxBrands = [];     // brand => up to 4 model photos
+foreach ($trimMap as $bk => $trims) {
+    foreach ($trims as $key => $tr) {
+        $img = $pxImage($tr['brand'], $tr['model_name'], $tr['trim_name']);
+        if ($img !== '' && count($pxBrands[$bk] ?? []) < 4 && !in_array($img, $pxBrands[$bk] ?? [], true)) {
+            // one photo per model, so the strip shows different cars
+            $seenModel = false;
+            foreach ($pxData as $d) if ($d['brand'] === $tr['brand'] && $d['model'] === $tr['model_name'] && in_array($d['img'], $pxBrands[$bk] ?? [], true)) $seenModel = true;
+            if (!$seenModel) $pxBrands[$bk][] = $img;
+        }
+        $years = [];
+        foreach ($tr['years'] as $yr => $row) {
+            $yk   = $pxKey($tr['brand'], $tr['model_name'], $tr['trim_name'], $yr);
+            $age  = $row['updated_at'] ? (int)floor((time() - strtotime($row['updated_at'])) / 86400) : null;
+            $h    = $pxHist[$yk] ?? [];
+            $chg  = null;
+            foreach ($h as $e) {
+                if (!in_array($e['t'], ['create', 'update'], true)) continue;
+                $days = (int)floor((time() - strtotime($e['at'])) / 86400);
+                if ($days > 30) break;
+                if (is_numeric($e['o0']) && is_numeric($e['o1']) && (float)$e['o0'] !== (float)$e['o1']) {
+                    $chg = ['dir' => (float)$e['o1'] > (float)$e['o0'] ? 'up' : 'down', 'days' => $days,
+                            'from' => number_format((float)$e['o0']), 'to' => number_format((float)$e['o1'])];
+                }
+                break;   // only the newest change counts
+            }
+            $years[(string)$yr] = [
+                'off'   => $row['official_price'] !== null && $row['official_price'] !== '' ? number_format((float)$row['official_price']) : '',
+                'cust'  => (string)($row['customer_price'] ?? ''),
+                'trade' => $isSales ? '' : (string)($row['trade_price'] ?? ''),
+                'ck'    => $pxDealKind($row['customer_price'] ?? ''),
+                'tk'    => $isSales ? '' : $pxDealKind($row['trade_price'] ?? ''),
+                'notes' => (string)($row['notes'] ?? ''),
+                'upd'   => $row['updated_at'] ? date('Y-m-d', strtotime($row['updated_at'])) : '',
+                'age'   => $age,
+                'stock' => $pxStock[$yk]['n'] ?? 0,
+                'br'    => $pxStock[$yk]['br'] ?? (object)[],
+                'chg'   => $chg,
+                'wk'    => !empty($h) && (time() - strtotime($h[0]['at'])) <= 7 * 86400,
+            ];
+        }
+        $hist = [];
+        foreach (array_keys($tr['years']) as $yr) foreach ($pxHist[$pxKey($tr['brand'], $tr['model_name'], $tr['trim_name'], $yr)] ?? [] as $e) $hist[] = $e;
+        usort($hist, fn($a, $b) => strcmp($b['at'], $a['at']));
+        $pxData[$key] = [
+            'brand' => $tr['brand'], 'model' => $tr['model_name'], 'trim' => $tr['trim_name'],
+            'img'   => $img, 'years' => $years, 'hist' => array_slice($hist, 0, 10),
+        ];
+    }
+}
+$pxCanHist = can('page.price_history');
 
 function fmt($val, $currency) {
     if ($val === null || $val === '') return null;
@@ -923,7 +1064,6 @@ tr.drag-over-bottom td { border-bottom: 2px solid var(--purple) !important; }
         </div>
         <div class="nav-group">
             <a href="dashboard.php?lang=<?= $lang ?>"    class="nav-btn dash">🏠 <?= $t[$lang]['dashboard'] ?></a>
-            <a href="stock_report.php?lang=<?= $lang ?>"    class="nav-btn inv">🚗 <?= $t[$lang]['inventory'] ?></a>
             <a href="stock_report.php?lang=<?= $lang ?>" class="nav-btn report">📄 <?= $t[$lang]['stock_report'] ?></a>
             <?php if (can('page.price_history')): ?>
             <a href="price_history.php?lang=<?= $lang ?>" class="nav-btn report">📈 <?= $t[$lang]['price_history'] ?></a>
@@ -1971,6 +2111,505 @@ function removeClone() {
 })();
 
 <?php endif; ?>
+</script>
+
+<!-- ══════════════ Screen extras around the price tables ══════════════
+     Nothing below changes how prices are edited, saved, reordered or deleted.
+     It adds context beside the existing cells, never inside them, so a save
+     that rewrites a cell cannot wipe it. -->
+<style>
+body::before { content:''; position:fixed; inset:0; z-index:-1; pointer-events:none;
+    background: radial-gradient(ellipse 55% 40% at 88% -6%, rgba(245,158,11,.10), transparent 70%),
+                radial-gradient(ellipse 45% 35% at 6% 2%, rgba(147,51,234,.13), transparent 70%),
+                radial-gradient(ellipse 60% 45% at 50% 110%, rgba(34,197,94,.07), transparent 70%); }
+
+.stats-row { display:none !important; }   /* its three numbers live on in the row below */
+.px-kpis { display:grid; grid-template-columns:1.25fr repeat(5,1fr); gap:12px; margin-bottom:18px; }
+.px-k { position:relative; overflow:hidden; padding:16px 18px; border-radius:20px;
+        background:linear-gradient(160deg, rgba(20,30,52,.95), rgba(10,16,32,.95));
+        border:1px solid rgba(255,255,255,.07); box-shadow:0 8px 30px rgba(0,0,0,.4); }
+.px-k::before { content:''; position:absolute; inset-inline:0; top:0; height:3px; background:var(--kc); }
+.px-k .n { font-size:34px; font-weight:900; line-height:1; color:var(--kc); font-variant-numeric:tabular-nums; }
+.px-k .l { font-size:12px; font-weight:800; color:#94a3b8; margin-top:7px; }
+.px-k.ring { display:flex; align-items:center; gap:16px; --kc:#22c55e; }
+.px-k.ring svg { transform:rotate(-90deg); flex-shrink:0; }
+.px-k.ring .bg { stroke:rgba(255,255,255,.08); } .px-k.ring .fg { stroke:url(#pxGrad); stroke-linecap:round; transition:stroke-dashoffset 1.2s cubic-bezier(.22,1,.36,1); }
+.px-k.ring .px-pct { font-size:30px; font-weight:900; background:linear-gradient(90deg,#22c55e,#a855f7); -webkit-background-clip:text; background-clip:text; -webkit-text-fill-color:transparent; }
+.px-k.ring .sub { font-size:12px; color:#94a3b8; font-weight:800; margin-top:4px; }
+.px-k.tot { --kc:#e2e8f0; } .px-k.unp { --kc:#ef4444; } .px-k.off { --kc:#38bdf8; } .px-k.dis { --kc:#f59e0b; } .px-k.wk { --kc:#a78bfa; }
+.px-k.tap { cursor:pointer; transition:transform .15s, border-color .2s; } .px-k.tap:hover { transform:translateY(-2px); border-color:rgba(255,255,255,.18); }
+.px-k.on { border-color:var(--kc); background:linear-gradient(160deg, color-mix(in srgb, var(--kc) 16%, #14203a), rgba(10,16,32,.95)); }
+
+.px-chips { display:flex; gap:7px; overflow-x:auto; scrollbar-width:none; margin-top:12px; padding-bottom:2px; }
+.px-chips::-webkit-scrollbar { display:none; }
+.px-chip { flex-shrink:0; height:32px; padding:0 13px; border-radius:50px; cursor:pointer; font-family:inherit; font-size:12.5px; font-weight:800;
+           background:rgba(255,255,255,.05); border:1px solid rgba(255,255,255,.1); color:#94a3b8; display:inline-flex; align-items:center; gap:6px; transition:all .2s; }
+.px-chip:hover { color:#e2e8f0; }
+.px-chip.on { background:#9333ea; border-color:transparent; color:#fff; }
+.px-chip b { font-size:10.5px; opacity:.75; }
+.px-sep { flex-shrink:0; width:1px; height:18px; background:rgba(255,255,255,.14); margin:7px 3px; }
+
+.px-jump { position:sticky; top:0; z-index:60; display:flex; gap:8px; margin:0 -20px 16px; padding:10px 20px; overflow-x:auto; scrollbar-width:none;
+           background:rgba(2,6,23,.9); backdrop-filter:blur(16px); -webkit-backdrop-filter:blur(16px); border-bottom:1px solid rgba(255,255,255,.07); }
+.px-jump::-webkit-scrollbar { display:none; } .px-jump:empty { display:none; }
+.px-jp { flex-shrink:0; display:inline-flex; align-items:center; gap:8px; height:36px; padding:0 14px 0 10px; border-radius:50px; cursor:pointer;
+         border:1px solid rgba(255,255,255,.1); background:rgba(255,255,255,.04); color:#cbd5e1; font-family:inherit; font-size:13px; font-weight:800; transition:all .25s; }
+.px-jp i { width:10px; height:10px; border-radius:50%; background:linear-gradient(135deg,#f59e0b,#9333ea); }
+.px-jp b { font-size:11.5px; padding:2px 8px; border-radius:50px; background:rgba(255,255,255,.08); }
+.px-jp.on { color:#fff; border-color:transparent; background:linear-gradient(90deg,#b45309,#9333ea); box-shadow:0 6px 20px rgba(147,51,234,.35); }
+.px-jp.on i { background:#fff; }
+
+.table-card { background:none !important; border:none !important; box-shadow:none !important; padding:0 !important; }
+.brand-block { padding:0 18px 14px; border-radius:22px; border:1px solid rgba(255,255,255,.07); box-shadow:0 10px 36px rgba(0,0,0,.4);
+               background:linear-gradient(180deg, rgba(15,23,42,.94), rgba(10,16,32,.94)); margin-bottom:18px !important;
+               scroll-margin-top:calc(var(--jb-h,56px) + 10px); transition:opacity .6s ease, transform .6s cubic-bezier(.22,1,.36,1); }
+.brand-block.rv-wait { opacity:0; transform:translateY(22px); }
+.brand-divider { position:sticky !important; top:var(--jb-h,56px); z-index:40; margin:0 -18px 12px !important; border-radius:22px 22px 0 0 !important;
+                 background:linear-gradient(90deg, rgba(245,158,11,.14), #0c1426 72%) !important; backdrop-filter:blur(14px); border-width:0 0 1px !important; }
+.px-strip { display:flex; align-items:center; flex-shrink:0; }
+.px-strip span { width:58px; height:40px; border-radius:11px; overflow:hidden; margin-inline-start:-14px; border:2px solid #0c1426;
+                 background:radial-gradient(ellipse 85% 60% at 50% 104%, #cbd5e1, transparent 72%), linear-gradient(180deg,#fff,#e2e8f0); box-shadow:0 4px 12px rgba(0,0,0,.4); }
+.px-strip span:first-child { margin-inline-start:0; }
+.px-strip img { width:100%; height:100%; object-fit:contain; padding:4px; mix-blend-mode:multiply; }
+
+.price-official { font-size:16px; font-variant-numeric:tabular-nums; letter-spacing:.01em; }
+.price-official .px-cur { font-size:11px; font-weight:700; color:#86efac; opacity:.75; margin-inline-start:4px; }
+
+.px-stock { display:inline-flex; align-items:center; gap:5px; margin-top:6px; height:22px; padding:0 9px; border-radius:50px; font-size:11px; font-weight:900; cursor:default; white-space:nowrap; }
+.px-stock.has { background:rgba(34,197,94,.13); color:#4ade80; border:1px solid rgba(34,197,94,.28); }
+.px-stock.none { background:rgba(255,255,255,.04); color:#64748b; border:1px solid rgba(255,255,255,.07); }
+tr.px-dim > td { opacity:.5; transition:opacity .2s; } tr.px-dim:hover > td { opacity:1; }
+.px-chg { display:inline-flex; align-items:center; gap:3px; margin-top:6px; height:21px; padding:0 8px; border-radius:50px; font-size:10.5px; font-weight:900; white-space:nowrap; cursor:default; }
+.px-chg.up { background:rgba(239,68,68,.13); color:#f87171; } .px-chg.down { background:rgba(34,197,94,.13); color:#4ade80; }
+.px-tools { display:inline-flex; gap:5px; margin-top:6px; margin-inline-start:6px; vertical-align:middle; }
+.px-tools button { width:26px; height:24px; border-radius:8px; border:1px solid rgba(255,255,255,.1); background:rgba(255,255,255,.04); cursor:pointer; font-size:12px; padding:0; transition:background .2s; }
+.px-tools button:hover { background:rgba(255,255,255,.12); }
+.px-fresh { display:inline-block; width:9px; height:9px; border-radius:50%; margin-inline-end:6px; vertical-align:middle; }
+.px-fresh.g { background:#22c55e; box-shadow:0 0 0 3px rgba(34,197,94,.18); }
+.px-fresh.a { background:#f59e0b; box-shadow:0 0 0 3px rgba(245,158,11,.18); }
+.px-fresh.r { background:#ef4444; box-shadow:0 0 0 3px rgba(239,68,68,.2); animation:pxPulse 2.2s ease-in-out infinite; }
+@keyframes pxPulse { 50% { box-shadow:0 0 0 6px rgba(239,68,68,0); } }
+.px-open { cursor:pointer; } .px-open:hover .model-cell { color:#c4b5fd; text-decoration:underline; text-underline-offset:3px; }
+/* while a row is being edited, the extras step aside */
+tr:has(.price-input-wrap.active) .px-stock, tr:has(.price-input-wrap.active) .px-chg, tr:has(.price-input-wrap.active) .px-tools { display:none !important; }
+.drag-mode-active .px-tools, .drag-mode-active .px-chg { display:none !important; }
+
+/* model card */
+.pc-ov { position:fixed; inset:0; z-index:500; background:rgba(2,6,23,.75); backdrop-filter:blur(6px); display:none; align-items:center; justify-content:center; padding:18px; }
+.pc-ov.on { display:flex; animation:pcF .2s ease both; } @keyframes pcF { from { opacity:0; } }
+.pc { width:100%; max-width:560px; max-height:92vh; overflow-y:auto; background:#0a1020; border:1px solid rgba(245,158,11,.28); border-radius:24px; box-shadow:0 30px 90px rgba(0,0,0,.75); color:#f1f5f9; position:relative; animation:pcI .32s cubic-bezier(.22,1,.36,1) both; }
+@keyframes pcI { from { opacity:0; transform:translateY(14px) scale(.97); } }
+.pc-x { position:absolute; top:12px; inset-inline-end:12px; z-index:5; width:34px; height:34px; border-radius:11px; border:1px solid rgba(255,255,255,.15); background:rgba(2,6,23,.72); color:#e2e8f0; cursor:pointer; font-family:inherit; }
+.pc-stage { position:relative; height:180px; overflow:hidden; isolation:isolate; border-radius:24px 24px 0 0;
+    background:radial-gradient(ellipse 70% 95% at 50% 112%, rgba(245,158,11,.28), transparent 70%), linear-gradient(180deg,#101b33,#0a1222); }
+.pc-stage::before { content:''; position:absolute; left:20%; right:20%; bottom:14px; height:14px; background:radial-gradient(ellipse at center, rgba(0,0,0,.6), transparent 70%); }
+.pc-stage img { position:relative; z-index:1; display:block; width:100%; height:100%; padding:30px 30px 18px; object-fit:contain; object-position:center 88%; opacity:0; transition:opacity .4s; }
+.pc-stage.ready img { opacity:1; }
+.pc-stage.studio { background:radial-gradient(ellipse 85% 60% at 50% 104%, #cbd5e1, transparent 72%), linear-gradient(180deg,#fff,#eef2f7 62%,#e2e8f0); }
+.pc-stage.studio img { mix-blend-mode:multiply; } .pc-stage.scene img { object-fit:cover; padding:0; } .pc-stage.scene::before { display:none; }
+.pc-stage.matte { background:var(--stage-bg,#0a1222); }
+.pc-ph { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; font-size:64px; opacity:.25; }
+.pc-b { padding:16px 18px 20px; }
+.pc-t { font-size:22px; font-weight:900; } .pc-s { font-size:13px; color:#94a3b8; font-weight:700; margin-top:3px; }
+.pc-badges { display:flex; flex-wrap:wrap; gap:7px; margin-top:10px; }
+.pc-badges span { height:26px; padding:0 11px; border-radius:50px; font-size:12px; font-weight:900; display:inline-flex; align-items:center; gap:5px; background:rgba(255,255,255,.05); border:1px solid rgba(255,255,255,.1); color:#cbd5e1; }
+.pc-h { font-size:12px; font-weight:900; color:#94a3b8; margin:16px 0 8px; display:flex; align-items:center; gap:8px; }
+.pc-h::after { content:''; flex:1; height:1px; background:rgba(255,255,255,.07); }
+.pc-years { display:flex; flex-direction:column; gap:8px; }
+.pc-y { background:rgba(15,23,42,.9); border:1px solid rgba(255,255,255,.07); border-radius:14px; padding:11px 13px; }
+.pc-y-top { display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap; }
+.pc-y-yr { font-size:13px; font-weight:900; color:#c4b5fd; }
+.pc-y-off { font-size:20px; font-weight:900; color:#22c55e; font-variant-numeric:tabular-nums; }
+.pc-y-off small { font-size:11px; color:#86efac; opacity:.75; margin-inline-start:4px; }
+.pc-y-row { display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; align-items:center; font-size:12px; color:#cbd5e1; font-weight:700; }
+.pc-tag { height:24px; padding:0 10px; border-radius:50px; display:inline-flex; align-items:center; gap:4px; font-size:11.5px; font-weight:900; }
+.pc-tag.disc { background:rgba(245,158,11,.14); color:#fbbf24; } .pc-tag.offer { background:rgba(56,189,248,.14); color:#7dd3fc; } .pc-tag.plain { background:rgba(255,255,255,.06); color:#cbd5e1; }
+.pc-tag.stock { background:rgba(34,197,94,.13); color:#4ade80; } .pc-tag.nost { background:rgba(255,255,255,.05); color:#64748b; }
+.pc-note { margin-top:8px; font-size:12px; color:#cbd5e1; background:rgba(147,51,234,.08); border-radius:10px; padding:7px 10px; }
+.pc-tl { display:flex; flex-direction:column; gap:0; }
+.pc-tl-i { display:grid; grid-template-columns:16px 1fr; gap:10px; }
+.pc-tl-i i { width:10px; height:10px; border-radius:50%; margin:5px 3px 0; background:#9333ea; position:relative; }
+.pc-tl-i i::after { content:''; position:absolute; left:4px; top:12px; width:2px; height:34px; background:rgba(255,255,255,.08); }
+.pc-tl-i:last-child i::after { display:none; }
+.pc-tl-i.up i { background:#ef4444; } .pc-tl-i.down i { background:#22c55e; } .pc-tl-i.create i { background:#38bdf8; } .pc-tl-i.delete i { background:#64748b; }
+.pc-tl-b { padding-bottom:12px; font-size:12.5px; font-weight:700; color:#e2e8f0; }
+.pc-tl-b span { display:block; font-size:11px; color:#64748b; margin-top:2px; }
+.pc-actions { margin-top:14px; display:flex; gap:8px; flex-wrap:wrap; }
+.pc-actions a { flex:1; min-width:140px; height:42px; border-radius:12px; display:flex; align-items:center; justify-content:center; text-decoration:none; font-size:13px; font-weight:800; color:#fff; background:#7c3aed; }
+.px-toast { position:fixed; bottom:24px; left:50%; transform:translateX(-50%) translateY(20px); z-index:600; background:#14532d; color:#dcfce7; font-size:13px; font-weight:800;
+            padding:10px 18px; border-radius:50px; opacity:0; transition:all .25s; pointer-events:none; }
+.px-toast.on { opacity:1; transform:translateX(-50%); }
+
+@media (max-width:900px) {
+    .px-kpis { grid-template-columns:repeat(5,minmax(0,1fr)); gap:7px; }
+    .px-k.ring { grid-column:1 / -1; padding:12px 16px; }
+    .px-k.ring svg { width:62px; height:62px; }
+    .px-k.ring .px-pct { font-size:26px; }
+    .px-k:not(.ring) { padding:12px 6px 10px; border-radius:15px; text-align:center; }
+    .px-k .n { font-size:24px; }
+    .px-k .l { font-size:10px; line-height:1.35; margin-top:5px; }
+    .brand-block { padding:0 10px 10px; }
+    .brand-divider { margin:0 -10px 10px !important; flex-wrap:wrap; }
+    .px-jump { margin:0 -16px 14px; padding:9px 14px; }
+    .px-strip span { width:46px; height:32px; }
+}
+@media (max-width:600px) {
+    .pc-ov { align-items:flex-end; padding:0; }
+    .pc { max-width:none; border-radius:24px 24px 0 0; animation:pcU .34s cubic-bezier(.22,1,.36,1) both; }
+    @keyframes pcU { from { transform:translateY(100%); } }
+}
+@media (prefers-reduced-motion: reduce) { .brand-block.rv-wait { opacity:1; transform:none; } .px-fresh.r { animation:none; } }
+</style>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs><linearGradient id="pxGrad" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#22c55e"/><stop offset="1" stop-color="#a855f7"/></linearGradient></defs></svg>
+<div class="pc-ov" id="pcOv" aria-hidden="true"><div class="pc" id="pc"><button type="button" class="pc-x" id="pcX">✕</button><div id="pcBody"></div></div></div>
+<div class="px-toast" id="pxToast"></div>
+
+<script>
+(function () {
+    const PX = <?= json_encode($pxData, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>;
+    const PXB = <?= json_encode($pxBrands, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>;
+    const AR = <?= json_encode($lang === 'ar') ?>, LANG = <?= json_encode($lang) ?>;
+    const SALES = <?= $isSales ? 'true' : 'false' ?>, CAN_HIST = <?= $pxCanHist ? 'true' : 'false' ?>;
+    const CUR = <?= json_encode($t[$lang]['currency'], JSON_UNESCAPED_UNICODE) ?>;
+    const T = AR ? {
+        models:'إجمالي الموديلات', priced:'مسعّرة', unpriced:'بدون سعر', offers:'عروض أوفر', discs:'خصومات', week:'تحدّثت هذا الأسبوع',
+        ofPriced:'من الموديلات لها سعر', all:'الكل', allBrands:'كل الماركات', cDisc:'فيها خصم', cOffer:'فيها أوفر', cUnp:'بدون سعر',
+        cStock:'متوفرة في المخزون', cWeek:'تغيّرت هذا الأسبوع', inStock:'في المخزون', noStock:'غير متوفرة',
+        daysAgo:d=>d===0?'اليوم':(d===1?'أمس':'منذ '+d+' يوم'), fresh:'حُدّث', copy:'نسخ السعر', copied:'✓ تم النسخ',
+        official:'السعر الرسمي', cust:'العميل', trade:'التاجر', years:'الأسعار حسب السنة', history:'آخر تغييرات السعر', byBranch:'المخزون حسب الفرع',
+        noHist:'لا توجد تغييرات مسجلة خلال آخر ٦ أشهر', t_create:'تسعير جديد', t_update:'تعديل', t_delete:'حذف سنة', histPage:'📈 سجل الأسعار الكامل',
+        by:'بواسطة', stockAll:'سيارة في المخزون', none:'—', changed:'تغيّر'
+    } : {
+        models:'Total models', priced:'Priced', unpriced:'Unpriced', offers:'Offers', discs:'Discounts', week:'Updated this week',
+        ofPriced:'of models are priced', all:'All', allBrands:'All brands', cDisc:'Has a discount', cOffer:'Has an offer', cUnp:'Unpriced',
+        cStock:'In stock', cWeek:'Changed this week', inStock:'in stock', noStock:'none in stock',
+        daysAgo:d=>d===0?'today':(d===1?'yesterday':d+' days ago'), fresh:'Updated', copy:'Copy price', copied:'✓ Copied',
+        official:'Official', cust:'Customer', trade:'Trade', years:'Prices by year', history:'Recent price changes', byBranch:'Stock by branch',
+        noHist:'No changes recorded in the last 6 months', t_create:'Newly priced', t_update:'Changed', t_delete:'Year removed', histPage:'📈 Full price history',
+        by:'by', stockAll:'cars in stock', none:'—', changed:'changed'
+    };
+    const esc = v => String(v == null ? '' : v).replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+    const $ = id => document.getElementById(id);
+    const form = document.querySelector('.filters-card');
+    const blocks = Array.from(document.querySelectorAll('.brand-block'));
+    const freshCls = a => a == null ? '' : a <= 7 ? 'g' : a <= 30 ? 'a' : 'r';
+    function toast(m) { const t = $('pxToast'); t.textContent = m; t.classList.add('on'); clearTimeout(toast._t); toast._t = setTimeout(() => t.classList.remove('on'), 1500); }
+
+    /* ═══ currency in small type beside the big number ═══ */
+    function styleOfficial(el) {
+        if (!el || el.querySelector('.px-cur')) return;
+        const t = el.textContent.trim(), i = t.lastIndexOf(' ');
+        if (i > 0) el.innerHTML = esc(t.slice(0, i)) + '<span class="px-cur">' + esc(t.slice(i + 1)) + '</span>';
+    }
+    document.querySelectorAll('.price-official').forEach(styleOfficial);
+    new MutationObserver(ms => ms.forEach(m => m.target.querySelectorAll && m.target.querySelectorAll('.price-official').forEach(styleOfficial)))
+        .observe(document.querySelector('.table-card') || document.body, { childList: true, subtree: true });
+
+    /* ═══ decorate each price line ═══ */
+    const rows = Array.from(document.querySelectorAll('.pricing-table tr[data-trim-key]'));
+    function yearOf(tr) {
+        const md = document.getElementById('meta-data-' + tr.id.replace('row-', ''));
+        if (md && md.dataset.year) return md.dataset.year;
+        const b = tr.querySelector('.year-badge'); return b ? b.textContent.replace(/[^0-9]/g, '') : '';
+    }
+    rows.forEach(tr => {
+        const id = tr.id.replace('row-', ''), d = PX[tr.dataset.trimKey]; if (!d) return;
+        const y = yearOf(tr), yd = d.years[y];
+        tr._px = { key: tr.dataset.trimKey, year: y, yd: yd };
+
+        // tap the model name to open its card
+        const first = tr.querySelector('.model-cell, .trim-cell');
+        if (first) { const td = first.closest('td'); td.classList.add('px-open'); td.addEventListener('click', () => openCard(tr.dataset.trimKey)); }
+        if (!yd) return;
+
+        // stock right now, under the year
+        const yearTd = (document.getElementById('disp-year-' + id) || {}).parentElement;
+        if (yearTd) {
+            const sp = document.createElement('div');
+            sp.innerHTML = '<span class="px-stock ' + (yd.stock ? 'has' : 'none') + '" title="' + esc(Object.entries(yd.br || {}).map(([b, n]) => b + ': ' + n).join(' · ')) + '">🚗 ' +
+                           (yd.stock ? yd.stock + ' ' + esc(T.inStock) : esc(T.noStock)) + '</span>';
+            yearTd.appendChild(sp.firstChild);
+            if (!yd.stock) tr.classList.add('px-dim');
+        }
+        // change arrow + copy / share, under the official price
+        const offTd = (document.getElementById('disp-off-' + id) || {}).parentElement;
+        if (offTd && yd.off) {
+            const box = document.createElement('div');
+            let h = '';
+            h += '<span class="px-tools"><button type="button" data-a="copy" title="' + esc(T.copy) + '">📋</button></span>';
+            box.innerHTML = h;
+            offTd.appendChild(box);
+            box.querySelectorAll('button').forEach(b => b.addEventListener('click', ev => { ev.stopPropagation(); share(d, y, yd, b.dataset.a); }));
+        }
+        // freshness dot beside "last updated"
+        const meta = document.getElementById('meta-' + id);
+        if (meta && yd.age != null) {
+            const dot = document.createElement('span');
+            dot.className = 'px-fresh ' + freshCls(yd.age);
+            dot.title = T.fresh + ' ' + T.daysAgo(yd.age);
+            meta.parentElement.insertBefore(dot, meta);
+            // a save rewrites that cell: the price is fresh again
+            new MutationObserver(() => { dot.className = 'px-fresh g'; yd.age = 0; }).observe(meta, { childList: true });
+        }
+    });
+
+    function shareText(d, y, yd) {
+        const lines = ['🚗 ' + [d.brand, d.model, d.trim, y].filter(Boolean).join(' '),
+                       '💰 ' + T.official + ': ' + yd.off + ' ' + CUR];
+        if (yd.cust) lines.push('🏷️ ' + yd.cust);   // the customer label exactly as written, never recalculated
+        lines.push('First 1 Car');
+        return lines.join('\n');
+    }
+    function share(d, y, yd, how) {
+        const txt = shareText(d, y, yd);
+        const done = () => toast(T.copied);
+        if (navigator.clipboard && window.isSecureContext) navigator.clipboard.writeText(txt).then(done, done);
+        else { const ta = document.createElement('textarea'); ta.value = txt; document.body.appendChild(ta); ta.select(); try { document.execCommand('copy'); } catch (e) {} ta.remove(); done(); }
+    }
+
+    /* ═══ brand headers: model photos instead of initials ═══ */
+    blocks.forEach(bl => {
+        const imgs = PXB[bl.dataset.brand] || [];
+        const ph = bl.querySelector('.brand-logo-placeholder');
+        if (imgs.length && ph) {
+            const strip = document.createElement('div'); strip.className = 'px-strip';
+            strip.innerHTML = imgs.map(u => '<span><img src="' + esc(u) + '" alt="" loading="lazy"></span>').join('');
+            ph.replaceWith(strip);
+        }
+    });
+
+    /* ═══ headline numbers ═══ */
+    const kp = document.createElement('div'); kp.className = 'px-kpis';
+    kp.innerHTML =
+        '<div class="px-k ring"><svg width="78" height="78" viewBox="0 0 78 78"><circle class="bg" cx="39" cy="39" r="32" fill="none" stroke-width="9"/><circle class="fg" id="pxRing" cx="39" cy="39" r="32" fill="none" stroke-width="9" stroke-dasharray="201.1" stroke-dashoffset="201.1"/></svg>' +
+        '<div><div class="px-pct" id="pxPct">0%</div><div class="sub">' + esc(T.ofPriced) + '</div></div></div>' +
+        '<div class="px-k tot"><div class="n" data-k="tot">0</div><div class="l">📦 ' + esc(T.models) + '</div></div>' +
+        '<div class="px-k unp tap" data-chip="unp"><div class="n" data-k="unp">0</div><div class="l">⚠️ ' + esc(T.unpriced) + '</div></div>' +
+        '<div class="px-k off tap" data-chip="offer"><div class="n" data-k="off">0</div><div class="l">⬆️ ' + esc(T.offers) + '</div></div>' +
+        '<div class="px-k dis tap" data-chip="disc"><div class="n" data-k="dis">0</div><div class="l">⬇️ ' + esc(T.discs) + '</div></div>' +
+        '<div class="px-k wk tap" data-chip="week"><div class="n" data-k="wk">0</div><div class="l">🔄 ' + esc(T.week) + '</div></div>';
+    const statsRow = document.querySelector('.stats-row');
+    if (statsRow) statsRow.parentNode.insertBefore(kp, statsRow);
+    const shown = {};
+    function countTo(k, v) {
+        const el = kp.querySelector('[data-k="' + k + '"]'); if (!el) return;
+        const from = shown[k] || 0; shown[k] = v; const t0 = performance.now(), dur = from ? 450 : 1100;
+        (function step(t) { const p = Math.min(1, (t - t0) / dur); el.textContent = Math.round(from + (v - from) * (1 - Math.pow(1 - p, 3))); if (p < 1) requestAnimationFrame(step); })(t0);
+    }
+
+    /* ═══ chips ═══ */
+    const chipDefs = [['', T.all], ['disc', '⬇️ ' + T.cDisc], ['offer', '⬆️ ' + T.cOffer], ['unp', '⚠️ ' + T.cUnp],
+                      ['stock', '🚗 ' + T.cStock], ['week', '🔄 ' + T.cWeek]];
+    const chips = document.createElement('div'); chips.className = 'px-chips';
+    chips.innerHTML = chipDefs.map(([k, l]) => '<button type="button" class="px-chip' + (k === '' ? ' on' : '') + '" data-c="' + k + '">' + esc(l) + ' <b data-n="' + k + '"></b></button>').join('');
+    if (form) form.appendChild(chips);
+    let chip = '';
+    chips.querySelectorAll('.px-chip').forEach(b => b.addEventListener('click', () => { chip = chip === b.dataset.c ? '' : b.dataset.c; apply(); }));
+    kp.querySelectorAll('.tap').forEach(k => k.addEventListener('click', () => { chip = chip === k.dataset.chip ? '' : k.dataset.chip; apply(); if (form) form.scrollIntoView({ behavior: 'smooth', block: 'start' }); }));
+
+    /* ═══ the live filter: search (model or trim) + brand, as before, plus the chips ═══ */
+    function trimYears(key) { return Object.values((PX[key] || {}).years || {}); }
+    function passChip(key, c) {
+        const ys = trimYears(key);
+        switch (c) {
+            case 'disc':  return ys.some(y => y.ck === 'disc' || y.tk === 'disc');
+            case 'offer': return ys.some(y => y.ck === 'offer' || y.tk === 'offer');
+            case 'unp':   return ys.length === 0;
+            case 'stock': return ys.some(y => y.stock > 0);
+            case 'week':  return ys.some(y => y.wk);
+            default:      return true;
+        }
+    }
+    function apply(silent) {
+        const q = form && form.elements.search ? form.elements.search.value.trim().toLowerCase() : '';
+        const br = form && form.elements.brand ? form.elements.brand.value : '';
+        const groups = {};
+        rows.forEach(tr => (groups[tr.dataset.trimKey] = groups[tr.dataset.trimKey] || []).push(tr));
+        const counts = { '': 0, disc: 0, offer: 0, unp: 0, stock: 0, week: 0 };
+        let vis = 0, pricedN = 0, offN = 0, disN = 0, wkN = 0;
+        blocks.forEach(bl => {
+            let n = 0;
+            const keys = [...new Set(Array.from(bl.querySelectorAll('tr[data-trim-key]')).map(t => t.dataset.trimKey))];
+            keys.forEach(k => {
+                const d = PX[k] || { model: '', trim: '', brand: '' };
+                const base = (!br || d.brand === br) && (!q || (d.model + ' ' + d.trim).toLowerCase().indexOf(q) !== -1);
+                if (base) Object.keys(counts).forEach(c => { if (passChip(k, c)) counts[c]++; });
+                const ok = base && passChip(k, chip);
+                (groups[k] || []).forEach(tr => tr.style.display = ok ? '' : 'none');
+                if (ok) {
+                    n++; vis++;
+                    const ys = trimYears(k);
+                    if (ys.length) pricedN++;
+                    ys.forEach(y => { if (y.ck === 'offer' || y.tk === 'offer') offN++; if (y.ck === 'disc' || y.tk === 'disc') disN++; if (y.wk) wkN++; });
+                }
+            });
+            bl.style.display = n ? '' : 'none';
+            bl._n = n;
+            const cp = bl.querySelector('.brand-count-pill'); if (cp) cp.firstChild.nodeValue = n + ' ';
+        });
+        countTo('tot', vis); countTo('unp', vis - pricedN); countTo('off', offN); countTo('dis', disN); countTo('wk', wkN);
+        const pct = vis ? Math.round(pricedN * 100 / vis) : 0;
+        $('pxPct').textContent = pct + '%';
+        requestAnimationFrame(() => $('pxRing').setAttribute('stroke-dashoffset', (201.1 * (1 - pct / 100)).toFixed(1)));
+        chips.querySelectorAll('.px-chip').forEach(b => { b.classList.toggle('on', b.dataset.c === chip); const nb = b.querySelector('b'); if (nb) nb.textContent = b.dataset.c ? counts[b.dataset.c] : ''; });
+        kp.querySelectorAll('.tap').forEach(k => k.classList.toggle('on', k.dataset.chip === chip));
+        buildJump();
+        if (!silent) try {
+            const p = new URLSearchParams(location.search);
+            q ? p.set('search', form.elements.search.value.trim()) : p.delete('search');
+            br ? p.set('brand', br) : p.delete('brand');
+            history.replaceState(null, '', location.pathname + '?' + p.toString());
+        } catch (e) {}
+    }
+    if (form) {
+        let tm = null;
+        form.addEventListener('submit', e => { e.preventDefault(); apply(); });
+        if (form.elements.search) form.elements.search.addEventListener('input', () => { clearTimeout(tm); tm = setTimeout(apply, 110); });
+        if (form.elements.brand) form.elements.brand.addEventListener('change', () => apply());
+    }
+
+    /* reordering works on the whole list, so it starts from an unfiltered view */
+    if (typeof window.enterDragMode === 'function') {
+        const orig = window.enterDragMode;
+        window.enterDragMode = function () {
+            chip = '';
+            if (form && form.elements.search) form.elements.search.value = '';
+            if (form && form.elements.brand) form.elements.brand.value = '';
+            apply();
+            return orig.apply(this, arguments);
+        };
+    }
+
+    /* ═══ brand jump bar + scroll tracking ═══ */
+    const jump = document.createElement('nav'); jump.className = 'px-jump';
+    const tableCard = document.querySelector('.table-card');
+    if (tableCard) tableCard.parentNode.insertBefore(jump, tableCard);
+    function buildJump() {
+        jump.innerHTML = blocks.filter(b => b._n).map(b => '<button type="button" class="px-jp" data-b="' + esc(b.dataset.brand) + '"><i></i>' + esc(b.dataset.brand) + ' <b>' + b._n + '</b></button>').join('');
+        jump.querySelectorAll('.px-jp').forEach(p => p.addEventListener('click', () => {
+            const bl = blocks.find(b => b.dataset.brand === p.dataset.b); if (!bl) return;
+            jump._hold = { b: p.dataset.b, until: Date.now() + 900 }; spy();
+            bl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }));
+        measure(); spy();
+    }
+    function spy() {
+        const line = jump.offsetHeight + 90, vis = blocks.filter(b => b.style.display !== 'none');
+        let cur = vis[0];
+        vis.forEach(b => { if (b.getBoundingClientRect().top <= line) cur = b; });
+        if (innerHeight + scrollY >= document.documentElement.scrollHeight - 4 && vis.length) cur = vis[vis.length - 1];
+        if (jump._hold && Date.now() < jump._hold.until) cur = blocks.find(b => b.dataset.brand === jump._hold.b) || cur;
+        jump.querySelectorAll('.px-jp').forEach(p => {
+            const on = cur && p.dataset.b === cur.dataset.brand;
+            if (on && !p.classList.contains('on')) jump.scrollTo({ left: p.offsetLeft - jump.clientWidth / 2 + p.offsetWidth / 2, behavior: 'smooth' });
+            p.classList.toggle('on', !!on);
+        });
+    }
+    function measure() { document.documentElement.style.setProperty('--jb-h', (jump.offsetHeight || 0) + 'px'); }
+    let st = null;
+    addEventListener('scroll', () => { if (st) return; st = requestAnimationFrame(() => { st = null; spy(); }); }, { passive: true });
+    addEventListener('resize', measure);
+
+    /* ═══ entrance ═══ */
+    if ('IntersectionObserver' in window && !(matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches)) {
+        let qn = 0;
+        const io = new IntersectionObserver(en => en.forEach(e => { if (!e.isIntersecting) return; io.unobserve(e.target); setTimeout(() => e.target.classList.remove('rv-wait'), (qn++ % 6) * 90); }), { rootMargin: '0px 0px -40px 0px' });
+        blocks.forEach(b => { b.classList.add('rv-wait'); io.observe(b); });
+    }
+
+    /* ═══ the model card ═══ */
+    function openCard(key) {
+        const d = PX[key]; if (!d) return;
+        const years = Object.entries(d.years);
+        const stockTotal = years.reduce((a, [, y]) => a + (y.stock || 0), 0);
+        const brAll = {}; years.forEach(([, y]) => Object.entries(y.br || {}).forEach(([b, n]) => brAll[b] = (brAll[b] || 0) + n));
+        const tag = v => { if (!v) return '<span class="pc-tag plain">' + T.none + '</span>'; const k = (/خصم|discount/i.test(v)) ? 'disc' : (/أوفر|offer/i.test(v) ? 'offer' : 'plain'); return '<span class="pc-tag ' + k + '">' + esc(v) + '</span>'; };
+        let h = '<div class="pc-stage" id="pcStage">' + (d.img ? '<img id="pcImg" src="' + esc(d.img) + '" alt="">' : '<div class="pc-ph">🚗</div>') + '</div><div class="pc-b">';
+        h += '<div class="pc-t">' + esc(d.brand + ' ' + d.model) + '</div><div class="pc-s">' + esc(d.trim) + '</div>';
+        h += '<div class="pc-badges"><span>🚗 ' + stockTotal + ' ' + esc(T.stockAll) + '</span>' + (years.length ? '' : '<span style="color:#f87171">⚠️ ' + esc(T.unpriced) + '</span>') + '</div>';
+        if (years.length) {
+            h += '<div class="pc-h">' + esc(T.years) + '</div><div class="pc-years">';
+            years.sort((a, b) => b[0].localeCompare(a[0])).forEach(([yr, y]) => {
+                h += '<div class="pc-y"><div class="pc-y-top"><span class="pc-y-yr">📅 ' + esc(yr) + '</span><span class="pc-y-off">' + (y.off ? esc(y.off) + '<small>' + esc(CUR) + '</small>' : T.none) + '</span></div>';
+                h += '<div class="pc-y-row">' + esc(T.cust) + ': ' + tag(y.cust) + (SALES ? '' : ' &nbsp;' + esc(T.trade) + ': ' + tag(y.trade)) + '</div>';
+                h += '<div class="pc-y-row"><span class="pc-tag ' + (y.stock ? 'stock' : 'nost') + '">🚗 ' + (y.stock ? y.stock + ' ' + esc(T.inStock) : esc(T.noStock)) + '</span>' +
+                     (y.age != null ? '<span><span class="px-fresh ' + freshCls(y.age) + '"></span>' + esc(T.fresh + ' ' + T.daysAgo(y.age)) + '</span>' : '') +
+                     (y.chg ? '<span class="px-chg ' + y.chg.dir + '">' + (y.chg.dir === 'up' ? '▲' : '▼') + ' ' + esc(y.chg.from + ' → ' + y.chg.to) + '</span>' : '') + '</div>';
+                if (y.notes) h += '<div class="pc-note">📝 ' + esc(y.notes) + '</div>';
+                h += '</div>';
+            });
+            h += '</div>';
+        }
+        const brE = Object.entries(brAll);
+        if (brE.length) h += '<div class="pc-h">' + esc(T.byBranch) + '</div><div class="pc-badges">' + brE.map(([b, n]) => '<span>📍 ' + esc(b) + ' · ' + n + '</span>').join('') + '</div>';
+        h += '<div class="pc-h">' + esc(T.history) + '</div>';
+        if (!d.hist.length) h += '<div style="font-size:12px;color:#64748b">' + esc(T.noHist) + '</div>';
+        else {
+            h += '<div class="pc-tl">';
+            d.hist.forEach(e => {
+                let cls = e.t, line = T['t_' + e.t] || e.t;
+                if (e.t === 'update' && e.o0 !== e.o1 && e.o0 && e.o1 && !isNaN(e.o0) && !isNaN(e.o1)) { cls = (+e.o1 > +e.o0) ? 'up' : 'down'; line += ': ' + (+e.o0).toLocaleString('en-US') + ' → ' + (+e.o1).toLocaleString('en-US'); }
+                else if (e.t === 'create' && e.o1) line += ': ' + (+e.o1).toLocaleString('en-US');
+                const extra = [];
+                if (e.c0 !== e.c1) extra.push(T.cust + ': ' + (e.c0 || T.none) + ' → ' + (e.c1 || T.none));
+                if (!SALES && e.d0 !== e.d1) extra.push(T.trade + ': ' + (e.d0 || T.none) + ' → ' + (e.d1 || T.none));
+                h += '<div class="pc-tl-i ' + cls + '"><i></i><div class="pc-tl-b">📅 ' + esc(e.y) + ' · ' + esc(line) + (extra.length ? '<span>' + esc(extra.join(' · ')) + '</span>' : '') +
+                     '<span>' + esc(e.at.slice(0, 16)) + ' · ' + esc(T.by) + ' ' + esc(e.by) + '</span></div></div>';
+            });
+            h += '</div>';
+        }
+        if (CAN_HIST) h += '<div class="pc-actions"><a href="price_history.php?lang=' + LANG + '">' + esc(T.histPage) + '</a></div>';
+        h += '</div>';
+        $('pcBody').innerHTML = h;
+        const img = $('pcImg'); if (img) stage(img, $('pcStage'));
+        $('pcOv').classList.add('on'); $('pcOv').setAttribute('aria-hidden', 'false'); document.body.style.overflow = 'hidden';
+    }
+    function closeCard() { $('pcOv').classList.remove('on'); $('pcOv').setAttribute('aria-hidden', 'true'); document.body.style.overflow = ''; }
+    $('pcX').addEventListener('click', closeCard);
+    $('pcOv').addEventListener('click', e => { if (e.target.id === 'pcOv') closeCard(); });
+    document.addEventListener('keydown', e => { if (e.key === 'Escape' && $('pcOv').classList.contains('on')) closeCard(); });
+
+    /* same showroom stage as the dashboard and stock report */
+    function stage(img, st) {
+        const PAD = { x: 30, t: 30, b: 18 };
+        function go() {
+            try {
+                const w = 120, h = Math.max(24, Math.round(w * img.naturalHeight / img.naturalWidth));
+                const cv = document.createElement('canvas'); cv.width = w; cv.height = h;
+                const cx = cv.getContext('2d', { willReadFrequently: true }); cx.drawImage(img, 0, 0, w, h);
+                const dd = cx.getImageData(0, 0, w, h).data, at = (x, y) => { const i = (y * w + x) * 4; return [dd[i], dd[i+1], dd[i+2]]; };
+                const ring = [];
+                for (let x = 1; x < w - 1; x += 5) { ring.push(at(x, 1)); ring.push(at(x, h - 2)); }
+                for (let y = 1; y < h - 1; y += 3) { ring.push(at(1, y)); ring.push(at(w - 2, y)); }
+                const m = [0,1,2].map(k => ring.reduce((a, p) => a + p[k], 0) / ring.length);
+                const spread = Math.sqrt(ring.reduce((a, p) => a + (p[0]-m[0])**2 + (p[1]-m[1])**2 + (p[2]-m[2])**2, 0) / ring.length);
+                if (spread > 34) st.classList.add('scene');
+                else {
+                    if (.299*m[0] + .587*m[1] + .114*m[2] > 226) st.classList.add('studio');
+                    else { st.classList.add('matte'); st.style.setProperty('--stage-bg', 'rgb(' + m.map(Math.round).join(',') + ')'); }
+                    let x0 = w, y0 = h, x1 = -1, y1 = -1;
+                    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) { const p = at(x, y);
+                        if (Math.abs(p[0]-m[0]) + Math.abs(p[1]-m[1]) + Math.abs(p[2]-m[2]) > 60) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; } }
+                    const fw = (x1-x0+1)/w, fh = (y1-y0+1)/h;
+                    if (x1 > 0 && fw > .08 && fh > .08 && !(fw > .97 && fh > .97)) {
+                        const sw = st.clientWidth - PAD.x * 2, sh = st.clientHeight - PAD.t - PAD.b, nw = img.naturalWidth, nh = img.naturalHeight;
+                        const cw = (x1+1-x0)/w*nw, ch = (y1+1-y0)/h*nh, k = Math.min(sw/cw, sh/ch);
+                        Object.assign(img.style, { position:'absolute', maxWidth:'none', padding:'0', objectFit:'fill', width:(nw*k)+'px', height:(nh*k)+'px',
+                            left:(PAD.x + (sw - cw*k)/2 - x0/w*nw*k)+'px', top:(PAD.t + (sh - ch*k) - y0/h*nh*k)+'px' });
+                    }
+                }
+            } catch (e) {}
+            st.classList.add('ready');
+        }
+        img.addEventListener('error', () => { img.remove(); st.insertAdjacentHTML('afterbegin', '<div class="pc-ph">🚗</div>'); }, { once: true });
+        if (img.complete && img.naturalWidth) go(); else img.addEventListener('load', go, { once: true });
+    }
+
+    apply(true);
+    measure();
+    addEventListener('load', () => { measure(); spy(); });
+})();
 </script>
 </body>
 </html>

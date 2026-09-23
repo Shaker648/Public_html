@@ -356,6 +356,7 @@ function fmtPrice($p) {
 <!DOCTYPE html>
 <html lang="<?= $lang ?>" dir="<?= $lang === 'ar' ? 'rtl' : 'ltr' ?>">
 <head>
+<?php include __DIR__ . '/pwa_head.php'; ?>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
     <meta name="theme-color" content="#0f172a">
@@ -630,11 +631,86 @@ function fmtPrice($p) {
         .vehicle-card { background:rgba(15,23,42,.88); border:1px solid rgba(255,255,255,.08); border-radius:26px; padding:20px; transition:transform .25s,border-color .25s,box-shadow .25s; backdrop-filter:blur(15px); display:flex; flex-direction:column; gap:16px; }
         .vehicle-card:hover { transform:translateY(-4px); border-color:rgba(147,51,234,.4); box-shadow:0 12px 40px rgba(147,51,234,.1); }
         /* Car photo banner — the model+colour image from the image library */
-        .vehicle-photo { position:relative; margin:-20px -20px 0; aspect-ratio:16/9; overflow:hidden; border-radius:26px 26px 0 0; background:#0d1526; }
-        .vehicle-photo img { width:100%; height:100%; object-fit:cover; display:block; }
-        .vehicle-photo::after { content:''; position:absolute; inset:0; background:linear-gradient(to bottom,transparent 55%,rgba(15,23,42,.9)); pointer-events:none; }
-        .vehicle-photo .vp-tag { position:absolute; top:8px; inset-inline-start:8px; z-index:2; background:rgba(2,6,23,.7); color:#94a3b8; font-size:9px; font-weight:800; padding:3px 8px; border-radius:6px; letter-spacing:.02em; }
-        .vehicle-card.sold-card .vehicle-photo img { filter:grayscale(.45); }
+        /* ══════ Car photo: a slim "showroom stage" ══════
+           About half the height of the old full-width banner. The whole car is
+           shown, never cropped, standing on a soft spotlight with a floor shadow
+           under the wheels. The script at the bottom of the page looks at each
+           photo and picks the right stage for it:
+             studio : official render shot on white, so the white is blended away
+                      and the car stands in a light studio
+             scene  : a real photo that fills its frame, shown as a cinematic strip
+             default: anything else, on the dark stage */
+        .vehicle-photo {
+            position:relative; height:118px; border-radius:18px; overflow:hidden; isolation:isolate;
+            border:1px solid rgba(255,255,255,.06);
+            background:
+                radial-gradient(ellipse 70% 95% at 50% 110%, rgba(147,51,234,.26), transparent 70%),
+                radial-gradient(ellipse 55% 70% at 50% -10%, rgba(255,255,255,.08), transparent 70%),
+                linear-gradient(180deg,#101b33 0%,#0a1222 100%);
+        }
+        .vehicle-photo::before {           /* floor shadow under the wheels */
+            content:''; position:absolute; left:20%; right:20%; bottom:10px; height:12px; z-index:0;
+            background:radial-gradient(ellipse at center, rgba(0,0,0,.6), transparent 70%);
+        }
+        .vehicle-photo img {
+            position:relative; z-index:1; display:block;
+            width:100%; height:100%; padding:10px 16px 13px;
+            object-fit:contain; object-position:center 88%;
+            filter:drop-shadow(0 6px 9px rgba(0,0,0,.4));
+            opacity:0; transform:translateY(6px);
+            transition:opacity .45s ease, transform .5s cubic-bezier(.22,1,.36,1);
+        }
+        .vehicle-photo.ready img { opacity:1; transform:none; }
+        .vehicle-card:hover .vehicle-photo.ready img { transform:translateY(-3px) scale(1.045); }
+
+        .vehicle-photo.studio {
+            border-color:rgba(255,255,255,.2);
+            background:
+                radial-gradient(ellipse 85% 60% at 50% 104%, #cbd5e1, transparent 72%),
+                linear-gradient(180deg,#ffffff 0%,#eef2f7 62%,#e2e8f0 100%);
+        }
+        .vehicle-photo.studio img  { mix-blend-mode:multiply; filter:none; }
+        .vehicle-photo.studio::before { background:radial-gradient(ellipse at center, rgba(15,23,42,.32), transparent 70%); }
+
+        .vehicle-photo.scene img { object-fit:cover; object-position:center 58%; padding:0; filter:none; }
+        .vehicle-photo.scene::before { display:none; }
+        .vehicle-photo.scene::after {       /* soft vignette so the strip sits in the card */
+            content:''; position:absolute; inset:0; z-index:2; pointer-events:none;
+            background:linear-gradient(90deg,rgba(10,18,34,.55),transparent 22%,transparent 78%,rgba(10,18,34,.55));
+        }
+
+        /* matte: the stage takes the exact colour the photo was shot on */
+        .vehicle-photo.matte { background:var(--stage-bg,#0a1222); }
+        .vehicle-photo.matte::after {       /* a faint spotlight laid over the whole stage */
+            content:''; position:absolute; inset:0; z-index:2; pointer-events:none; mix-blend-mode:screen;
+            background:radial-gradient(ellipse 70% 80% at 50% 118%, rgba(147,51,234,.22), transparent 70%);
+        }
+        .vehicle-card.reserved-card .vehicle-photo.matte::after {
+            background:radial-gradient(ellipse 70% 80% at 50% 118%, rgba(234,179,8,.3), transparent 70%);
+        }
+
+        /* reserved cars: gold light on the floor, matching the gold card */
+        .vehicle-card.reserved-card .vehicle-photo:not(.studio):not(.scene) {
+            background:
+                radial-gradient(ellipse 70% 95% at 50% 110%, rgba(234,179,8,.32), transparent 70%),
+                radial-gradient(ellipse 55% 70% at 50% -10%, rgba(255,255,255,.08), transparent 70%),
+                linear-gradient(180deg,#171a2c 0%,#0f1220 100%);
+        }
+        .vehicle-card.reserved-card .vehicle-photo.studio {
+            background:
+                radial-gradient(ellipse 85% 60% at 50% 104%, #f3e3a3, transparent 72%),
+                linear-gradient(180deg,#fffdf5 0%,#fbf5e1 62%,#f1e6c0 100%);
+        }
+
+        .vehicle-photo .vp-tag {
+            position:absolute; bottom:7px; inset-inline-end:9px; z-index:3;
+            font-size:8.5px; font-weight:800; letter-spacing:.02em;
+            padding:2px 7px; border-radius:50px;
+            background:rgba(2,6,23,.55); color:#cbd5e1;
+        }
+        .vehicle-photo.studio .vp-tag { background:rgba(15,23,42,.07); color:#64748b; }
+
+        @media (max-width:768px) { .vehicle-photo { height:106px; border-radius:16px; } }
         .vehicle-card.sold-card { opacity:.85; border-color:rgba(239,68,68,.15); }
         .vehicle-card.sold-card:hover { border-color:rgba(239,68,68,.4); box-shadow:0 12px 40px rgba(239,68,68,.1); }
         .vehicle-header { display:flex; justify-content:space-between; align-items:flex-start; gap:10px; }
@@ -1411,6 +1487,11 @@ function fmtPrice($p) {
                 <span class="mi-icon">🏦</span><?= $lang === 'ar' ? 'التقسيط' : 'Installments' ?>
             </a>
             <?php endif; ?>
+            <?php if (can('page.notifications')): ?>
+            <a href="notifications.php?lang=<?= $lang ?>" class="more-item">
+                <span class="mi-icon">🔔</span><?= $lang === 'ar' ? 'الإشعارات' : 'Notifications' ?>
+            </a>
+            <?php endif; ?>
             <?php if (can('page.ads')): ?>
             <a href="ads.php?lang=<?= $lang ?>" class="more-item">
                 <span class="mi-icon">📣</span><?= $lang === 'ar' ? 'الإعلانات' : 'Ads' ?>
@@ -1633,6 +1714,113 @@ function fmtPrice($p) {
         }
 
         apply();   // honour a ?search= value that arrived in the URL
+    })();
+
+    /* ── Showroom stage: pick a backdrop for each photo, then frame the car ──
+       Reads a small copy of the image once:
+         1. The ring of edge pixels tells us what the photo was shot on.
+              very mixed colours  -> a real photo filling its frame -> "scene"
+              even and near white -> official render on white      -> "studio"
+              even and not white  -> render on a plain backdrop     -> "matte",
+                                     and the stage takes that exact colour so
+                                     the photo's edges never show
+         2. For studio and matte, every pixel that differs from the backdrop is
+            the car. Its bounding box is found and the photo is zoomed so the car
+            fills the stage, sitting on the floor. Every car therefore appears at
+            the same size, however much empty margin the source photo had.
+       If the file cannot load, the empty stage is removed from the card. */
+    (function () {
+        const PAD = { l: 18, r: 18, t: 12, b: 13 };
+
+        function frame(box) {
+            const img = box.querySelector('img');
+            const bb  = box._bbox;
+            if (!img || !bb || !img.naturalWidth) return;
+            const sw = box.clientWidth  - PAD.l - PAD.r;
+            const sh = box.clientHeight - PAD.t - PAD.b;
+            if (sw <= 0 || sh <= 0) return;
+            const nw = img.naturalWidth, nh = img.naturalHeight;
+            const cw = (bb.x1 - bb.x0) * nw, ch = (bb.y1 - bb.y0) * nh;
+            const k  = Math.min(sw / cw, sh / ch);
+            img.style.position  = 'absolute';
+            img.style.maxWidth  = 'none';
+            img.style.padding   = '0';
+            img.style.objectFit = 'fill';
+            img.style.width  = (nw * k) + 'px';
+            img.style.height = (nh * k) + 'px';
+            img.style.left   = (PAD.l + (sw - cw * k) / 2 - bb.x0 * nw * k) + 'px';
+            img.style.top    = (PAD.t + (sh - ch * k)     - bb.y0 * nh * k) + 'px';   // wheels on the floor
+        }
+
+        function classify(img) {
+            const box = img.closest('.vehicle-photo');
+            if (!box) return;
+            try {
+                const w = 120;
+                const h = Math.max(24, Math.round(w * img.naturalHeight / img.naturalWidth));
+                const cv = document.createElement('canvas');
+                cv.width = w; cv.height = h;
+                const cx = cv.getContext('2d', { willReadFrequently: true });
+                cx.drawImage(img, 0, 0, w, h);
+                const d  = cx.getImageData(0, 0, w, h).data;
+                const at = function (x, y) { const i = (y * w + x) * 4; return [d[i], d[i + 1], d[i + 2]]; };
+
+                const ring = [];
+                for (let x = 1; x < w - 1; x += 5) { ring.push(at(x, 1)); ring.push(at(x, h - 2)); }
+                for (let y = 1; y < h - 1; y += 3) { ring.push(at(1, y)); ring.push(at(w - 2, y)); }
+                const m = [0, 1, 2].map(function (c) {
+                    return ring.reduce(function (a, p) { return a + p[c]; }, 0) / ring.length;
+                });
+                const spread = Math.sqrt(ring.reduce(function (a, p) {
+                    return a + (p[0] - m[0]) * (p[0] - m[0]) + (p[1] - m[1]) * (p[1] - m[1]) + (p[2] - m[2]) * (p[2] - m[2]);
+                }, 0) / ring.length);
+                const lum = 0.299 * m[0] + 0.587 * m[1] + 0.114 * m[2];
+
+                if (spread > 34) {
+                    box.classList.add('scene');
+                } else {
+                    if (lum > 226) {
+                        box.classList.add('studio');
+                    } else {
+                        box.classList.add('matte');
+                        box.style.setProperty('--stage-bg', 'rgb(' + m.map(Math.round).join(',') + ')');
+                    }
+                    let x0 = w, y0 = h, x1 = -1, y1 = -1;
+                    for (let y = 0; y < h; y++) {
+                        for (let x = 0; x < w; x++) {
+                            const p = at(x, y);
+                            if (Math.abs(p[0] - m[0]) + Math.abs(p[1] - m[1]) + Math.abs(p[2] - m[2]) > 60) {
+                                if (x < x0) x0 = x; if (x > x1) x1 = x;
+                                if (y < y0) y0 = y; if (y > y1) y1 = y;
+                            }
+                        }
+                    }
+                    const fw = (x1 - x0 + 1) / w, fh = (y1 - y0 + 1) / h;
+                    // only trust a sensible outline; otherwise the photo is simply fitted whole
+                    if (x1 > 0 && fw > 0.08 && fh > 0.08 && !(fw > 0.97 && fh > 0.97)) {
+                        box._bbox = { x0: x0 / w, y0: y0 / h, x1: (x1 + 1) / w, y1: (y1 + 1) / h };
+                        frame(box);
+                    }
+                }
+            } catch (e) { /* stays on the default stage, fitted whole */ }
+            box.classList.add('ready');
+        }
+
+        document.querySelectorAll('.vehicle-photo img').forEach(function (img) {
+            const box = img.closest('.vehicle-photo');
+            img.addEventListener('error', function () { if (box) box.remove(); }, { once: true });
+            if (img.complete && img.naturalWidth) classify(img);
+            else img.addEventListener('load', function () { classify(img); }, { once: true });
+        });
+
+        // cards change width with the screen, so re-frame after a resize or rotate
+        let t = null;
+        window.addEventListener('resize', function () {
+            clearTimeout(t);
+            t = setTimeout(function () {
+                document.querySelectorAll('.vehicle-photo').forEach(function (b) { if (b._bbox) frame(b); });
+            }, 120);
+        });
     })();
 
     /* Consignment strip open or closed, remembered per browser */
@@ -2258,5 +2446,6 @@ priceLine + '\n' +
     });
 })();
 </script>
+<?php include __DIR__ . '/notify_prompt.php'; ?>
 </body>
 </html>
