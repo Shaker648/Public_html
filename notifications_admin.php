@@ -73,6 +73,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     }
                 }
                 echo json_encode(['ok' => $sent > 0, 'sent' => $sent, 'total' => $total, 'errors' => array_slice($errs, 0, 5)], JSON_UNESCAPED_UNICODE); exit;
+            case 'send_message':
+                $title = trim(preg_replace('/\s+/u', ' ', (string)($in['title'] ?? '')));
+                $body  = trim(str_replace("\r", '', (string)($in['body'] ?? '')));
+                if ($title === '') $title = $lang === 'ar' ? '📢 رسالة من الإدارة' : '📢 Message from management';
+                if ($body === '') { echo json_encode(['ok' => false, 'error' => 'empty']); exit; }
+                $title = mb_substr($title, 0, 80); $body = mb_substr($body, 0, 500);
+                $ids = array_map('intval', (array)($in['ids'] ?? []));
+                if (!$ids) { echo json_encode(['ok' => false, 'error' => 'nobody']); exit; }
+                [$people, $devices, $ok, $bad] = notify_custom($pdo, $ids, $title, $body, $by);
+                echo json_encode(['ok' => $people > 0, 'people' => $people, 'devices' => $devices, 'sent' => $ok, 'failed' => $bad]); exit;
             case 'remove_sub':
                 $pdo->prepare("DELETE FROM push_subscriptions WHERE id = ?")->execute([(int)($in['id'] ?? 0)]);
                 echo json_encode(['ok' => true]); exit;
@@ -97,6 +107,7 @@ $today   = $pdo->query("SELECT COUNT(*) c, COALESCE(SUM(delivered),0) d, COALESC
 $nIos    = count(array_filter($subs, fn($s) => preg_match('/iPhone|iPad/', (string)$s['device'])));
 $nAnd    = count(array_filter($subs, fn($s) => preg_match('/Android/', (string)$s['device'])));
 $withDev = count(array_unique(array_column($subs, 'user_id')));
+$devPer  = array_count_values(array_map('intval', array_column($subs, 'user_id')));   // user id => linked phones
 
 $T = $lang === 'ar' ? [
     'title' => 'التحكم في الإشعارات', 'sub' => 'حدد من يستلم إشعار كل حدث على موبايله — آيفون وأندرويد',
@@ -112,6 +123,13 @@ $T = $lang === 'ar' ? [
     'log' => 'سجل الإشعارات', 'noLog' => 'لم يُرسل أي إشعار بعد', 'rcp' => 'مستلم', 'dev' => 'جهاز', 'ok' => 'وصل', 'fail' => 'فشل',
     'always' => 'دائماً', 'never_' => 'أبداً', 'byRole' => 'حسب الدور', 'close' => 'تم', 'pickFor' => 'أشخاص لـ',
     'ago' => ['الآن', 'منذ %d دقيقة', 'منذ %d ساعة', 'أمس', 'منذ %d يوم'],
+    'm_h' => 'إرسال رسالة', 'm_note' => 'اكتب رسالتك واختر من يستلمها — تصل فوراً على موبايلاتهم مع اللوجو',
+    'm_title' => 'العنوان (اختياري)', 'm_titlePh' => '📢 رسالة من الإدارة', 'm_body' => 'الرسالة', 'm_bodyPh' => 'مثال: اجتماع الساعة 10 صباحاً في الفرع الرئيسي',
+    'm_to' => 'إلى من؟', 'm_all' => 'الكل', 'm_search' => 'ابحث باسم الشخص…', 'm_noPhone' => 'لا يوجد موبايل مفعّل', 'm_phones' => 'موبايل',
+    'm_preview' => 'معاينة على الموبايل', 'm_now' => 'الآن', 'm_send' => '🚀 إرسال الرسالة', 'm_clear' => 'مسح',
+    'm_sum' => 'سيصل إلى %p شخص · %d موبايل', 'm_sumNo' => '(%n بدون موبايل مفعّل — ستظهر في سجلهم فقط)', 'm_pick' => 'اختر شخصاً واحداً على الأقل',
+    'm_confirm' => 'إرسال الرسالة إلى %p شخص؟', 'm_done' => '✅ تم الإرسال — وصلت إلى %s من %d موبايل', 'm_doneNo' => '✅ تم الحفظ — لا يوجد موبايل مفعّل عند المستلمين بعد',
+    'm_empty' => 'اكتب الرسالة أولاً',
 ] : [
     'title' => 'Notification control', 'sub' => 'Choose who gets a phone notification for each event — iPhone and Android',
     'perm' => 'Permissions', 'mine' => 'My notifications', 'dash' => 'Dashboard',
@@ -126,6 +144,13 @@ $T = $lang === 'ar' ? [
     'log' => 'Notification log', 'noLog' => 'Nothing sent yet', 'rcp' => 'recipients', 'dev' => 'devices', 'ok' => 'delivered', 'fail' => 'failed',
     'always' => 'Always', 'never_' => 'Never', 'byRole' => 'By role', 'close' => 'Done', 'pickFor' => 'People for',
     'ago' => ['just now', '%d min ago', '%d h ago', 'yesterday', '%d days ago'],
+    'm_h' => 'Send a message', 'm_note' => 'Write your message and pick who gets it — it arrives on their phones right away, with the logo',
+    'm_title' => 'Title (optional)', 'm_titlePh' => '📢 Message from management', 'm_body' => 'Message', 'm_bodyPh' => 'e.g. Meeting at 10 am in the main branch',
+    'm_to' => 'Send to', 'm_all' => 'Everyone', 'm_search' => 'Search by name…', 'm_noPhone' => 'no phone linked', 'm_phones' => 'phone',
+    'm_preview' => 'Phone preview', 'm_now' => 'now', 'm_send' => '🚀 Send message', 'm_clear' => 'Clear',
+    'm_sum' => 'Goes to %p people · %d phones', 'm_sumNo' => '(%n without a linked phone — it will only be in their history)', 'm_pick' => 'Pick at least one person',
+    'm_confirm' => 'Send this message to %p people?', 'm_done' => '✅ Sent — delivered to %s of %d phones', 'm_doneNo' => '✅ Saved — none of them has a linked phone yet',
+    'm_empty' => 'Write the message first',
 ];
 $ago = function ($s) use ($T): string {
     if ($s === null || $s === '') return '';
@@ -203,6 +228,46 @@ $rate = ($today['d'] + $today['f']) > 0 ? round($today['d'] * 100 / ($today['d']
 .seg button.on[data-v="plus"]{background:rgba(34,197,94,.2);color:#86efac}
 .seg button.on[data-v="minus"]{background:rgba(239,68,68,.2);color:#fca5a5}
 .seg button.on[data-v=""]{background:rgba(255,255,255,.08);color:var(--txt)}
+/* send a message */
+.nm{border-color:rgba(34,197,94,.35);background:linear-gradient(160deg,rgba(22,163,74,.10),rgba(147,51,234,.08) 60%,var(--card))}
+.nm-grid{display:grid;grid-template-columns:1.35fr 1fr;gap:18px;align-items:start}
+.nm label.l{display:block;font-size:12px;font-weight:800;color:var(--mut);margin:0 0 6px}
+.nm input.in,.nm textarea{width:100%;border-radius:14px;border:1px solid var(--line);background:#0b1426;color:var(--txt);font:inherit;font-size:14px;padding:11px 13px;outline:none;transition:border-color .15s,box-shadow .15s}
+.nm textarea{min-height:110px;resize:vertical;line-height:1.7}
+.nm input.in:focus,.nm textarea:focus{border-color:rgba(34,197,94,.6);box-shadow:0 0 0 3px rgba(34,197,94,.15)}
+.nm .cnt{font-size:11px;color:var(--mut);text-align:end;margin-top:4px;font-variant-numeric:tabular-nums}
+.nm .fld{margin-bottom:12px}
+.nm-roles{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px}
+.nm-roles button{height:34px;padding:0 13px;border-radius:999px;border:1px solid var(--line);background:rgba(255,255,255,.04);color:var(--txt);font:inherit;font-size:13px;font-weight:800;cursor:pointer;transition:.15s}
+.nm-roles button.on{background:linear-gradient(90deg,#16a34a,#22c55e);border-color:transparent;color:#fff;box-shadow:0 4px 14px rgba(34,197,94,.3)}
+.nm-roles button.part{border-color:rgba(34,197,94,.6);color:#86efac}
+.nm-search{width:100%;height:38px;border-radius:12px;border:1px solid var(--line);background:#0b1426;color:var(--txt);font:inherit;font-size:13px;padding:0 12px;margin-bottom:8px;outline:none}
+.nm-people{max-height:230px;overflow-y:auto;display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:6px;padding:2px}
+.nm-p{display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:12px;border:1px solid var(--line);background:rgba(255,255,255,.03);cursor:pointer;user-select:none;transition:.15s}
+.nm-p.on{border-color:rgba(34,197,94,.55);background:rgba(34,197,94,.1)}
+.nm-p .bx{width:20px;height:20px;border-radius:7px;border:1.5px solid rgba(255,255,255,.2);display:grid;place-items:center;font-size:12px;font-weight:900;color:transparent;flex-shrink:0}
+.nm-p.on .bx{background:#22c55e;border-color:#22c55e;color:#fff}
+.nm-p .nm-n{flex:1;min-width:0}
+.nm-p b{display:block;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.nm-p small{font-size:10.5px;color:var(--mut)}
+.nm-p small.no{color:#fca5a5}
+.nm-sum{margin-top:10px;font-size:12.5px;font-weight:800;color:#86efac}
+.nm-sum small{display:block;color:var(--mut);font-weight:700;margin-top:2px}
+.nm-phone{border-radius:30px;padding:16px 12px 22px;background:linear-gradient(160deg,#1e293b,#020617);border:1px solid rgba(255,255,255,.08);box-shadow:inset 0 0 0 6px #0b1120,0 20px 50px rgba(0,0,0,.4);min-height:250px;position:relative;overflow:hidden}
+.nm-phone::before{content:'';display:block;width:90px;height:22px;border-radius:999px;background:#000;margin:0 auto 14px}
+.nm-phone .clock{text-align:center;font-size:40px;font-weight:300;color:#e2e8f0;letter-spacing:1px;margin-bottom:14px;font-family:Inter,sans-serif}
+.nm-bub{display:flex;gap:10px;padding:11px 12px;border-radius:18px;background:rgba(241,245,249,.9);color:#0f172a;box-shadow:0 8px 24px rgba(0,0,0,.35);animation:nmIn .35s ease}
+.nm-bub img{width:38px;height:38px;border-radius:9px;flex-shrink:0}
+.nm-bub .hd{display:flex;justify-content:space-between;gap:8px;font-size:11px;color:#64748b;font-weight:700}
+.nm-bub .tt{font-size:13.5px;font-weight:800;margin-top:1px;word-break:break-word}
+.nm-bub .bd{font-size:13px;line-height:1.5;white-space:pre-wrap;word-break:break-word;max-height:120px;overflow:hidden}
+.nm-bub .bd:empty::before{content:'…';color:#94a3b8}
+@keyframes nmIn{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:none}}
+.nm-acts{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:14px}
+.nm-acts .nf-msg{margin:0;flex:1}
+.nm-go{height:48px;padding:0 22px;border:0;border-radius:14px;background:linear-gradient(90deg,#16a34a,#9333ea);color:#fff;font:inherit;font-size:15px;font-weight:900;cursor:pointer;box-shadow:0 10px 26px rgba(34,197,94,.25)}
+.nm-go:disabled{opacity:.55;cursor:default}
+@media (max-width:900px){.nm-grid{grid-template-columns:1fr}.nm-phone{min-height:0}.nm-phone .clock{font-size:30px;margin-bottom:10px}}
 @media (max-width:900px){.na-kpis{grid-template-columns:repeat(3,1fr)}}
 @media (max-width:760px){
   .na-kpis{grid-template-columns:repeat(2,1fr)}
@@ -236,6 +301,58 @@ $rate = ($today['d'] + $today['f']) > 0 ? round($today['d'] * 100 / ($today['d']
         <div class="na-k" style="--kc:#a855f7"><b><?= (int)$today['c'] ?></b><span>🔔 <?= $T['k_today'] ?></span></div>
         <div class="na-k" style="--kc:#22d3ee"><b><?= $rate ?></b><span>✅ <?= $T['k_rate'] ?></span></div>
     </div>
+
+    <!-- send a message -->
+    <section class="nf-card nm" id="nmCard">
+        <h2>✉️ <?= $T['m_h'] ?></h2>
+        <p class="nf-note"><?= $T['m_note'] ?></p>
+        <div class="nm-grid">
+            <div>
+                <div class="fld"><label class="l" for="nmTitle"><?= $T['m_title'] ?></label>
+                    <input class="in" id="nmTitle" maxlength="80" placeholder="<?= htmlspecialchars($T['m_titlePh']) ?>"></div>
+                <div class="fld"><label class="l" for="nmBody"><?= $T['m_body'] ?></label>
+                    <textarea id="nmBody" maxlength="500" placeholder="<?= htmlspecialchars($T['m_bodyPh']) ?>"></textarea>
+                    <div class="cnt"><span id="nmCnt">0</span> / 500</div></div>
+                <label class="l"><?= $T['m_to'] ?></label>
+                <div class="nm-roles" id="nmRoles">
+                    <button type="button" data-r="*">👥 <?= $T['m_all'] ?></button>
+                    <button type="button" data-r="admin">👑 <?= $T['r_admin'] ?></button>
+                    <button type="button" data-r="manager">🧑‍💼 <?= $T['r_manager'] ?></button>
+                    <button type="button" data-r="sales">🛒 <?= $T['r_sales'] ?></button>
+                </div>
+                <input class="nm-search" id="nmSearch" placeholder="🔍 <?= htmlspecialchars($T['m_search']) ?>">
+                <div class="nm-people" id="nmPeople">
+                    <?php foreach ($users as $u): if (!(int)$u['active']) continue; $n = $devPer[(int)$u['id']] ?? 0; ?>
+                    <div class="nm-p" data-id="<?= (int)$u['id'] ?>" data-role="<?= htmlspecialchars($u['role']) ?>" data-dev="<?= $n ?>" data-name="<?= htmlspecialchars(mb_strtolower($u['username'])) ?>" role="checkbox" aria-checked="false" tabindex="0">
+                        <span class="bx">✓</span>
+                        <span class="nm-n"><b><?= htmlspecialchars($u['username']) ?></b>
+                        <small class="<?= $n ? '' : 'no' ?>"><?= htmlspecialchars($T['r_' . $u['role']] ?? $u['role']) ?> · <?= $n ? '📲 ' . $n . ' ' . $T['m_phones'] : $T['m_noPhone'] ?></small></span>
+                    </div>
+                    <?php endforeach; ?>
+                </div>
+                <div class="nm-sum" id="nmSum"></div>
+            </div>
+            <div>
+                <label class="l"><?= $T['m_preview'] ?></label>
+                <div class="nm-phone">
+                    <div class="clock" id="nmClock"></div>
+                    <div class="nm-bub" id="nmBub">
+                        <img src="icons/icon-192.png?v=4" alt="">
+                        <div style="flex:1;min-width:0">
+                            <div class="hd"><span>First 1 Car</span><span><?= $T['m_now'] ?></span></div>
+                            <div class="tt" id="nmPt"></div>
+                            <div class="bd" id="nmPb"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="nm-acts">
+            <button type="button" class="nm-go" id="nmSend"><?= $T['m_send'] ?></button>
+            <button type="button" class="nf-btn ghost" id="nmClear"><?= $T['m_clear'] ?></button>
+            <div class="nf-msg" id="nmMsg"></div>
+        </div>
+    </section>
 
     <!-- who gets what -->
     <section class="nf-card">
@@ -412,6 +529,71 @@ $rate = ($today['d'] + $today['f']) > 0 ? round($today['d'] * 100 / ($today['d']
         const r = await post({ action: 'save_options', options: { self: $('oSelf').checked, quiet: $('oQuiet').checked, quiet_from: $('oFrom').value, quiet_to: $('oTo').value, lang: $('oLang').value } });
         r.ok ? msg('optMsg', T.saved, true) : msg('optMsg', T.fail + r.error, false);
     });
+
+    /* ── send a message ── */
+    (function () {
+        const M = <?= json_encode(array_intersect_key($T, array_flip(['m_titlePh', 'm_sum', 'm_sumNo', 'm_pick', 'm_confirm', 'm_done', 'm_doneNo', 'm_empty'])), JSON_UNESCAPED_UNICODE | JSON_HEX_TAG) ?>;
+        const people = [...document.querySelectorAll('#nmPeople .nm-p')], roleBtns = [...document.querySelectorAll('#nmRoles button')];
+        const sel = new Set();
+        const title = $('nmTitle'), body = $('nmBody');
+        const dirOf = t => /[\u0600-\u06FF]/.test(t) ? 'rtl' : 'ltr';
+        function preview() {
+            if ($('nmMsg').classList.contains('bad')) $('nmMsg').textContent = '';
+            const t = title.value.trim() || M.m_titlePh, b = body.value;
+            $('nmPt').textContent = t; $('nmPb').textContent = b;
+            $('nmPt').dir = dirOf(t); $('nmPb').dir = dirOf(b || t);
+            $('nmCnt').textContent = b.length;
+        }
+        function paint() {
+            if ($('nmMsg').classList.contains('bad')) $('nmMsg').textContent = '';   // an old warning goes once they fix it
+            people.forEach(p => { const on = sel.has(+p.dataset.id); p.classList.toggle('on', on); p.setAttribute('aria-checked', on); });
+            roleBtns.forEach(b => {
+                const grp = people.filter(p => b.dataset.r === '*' || p.dataset.role === b.dataset.r);
+                const n = grp.filter(p => sel.has(+p.dataset.id)).length;
+                b.classList.toggle('on', grp.length > 0 && n === grp.length);
+                b.classList.toggle('part', n > 0 && n < grp.length);
+            });
+            const chosen = people.filter(p => sel.has(+p.dataset.id));
+            const devs = chosen.reduce((a, p) => a + +p.dataset.dev, 0), none = chosen.filter(p => !+p.dataset.dev).length;
+            $('nmSum').innerHTML = chosen.length ? M.m_sum.replace('%p', chosen.length).replace('%d', devs) + (none ? '<small>' + M.m_sumNo.replace('%n', none) + '</small>' : '') : '';
+        }
+        people.forEach(p => {
+            const flip = () => { const id = +p.dataset.id; sel.has(id) ? sel.delete(id) : sel.add(id); paint(); };
+            p.addEventListener('click', flip);
+            p.addEventListener('keydown', e => { if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); flip(); } });
+        });
+        roleBtns.forEach(b => b.addEventListener('click', () => {
+            const grp = people.filter(p => b.dataset.r === '*' || p.dataset.role === b.dataset.r);
+            const all = grp.every(p => sel.has(+p.dataset.id));
+            grp.forEach(p => all ? sel.delete(+p.dataset.id) : sel.add(+p.dataset.id));
+            paint();
+        }));
+        $('nmSearch').addEventListener('input', e => {
+            const q = e.target.value.trim().toLowerCase();
+            people.forEach(p => { p.style.display = !q || p.dataset.name.includes(q) ? '' : 'none'; });
+        });
+        title.addEventListener('input', preview); body.addEventListener('input', preview);
+        $('nmClear').addEventListener('click', () => { title.value = ''; body.value = ''; sel.clear(); paint(); preview(); $('nmMsg').textContent = ''; });
+        $('nmSend').addEventListener('click', async () => {
+            if (!body.value.trim()) { msg('nmMsg', M.m_empty, false); body.focus(); return; }
+            if (!sel.size) { msg('nmMsg', M.m_pick, false); return; }
+            if (!confirm(M.m_confirm.replace('%p', sel.size))) return;
+            const b = $('nmSend'), label = b.innerHTML; b.disabled = true; b.innerHTML = '<span class="nf-spin"></span>';
+            try {
+                const r = await post({ action: 'send_message', title: title.value, body: body.value, ids: [...sel] });
+                if (r.ok) {
+                    const m = $('nmMsg');
+                    m.textContent = r.devices ? M.m_done.replace('%s', r.sent).replace('%d', r.devices) : M.m_doneNo;
+                    m.className = 'nf-msg ' + (r.devices && !r.sent ? 'bad' : 'ok');
+                    title.value = ''; body.value = ''; preview();
+                } else msg('nmMsg', r.error === 'empty' ? M.m_empty : r.error === 'nobody' ? M.m_pick : T.fail + r.error, false);
+            } catch (e) { msg('nmMsg', T.fail + e, false); }
+            b.disabled = false; b.innerHTML = label;
+        });
+        const tick = () => { const d = new Date(); $('nmClock').textContent = String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0'); };
+        tick(); setInterval(tick, 30000);
+        preview(); paint();
+    })();
 
     /* ── tests & devices ── */
     $('sendTest').addEventListener('click', async () => {
