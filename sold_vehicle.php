@@ -16,120 +16,6 @@ if (empty($_SESSION['csrf_token'])) {
     $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
 }
 $csrfToken = $_SESSION['csrf_token'];
-$svIsAdmin = (($_SESSION['role'] ?? '') === 'admin');
-
-/* ═══ Phone notifications through a Telegram bot ═══
-   The admin connects a bot once (🔔 on this page). Every sale / امانة is then
-   pushed to the chosen chats. Sending happens after the page has answered, and
-   a failure is only logged, so it can never slow down or block a sale. */
-function sv_setting(PDO $pdo, string $key): string
-{
-    try {
-        $st = $pdo->prepare("SELECT setting_value FROM settings WHERE setting_key = ? LIMIT 1");
-        $st->execute([$key]);
-        return (string)($st->fetchColumn() ?: '');
-    } catch (Throwable $e) { return ''; }
-}
-function sv_setting_set(PDO $pdo, string $key, string $value, string $by): void
-{
-    $pdo->exec("CREATE TABLE IF NOT EXISTS settings (
-        setting_key   VARCHAR(64) PRIMARY KEY,
-        setting_value TEXT,
-        updated_by    VARCHAR(64),
-        updated_at    DATETIME
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
-    $pdo->prepare("INSERT INTO settings (setting_key, setting_value, updated_by, updated_at) VALUES (?, ?, ?, NOW())
-                   ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value), updated_by = VALUES(updated_by), updated_at = NOW()")
-        ->execute([$key, $value, $by]);
-}
-function sv_tg(string $token, string $method, array $params = []): ?array
-{
-    if (!preg_match('/^\d+:[A-Za-z0-9_-]{20,}$/', $token)) return null;
-    $url  = 'https://api.telegram.org/bot' . $token . '/' . $method;
-    $body = json_encode($params, JSON_UNESCAPED_UNICODE);
-    $raw  = false;
-    if (function_exists('curl_init')) {
-        $ch = curl_init($url);
-        curl_setopt_array($ch, [CURLOPT_POST => true, CURLOPT_POSTFIELDS => $body, CURLOPT_RETURNTRANSFER => true,
-                                CURLOPT_HTTPHEADER => ['Content-Type: application/json'], CURLOPT_CONNECTTIMEOUT => 4, CURLOPT_TIMEOUT => 8]);
-        $raw = curl_exec($ch);
-        curl_close($ch);
-    } else {
-        $raw = @file_get_contents($url, false, stream_context_create(['http' => [
-            'method' => 'POST', 'header' => "Content-Type: application/json\r\n", 'content' => $body, 'timeout' => 8]]));
-    }
-    $j = is_string($raw) ? json_decode($raw, true) : null;
-    return is_array($j) ? $j : null;
-}
-function sv_notify(PDO $pdo, string $kind, string $text): void
-{
-    if (sv_setting($pdo, 'notify_' . $kind) === '0') return;       // switched off for this kind
-    $token = sv_setting($pdo, 'notify_tg_token');
-    $chats = array_filter(array_map('trim', explode(',', sv_setting($pdo, 'notify_tg_chats'))));
-    if ($token === '' || !$chats) return;
-    foreach ($chats as $chat) {
-        $r = sv_tg($token, 'sendMessage', ['chat_id' => $chat, 'text' => $text, 'disable_web_page_preview' => true]);
-        if (!$r || empty($r['ok'])) error_log('sold_vehicle: telegram send failed for chat ' . $chat . ': ' . json_encode($r));
-    }
-}
-
-/* ─── Admin: connect / test the bot (JSON) ─── */
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && strpos((string)($_POST['action'] ?? ''), 'tg_') === 0) {
-    header('Content-Type: application/json; charset=utf-8');
-    if (!$svIsAdmin || !hash_equals($csrfToken, (string)($_POST['csrf_token'] ?? ''))) {
-        echo json_encode(['ok' => false, 'msg' => 'denied']); exit;
-    }
-    $by = (string)$_SESSION['username'];
-    try {
-        switch ($_POST['action']) {
-            case 'tg_token':        // paste a token → check it with Telegram, keep it
-                $tok = trim((string)($_POST['token'] ?? ''));
-                $me  = sv_tg($tok, 'getMe');
-                if (!$me || empty($me['ok'])) { echo json_encode(['ok' => false, 'msg' => 'bad_token']); exit; }
-                sv_setting_set($pdo, 'notify_tg_token', $tok, $by);
-                sv_setting_set($pdo, 'notify_tg_bot', (string)($me['result']['username'] ?? ''), $by);
-                echo json_encode(['ok' => true, 'bot' => (string)($me['result']['username'] ?? '')]); exit;
-            case 'tg_find':         // everyone who pressed Start on the bot
-                $r = sv_tg(sv_setting($pdo, 'notify_tg_token'), 'getUpdates', ['limit' => 100]);
-                if (!$r || empty($r['ok'])) { echo json_encode(['ok' => false, 'msg' => 'unreachable']); exit; }
-                $found = [];
-                foreach ($r['result'] as $u) {
-                    $c = $u['message']['chat'] ?? $u['my_chat_member']['chat'] ?? null;
-                    if (!$c || !isset($c['id'])) continue;
-                    $name = trim(($c['first_name'] ?? '') . ' ' . ($c['last_name'] ?? '')) ?: ($c['title'] ?? ($c['username'] ?? ''));
-                    $found[(string)$c['id']] = ['id' => (string)$c['id'], 'name' => $name, 'user' => (string)($c['username'] ?? '')];
-                }
-                echo json_encode(['ok' => true, 'chats' => array_values($found)], JSON_UNESCAPED_UNICODE); exit;
-            case 'tg_save':         // which chats get it, and for what
-                $ids = array_filter(array_map(fn($v) => preg_replace('/[^0-9-]/', '', (string)$v), (array)($_POST['chats'] ?? [])));
-                $names = [];
-                foreach ((array)($_POST['names'] ?? []) as $id => $nm) {
-                    $id = preg_replace('/[^0-9-]/', '', (string)$id);
-                    if (in_array($id, $ids, true)) $names[$id] = mb_substr(trim((string)$nm), 0, 60);
-                }
-                sv_setting_set($pdo, 'notify_tg_chats', implode(',', $ids), $by);
-                sv_setting_set($pdo, 'notify_tg_names', json_encode($names, JSON_UNESCAPED_UNICODE), $by);
-                sv_setting_set($pdo, 'notify_sale',  !empty($_POST['sale'])  ? '1' : '0', $by);
-                sv_setting_set($pdo, 'notify_amana', !empty($_POST['amana']) ? '1' : '0', $by);
-                echo json_encode(['ok' => true]); exit;
-            case 'tg_test':
-                $token = sv_setting($pdo, 'notify_tg_token'); $sent = 0;
-                foreach (array_filter(array_map('trim', explode(',', sv_setting($pdo, 'notify_tg_chats')))) as $chat) {
-                    $r = sv_tg($token, 'sendMessage', ['chat_id' => $chat, 'text' => ($lang === 'ar'
-                        ? "🔔 تجربة إشعارات First 1 Car\nستصلك رسالة هنا مع كل عملية بيع ✅"
-                        : "🔔 First 1 Car notification test\nYou will get a message here for every sale ✅")]);
-                    if ($r && !empty($r['ok'])) $sent++;
-                }
-                echo json_encode(['ok' => $sent > 0, 'sent' => $sent]); exit;
-            case 'tg_off':
-                foreach (['notify_tg_token', 'notify_tg_bot', 'notify_tg_chats', 'notify_tg_names'] as $k) sv_setting_set($pdo, $k, '', $by);
-                echo json_encode(['ok' => true]); exit;
-        }
-    } catch (Throwable $e) {
-        error_log('sold_vehicle: notify settings failed: ' . $e->getMessage());
-    }
-    echo json_encode(['ok' => false, 'msg' => 'error']); exit;
-}
 
 /* ─── Has this phone number bought before? (asked while typing) ─── */
 if (($_GET['ajax'] ?? '') === 'phone') {
@@ -539,30 +425,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             'dealer'   => $isCust ? '' : $dealer_name, 'salesman' => $salesman,
         ];
 
-        // the message for the admin's phone (Arabic, the admin's language)
-        $lines = [
-            $svDone === 'amana' ? '🔶 سيارة خرجت أمانة' : ($closingAmana ? '✅ تم بيع سيارة أمانة' : '🎉 تم بيع سيارة'),
-            '🚗 ' . trim($ci['brand'] . ' ' . $ci['model'] . ' ' . $ci['car_year'] . ' ' . ($ci['trim_name'] ?? '')),
-            '🎨 ' . (($ci['color_ar'] ?? '') ?: $ci['color']) . '   📍 ' . (($ci['name_ar'] ?? '') ?: $ci['branch']),
-            '🔑 ' . $ci['chassis'],
-            $isCust ? ('👤 ' . $customer_name . ($customer_phone !== '' ? ' — ' . $customer_phone : '')) : ('🤝 ' . $dealer_name),
-            '🧑‍💼 البائع: ' . ($salesman !== '' ? $salesman : '—'),
-        ];
-        try {
-            $pp = $pdo->prepare("SELECT official_price FROM pricing WHERE brand = ? AND model_name = ? AND trim_name = ? AND car_year = ? LIMIT 1");
-            $pp->execute([$ci['brand'], $ci['model'], $ci['trim_name'], $ci['car_year']]);
-            $off = $pp->fetchColumn();
-            if ($off !== false && $off !== null && $off !== '') $lines[] = '💰 السعر الرسمي: ' . number_format((float)$off) . ' جنيه';
-        } catch (Throwable $e) { /* no pricing table */ }
-        if ($notes !== '') $lines[] = '📝 ' . $notes;
-        $lines[] = '✍️ سجّلها: ' . $_SESSION['username'] . ' · ' . date('h:i A');
-
         header('Location: sold_vehicle.php?lang=' . $lang);
-        session_write_close();
-        // the user is already on the next page while the message goes out
-        if (function_exists('fastcgi_finish_request')) fastcgi_finish_request();
-        elseif (function_exists('litespeed_finish_request')) litespeed_finish_request();
-        try { sv_notify($pdo, $svDone, implode("\n", $lines)); } catch (Throwable $e) { error_log('sold_vehicle: notify failed: ' . $e->getMessage()); }
         exit;
     }
 }
@@ -647,18 +510,6 @@ try {
     $svToday = array_slice($svToday, 0, 40);
 } catch (Throwable $e) { error_log('sold_vehicle: today list failed: ' . $e->getMessage()); }
 
-/* notification set-up state (admin only) */
-$svNotify = null;
-if ($svIsAdmin) {
-    $svNotify = [
-        'bot'   => sv_setting($pdo, 'notify_tg_bot'),
-        'has'   => sv_setting($pdo, 'notify_tg_token') !== '',
-        'chats' => array_values(array_filter(array_map('trim', explode(',', sv_setting($pdo, 'notify_tg_chats'))))),
-        'names' => json_decode(sv_setting($pdo, 'notify_tg_names') ?: '{}', true) ?: new stdClass(),
-        'sale'  => sv_setting($pdo, 'notify_sale')  !== '0',
-        'amana' => sv_setting($pdo, 'notify_amana') !== '0',
-    ];
-}
 
 $other_lang = $lang === 'ar' ? 'en' : 'ar';
 ?>
@@ -1322,10 +1173,6 @@ html[dir="rtl"] .car-card .avail-badge { float: left; }
         </a>
 
         <div class="sv-top-r">
-            <?php if ($svIsAdmin): ?>
-            <button type="button" class="lang-btn sv-bell<?= ($svNotify['has'] && $svNotify['chats']) ? ' on' : '' ?>" id="svBell"
-                    title="<?= $lang === 'ar' ? 'إشعارات البيع على الموبايل' : 'Sale notifications on your phone' ?>">🔔<i></i></button>
-            <?php endif; ?>
             <a href="sold_vehicle.php?lang=<?= $other_lang ?><?= $preselectId > 0 ? '&id=' . $preselectId : '' ?>" class="lang-btn">
                 🌐 <?= $t[$lang]['lang_switch'] ?>
             </a>
@@ -1946,9 +1793,6 @@ if (preselectId && preselectId !== '0') {
 <style>
 /* ═══════════ Sell-vehicle extras (the form itself is unchanged) ═══════════ */
 .sv-top-r { display: flex; gap: 8px; align-items: center; }
-.sv-bell { position: relative; cursor: pointer; font: inherit; font-size: 15px; }
-.sv-bell i { position: absolute; top: 5px; inset-inline-end: 6px; width: 8px; height: 8px; border-radius: 50%; background: #64748b; box-shadow: 0 0 0 2px var(--bg-surface); }
-.sv-bell.on i { background: var(--green-500); box-shadow: 0 0 0 2px var(--bg-surface), 0 0 8px var(--green-500); }
 
 /* live steps */
 .step.active .step-bubble { box-shadow: 0 0 0 5px rgba(168,85,247,.14); }
@@ -2010,7 +1854,7 @@ if (preselectId && preselectId !== '0') {
 .sv-flag.res { background: rgba(234,179,8,.1); border: 1px solid rgba(234,179,8,.3); color: #fde68a; }
 .sv-flag.am { background: rgba(245,158,11,.1); border: 1px solid rgba(245,158,11,.3); color: #fcd34d; }
 .pi-value .pv-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-inline-end: 5px; vertical-align: -1px; border: 1px solid rgba(255,255,255,.3); }
-#pvChassis { direction: ltr; unicode-bidi: isolate; }
+#pvChassis { unicode-bidi: isolate; }
 
 /* phone + dealer hints */
 .sv-hint { font-size: 12px; font-weight: 700; margin-top: 6px; min-height: 0; display: flex; flex-direction: column; gap: 5px; }
@@ -2097,35 +1941,6 @@ if (preselectId && preselectId !== '0') {
 .sv-ti-t { font-size: 11px; color: var(--text-muted); font-weight: 700; direction: ltr; }
 .sv-ti-c { font-family: 'SFMono-Regular', Consolas, monospace; font-size: 11px; color: #fbbf24; font-weight: 800; direction: ltr; }
 
-/* notifications set-up */
-.sv-nt { max-width: 520px; }
-.sv-nt .sv-sb { padding-top: 22px; }
-.sv-nt h3 { font-size: 19px; font-weight: 800; display: flex; align-items: center; gap: 8px; }
-.sv-nt p.lead { font-size: 13px; color: var(--text-secondary); margin: 6px 0 14px; line-height: 1.7; }
-.nt-step { border: 1px solid var(--border); border-radius: 16px; padding: 14px; margin-bottom: 10px; background: rgba(255,255,255,.02); }
-.nt-step.done { border-color: rgba(34,197,94,.35); }
-.nt-step.off { opacity: .45; pointer-events: none; }
-.nt-h { display: flex; align-items: center; gap: 9px; font-size: 14px; font-weight: 800; margin-bottom: 8px; }
-.nt-h i { font-style: normal; width: 24px; height: 24px; border-radius: 50%; background: rgba(147,51,234,.2); color: #d8b4fe; display: inline-flex; align-items: center; justify-content: center; font-size: 12px; flex-shrink: 0; }
-.nt-step.done .nt-h i { background: var(--green-500); color: #052e16; }
-.nt-step ol { font-size: 12.5px; color: var(--text-secondary); line-height: 1.9; padding-inline-start: 18px; margin-bottom: 10px; }
-.nt-step ol b { color: #e2e8f0; }
-.nt-row { display: flex; gap: 8px; }
-.nt-row input { flex: 1; min-width: 0; height: 44px; border-radius: 12px; border: 1px solid var(--border); background: var(--bg-input); color: var(--text-primary); padding: 0 12px; font: inherit; font-size: 13px; direction: ltr; }
-.nt-btn { height: 44px; padding: 0 16px; border-radius: 12px; border: 1px solid rgba(168,85,247,.4); background: rgba(147,51,234,.18); color: #f3e8ff; font: inherit; font-size: 13px; font-weight: 800; cursor: pointer; white-space: nowrap; display: inline-flex; align-items: center; gap: 6px; text-decoration: none; }
-.nt-btn.g { border-color: rgba(34,197,94,.4); background: rgba(34,197,94,.15); color: #bbf7d0; }
-.nt-btn.q { border-color: var(--border); background: transparent; color: var(--text-secondary); }
-.nt-btn:disabled { opacity: .5; cursor: not-allowed; }
-.nt-msg { font-size: 12px; font-weight: 700; margin-top: 8px; min-height: 16px; }
-.nt-msg.ok { color: var(--green-400); } .nt-msg.bad { color: #fca5a5; }
-.nt-chats { display: flex; flex-direction: column; gap: 6px; margin: 8px 0; }
-.nt-chat { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-radius: 12px; border: 1px solid var(--border); cursor: pointer; font-size: 13px; font-weight: 700; }
-.nt-chat input { width: 18px; height: 18px; accent-color: #22c55e; }
-.nt-chat small { color: var(--text-muted); font-weight: 600; direction: ltr; margin-inline-start: auto; }
-.nt-sw { display: flex; gap: 8px; flex-wrap: wrap; margin: 6px 0 10px; }
-.nt-sw label { display: inline-flex; align-items: center; gap: 7px; font-size: 13px; font-weight: 700; padding: 7px 12px; border-radius: 999px; border: 1px solid var(--border); cursor: pointer; }
-.nt-sw input { accent-color: #22c55e; width: 16px; height: 16px; }
-.nt-acts { display: flex; gap: 8px; flex-wrap: wrap; }
 
 @media (max-width: 600px) {
     .car-grid { grid-template-columns: 1fr 1fr; max-height: 430px; gap: 8px; }
@@ -2139,7 +1954,6 @@ if (preselectId && preselectId !== '0') {
     .sv-sheet { max-width: none; border-radius: 26px 26px 0 0; animation: svUp .34s cubic-bezier(.22,1,.36,1) both; }
     @keyframes svUp { from { transform: translateY(100%); } }
     .sv-plate span { font-size: 22px; }
-    .nt-row { flex-direction: column; }
 }
 @media (max-width: 360px) { .car-grid { grid-template-columns: 1fr; } }
 @media (prefers-reduced-motion: reduce) { .sv-ti.fresh { animation: none; } .sv-confetti { display: none; } }
@@ -2154,8 +1968,6 @@ if (preselectId && preselectId !== '0') {
     const PRICES = <?= json_encode((object)$svPrices, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>;
     const CAN_PRICE = <?= can('page.prices') ? 'true' : 'false' ?>;
     const RESELECT = <?= json_encode($svReselect, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>;
-    const NOTIFY = <?= json_encode($svNotify, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>;
-    const CSRF = <?= json_encode($csrfToken) ?>;
     const CUR = AR ? 'جنيه' : 'EGP';
     const T = AR ? {
         all: 'كل الفروع', shown: n => n + ' سيارة معروضة', nomatch: 'لا توجد سيارة تطابق البحث', resBy: b => '🟡 محجوزة' + (b ? ' بواسطة ' + b : ''),
@@ -2164,14 +1976,7 @@ if (preselectId && preselectId !== '0') {
         egOk: '✓ رقم موبايل مصري صحيح', egWarn: '⚠️ تأكد من الرقم — الرقم المصري ١١ رقم ويبدأ بـ 01', returning: '⭐ عميل سابق —', bought: 'اشترى', on: 'في', by: 'البائع',
         kSale: '🎉 بيع لعميل', kDealer: '🤝 بيع لتاجر', kAmana: '🔶 خروج أمانة', kClose: '✅ إغلاق أمانة كبيع', review: 'راجع البيانات قبل التأكيد',
         cust: 'العميل', phone: 'الهاتف', dealer: 'التاجر', salesman: 'البائع', color: 'اللون', branch: 'الفرع', chassis: 'رقم الشاسيه',
-        ok: '✓ تأكيد البيع', okAm: '🔶 تأكيد خروج الأمانة', back: '✏️ رجوع للتعديل', saving: 'جارٍ الحفظ…',
-        ntTitle: '🔔 إشعارات البيع على موبايلك', ntLead: 'مع كل بيع أو أمانة تصلك رسالة فورية على تيليجرام فيها السيارة والعميل والبائع. الإعداد مرة واحدة فقط.',
-        s1: 'أنشئ بوت على تيليجرام', s1l: ['افتح تيليجرام وابحث عن <b>@BotFather</b>', 'اكتب <b>/newbot</b> واختر اسماً للبوت (مثلاً First1Car Sales)', 'انسخ <b>التوكن</b> الذي سيرسله لك والصقه هنا'],
-        tokPh: 'الصق التوكن هنا', connect: 'ربط', connected: b => '✓ متصل بالبوت @' + b, badTok: '✗ التوكن غير صحيح — انسخه كاملاً من BotFather', net: '✗ تعذّر الاتصال بتيليجرام، حاول مرة أخرى',
-        s2: 'اربط موبايلك', s2l: ['افتح البوت من الزر وادخل عليه واضغط <b>Start</b>', 'كل شخص تريد أن تصله الإشعارات يفعل نفس الشيء', 'ثم اضغط <b>ابحث</b> واختر الأشخاص'],
-        openBot: '📲 افتح البوت', find: '🔍 ابحث', none: 'لم يضغط أحد Start بعد — افتح البوت واضغط Start ثم ابحث مرة أخرى',
-        s3: 'متى تصلك الرسالة', wSale: 'عند البيع', wAmana: 'عند خروج أمانة', save: '💾 حفظ', test: '📨 رسالة تجربة', saved: '✓ تم الحفظ — الإشعارات تعمل', tested: n => '✓ تم إرسال رسالة تجربة إلى ' + n, testBad: '✗ لم تصل الرسالة — تأكد أنك ضغطت Start على البوت',
-        off: 'إيقاف وحذف الربط', offQ: 'إيقاف الإشعارات وحذف ربط البوت؟', close: 'إغلاق', pickOne: 'اختر شخصاً واحداً على الأقل'
+        ok: '✓ تأكيد البيع', okAm: '🔶 تأكيد خروج الأمانة', back: '✏️ رجوع للتعديل', saving: 'جارٍ الحفظ…'
     } : {
         all: 'All branches', shown: n => n + ' cars shown', nomatch: 'No vehicle matches the search', resBy: b => '🟡 Reserved' + (b ? ' by ' + b : ''),
         price: '💰 Official price', noPrice: '⚠️ This trim has no price yet', resFlag: b => '🟡 This car is reserved' + (b ? ' by ' + b : '') + ' — double-check before selling',
@@ -2179,14 +1984,7 @@ if (preselectId && preselectId !== '0') {
         egOk: '✓ Valid Egyptian mobile', egWarn: '⚠️ Check the number — Egyptian mobiles are 11 digits starting with 01', returning: '⭐ Returning customer —', bought: 'bought', on: 'on', by: 'salesman',
         kSale: '🎉 Sale to customer', kDealer: '🤝 Sale to dealer', kAmana: '🔶 Out on consignment', kClose: '✅ Consignment closed as sale', review: 'Check the details before confirming',
         cust: 'Customer', phone: 'Phone', dealer: 'Dealer', salesman: 'Salesman', color: 'Colour', branch: 'Branch', chassis: 'Chassis No.',
-        ok: '✓ Confirm sale', okAm: '🔶 Confirm consignment', back: '✏️ Back to edit', saving: 'Saving…',
-        ntTitle: '🔔 Sale notifications on your phone', ntLead: 'Every sale or consignment sends an instant Telegram message with the car, customer and salesman. One-time set-up.',
-        s1: 'Create a Telegram bot', s1l: ['Open Telegram and search for <b>@BotFather</b>', 'Send <b>/newbot</b> and pick a name (e.g. First1Car Sales)', 'Copy the <b>token</b> it sends you and paste it here'],
-        tokPh: 'Paste the token here', connect: 'Connect', connected: b => '✓ Connected to @' + b, badTok: '✗ That token is not valid — copy all of it from BotFather', net: '✗ Could not reach Telegram, try again',
-        s2: 'Link your phone', s2l: ['Open the bot with the button and press <b>Start</b>', 'Everyone who should get alerts does the same', 'Then press <b>Find</b> and tick the people'],
-        openBot: '📲 Open the bot', find: '🔍 Find', none: 'Nobody pressed Start yet — open the bot, press Start, then Find again',
-        s3: 'When to send', wSale: 'On a sale', wAmana: 'On consignment', save: '💾 Save', test: '📨 Test message', saved: '✓ Saved — notifications are on', tested: n => '✓ Test sent to ' + n, testBad: '✗ Not delivered — make sure you pressed Start on the bot',
-        off: 'Turn off & disconnect', offQ: 'Turn off notifications and disconnect the bot?', close: 'Close', pickOne: 'Tick at least one person'
+        ok: '✓ Confirm sale', okAm: '🔶 Confirm consignment', back: '✏️ Back to edit', saving: 'Saving…'
     };
     const $ = id => document.getElementById(id);
     const esc = v => String(v == null ? '' : v).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -2414,76 +2212,6 @@ if (preselectId && preselectId !== '0') {
         $('svAnother').addEventListener('click', e => { e.preventDefault(); $('sellForm').scrollIntoView({ behavior: 'smooth', block: 'start' }); setTimeout(() => $('carSearch').focus({ preventScroll: true }), 450); });
     }
 
-    /* ═══ admin: phone notifications set-up ═══ */
-    const bell = $('svBell');
-    if (bell && NOTIFY) {
-        let st = { bot: NOTIFY.bot, has: NOTIFY.has, chats: NOTIFY.chats.slice(), names: NOTIFY.names || {}, found: [] };
-        const post = (action, data) => {
-            const fd = new FormData(); fd.append('action', action); fd.append('csrf_token', CSRF);
-            Object.entries(data || {}).forEach(([k, v]) => Array.isArray(v) ? v.forEach(x => fd.append(k + '[]', x)) : (typeof v === 'object' && v ? Object.entries(v).forEach(([a, b]) => fd.append(k + '[' + a + ']', b)) : fd.append(k, v)));
-            return fetch('sold_vehicle.php?lang=' + LANG, { method: 'POST', body: fd, credentials: 'same-origin' }).then(r => r.json());
-        };
-        function render() {
-            const connected = st.has && st.bot;
-            const list = st.found.length ? st.found : st.chats.map(id => ({ id, name: st.names[id] || id, user: '' }));
-            let h = '<div class="sv-sb"><h3>' + esc(T.ntTitle) + '</h3><p class="lead">' + esc(T.ntLead) + '</p>';
-            h += '<div class="nt-step' + (connected ? ' done' : '') + '"><div class="nt-h"><i>' + (connected ? '✓' : '1') + '</i>' + esc(T.s1) + '</div>';
-            if (!connected) h += '<ol>' + T.s1l.map(x => '<li>' + x + '</li>').join('') + '</ol>';
-            h += '<div class="nt-row"><input id="ntTok" type="text" autocomplete="off" spellcheck="false" placeholder="' + esc(connected ? '•••••••• (@' + st.bot + ')' : T.tokPh) + '"><button type="button" class="nt-btn" id="ntConnect">' + esc(T.connect) + '</button></div>';
-            h += '<div class="nt-msg' + (connected ? ' ok' : '') + '" id="ntM1">' + (connected ? esc(T.connected(st.bot)) : '') + '</div></div>';
-            h += '<div class="nt-step' + (connected ? '' : ' off') + (st.chats.length ? ' done' : '') + '"><div class="nt-h"><i>' + (st.chats.length ? '✓' : '2') + '</i>' + esc(T.s2) + '</div>';
-            h += '<ol>' + T.s2l.map(x => '<li>' + x + '</li>').join('') + '</ol>';
-            h += '<div class="nt-acts">' + (connected ? '<a class="nt-btn g" href="https://t.me/' + esc(st.bot) + '" target="_blank" rel="noopener">' + esc(T.openBot) + '</a>' : '') + '<button type="button" class="nt-btn" id="ntFind">' + esc(T.find) + '</button></div>';
-            h += '<div class="nt-chats" id="ntChats">' + list.map(c => '<label class="nt-chat"><input type="checkbox" value="' + esc(c.id) + '" data-name="' + esc(c.name) + '"' + (st.chats.indexOf(String(c.id)) !== -1 ? ' checked' : '') + '>' + esc(c.name || c.id) + (c.user ? '<small>@' + esc(c.user) + '</small>' : '') + '</label>').join('') + '</div>';
-            h += '<div class="nt-msg" id="ntM2"></div></div>';
-            h += '<div class="nt-step' + (connected ? '' : ' off') + '"><div class="nt-h"><i>3</i>' + esc(T.s3) + '</div>';
-            h += '<div class="nt-sw"><label><input type="checkbox" id="ntSale"' + (NOTIFY.sale ? ' checked' : '') + '>🎉 ' + esc(T.wSale) + '</label><label><input type="checkbox" id="ntAm"' + (NOTIFY.amana ? ' checked' : '') + '>🔶 ' + esc(T.wAmana) + '</label></div>';
-            h += '<div class="nt-acts"><button type="button" class="nt-btn g" id="ntSave">' + esc(T.save) + '</button><button type="button" class="nt-btn" id="ntTest">' + esc(T.test) + '</button></div><div class="nt-msg" id="ntM3"></div></div>';
-            h += '<div class="nt-acts" style="justify-content:space-between;margin-top:6px">' + (st.has ? '<button type="button" class="nt-btn q" id="ntOff">' + esc(T.off) + '</button>' : '<span></span>') + '<button type="button" class="nt-btn q" id="ntClose">' + esc(T.close) + '</button></div></div>';
-            sheet.innerHTML = h; sheet.className = 'sv-sheet sv-nt';
-            const msg = (id, t, ok) => { const m = $(id); m.textContent = t; m.className = 'nt-msg ' + (ok ? 'ok' : 'bad'); };
-            const busy = (b, on) => { b.disabled = on; };
-            $('ntClose').addEventListener('click', closeOv);
-            $('ntConnect').addEventListener('click', function () {
-                const tok = $('ntTok').value.trim(); if (!tok) { $('ntTok').focus(); return; }
-                busy(this, true);
-                post('tg_token', { token: tok }).then(j => {
-                    if (j.ok) { st.has = true; st.bot = j.bot; render(); } else msg('ntM1', j.msg === 'bad_token' ? T.badTok : T.net, false);
-                }).catch(() => msg('ntM1', T.net, false)).finally(() => busy(this, false));
-            });
-            $('ntFind').addEventListener('click', function () {
-                busy(this, true);
-                post('tg_find').then(j => {
-                    if (!j.ok) { msg('ntM2', T.net, false); return; }
-                    const keep = st.chats.map(id => ({ id, name: st.names[id] || id, user: '' }));
-                    const seen = {}; st.found = j.chats.concat(keep).filter(c => !seen[c.id] && (seen[c.id] = 1));
-                    if (!j.chats.length) { render(); msg('ntM2', T.none, false); return; }
-                    if (!st.chats.length) st.chats = j.chats.map(c => String(c.id));
-                    render();
-                }).catch(() => msg('ntM2', T.net, false)).finally(() => busy(this, false));
-            });
-            $('ntSave').addEventListener('click', function () {
-                const picked = Array.from(document.querySelectorAll('#ntChats input:checked'));
-                if (!picked.length) { msg('ntM3', T.pickOne, false); return; }
-                const names = {}; picked.forEach(i => names[i.value] = i.dataset.name || '');
-                busy(this, true);
-                post('tg_save', { chats: picked.map(i => i.value), names, sale: $('ntSale').checked ? '1' : '', amana: $('ntAm').checked ? '1' : '' }).then(j => {
-                    if (j.ok) { st.chats = picked.map(i => i.value); st.names = names; NOTIFY.sale = $('ntSale').checked; NOTIFY.amana = $('ntAm').checked; bell.classList.add('on'); msg('ntM3', T.saved, true); }
-                    else msg('ntM3', T.net, false);
-                }).catch(() => msg('ntM3', T.net, false)).finally(() => busy(this, false));
-            });
-            $('ntTest').addEventListener('click', function () {
-                busy(this, true);
-                post('tg_test').then(j => msg('ntM3', j.ok ? T.tested(j.sent) : T.testBad, !!j.ok)).catch(() => msg('ntM3', T.net, false)).finally(() => busy(this, false));
-            });
-            const off = $('ntOff');
-            if (off) off.addEventListener('click', function () {
-                if (!confirm(T.offQ)) return;
-                post('tg_off').then(() => { st = { bot: '', has: false, chats: [], names: {}, found: [] }; bell.classList.remove('on'); render(); });
-            });
-        }
-        bell.addEventListener('click', () => { render(); openOv(); });
-    }
 })();
 </script>
 
