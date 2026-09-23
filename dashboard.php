@@ -2446,5 +2446,6 @@ priceLine + '\n' +
     });
 })();
 </script>
+<?php include __DIR__ . '/notify_prompt.php'; ?>
 </body>
 </html>

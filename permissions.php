@@ -353,7 +353,7 @@ function perm_catalog(): array
                     'ar' => 'إشعاراتي', 'en' => 'My notifications',
                     'dar' => 'تفعيل الإشعارات على موبايل الشخص نفسه ورؤية ما وصله',
                     'den' => 'Turn notifications on for one\'s own phone and see what they received',
-                    'd' => [1, 1, 1],
+                    'd' => [1, 0, 0],
                 ],
             ],
         ],

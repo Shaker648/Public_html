@@ -73,6 +73,7 @@ if ($valid) {
     $_SESSION['user_id']  = $user['id'];
     $_SESSION['username'] = $user['username'];
     $_SESSION['role']     = $user['role'];
+    $_SESSION['np_fresh'] = 1;   // the dashboard offers phone notifications right after login
     unset($_SESSION['login_err'], $_SESSION['login_user'], $_SESSION['login_csrf'],
           $_SESSION['login_attempts'], $_SESSION['login_lock_until']);
 

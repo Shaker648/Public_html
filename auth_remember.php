@@ -148,6 +148,7 @@ function f1c_remember_login(PDO $pdo): bool
         $_SESSION['user_id']  = (int)$row['user_id'];
         $_SESSION['username'] = $row['username'];
         $_SESSION['role']     = $row['role'];
+        $_SESSION['np_fresh'] = 1;
         $pdo->prepare("UPDATE users SET last_login = NOW() WHERE id = ?")->execute([$row['user_id']]);
         return true;
     } catch (Throwable $e) {
