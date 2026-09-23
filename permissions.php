@@ -340,6 +340,24 @@ function perm_catalog(): array
             ],
         ],
 
+        'notifications' => [
+            'ar' => 'إشعارات الموبايل', 'en' => 'Phone notifications', 'icon' => '🔔',
+            'perms' => [
+                'page.notifications_admin' => [
+                    'ar' => 'التحكم في الإشعارات', 'en' => 'Notification control',
+                    'dar' => 'تحديد من يستلم إشعار كل حدث (بيع، نقل، حجز…)، ورؤية كل الأجهزة المربوطة وسجل الإرسال',
+                    'den' => 'Choose who gets each event (sale, transfer, reservation…), see every linked phone and the delivery log',
+                    'd' => [1, 0, 0],
+                ],
+                'page.notifications' => [
+                    'ar' => 'إشعاراتي', 'en' => 'My notifications',
+                    'dar' => 'تفعيل الإشعارات على موبايل الشخص نفسه ورؤية ما وصله',
+                    'den' => 'Turn notifications on for one\'s own phone and see what they received',
+                    'd' => [1, 1, 1],
+                ],
+            ],
+        ],
+
         'car_images' => [
             'ar' => 'مكتبة صور السيارات', 'en' => 'Car Image Library', 'icon' => '🖼️',
             'perms' => [

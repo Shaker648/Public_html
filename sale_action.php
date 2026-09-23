@@ -18,6 +18,7 @@
 
 require 'auth.php';
 require 'config.php';
+require_once __DIR__ . '/push_helpers.php';
 require 'sold_helpers.php';
 
 $lang = $_POST['lang'] ?? $_GET['lang'] ?? 'ar';
@@ -115,6 +116,7 @@ if ($action === 'revert') {
         ]);
 
         $pdo->commit();
+        notify_event($pdo, 'sale_returned', ['car' => $car]);
     } catch (Exception $e) {
         $pdo->rollBack();
         error_log('Sale revert failed: ' . $e->getMessage());

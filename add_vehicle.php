@@ -2,6 +2,7 @@
 
 require 'auth.php';
 require 'config.php';
+require_once __DIR__ . '/push_helpers.php';
 require 'car_images_helpers.php';
 
 perm_require('page.add_vehicle');
@@ -252,6 +253,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             );
 
             /* Show the result on a fresh GET, so a refresh never re-sends the form */
+            notify_event($pdo, 'car_added', ['car' => $addedVehicle + ['id' => (int)$carId]]);
             $_SESSION['av_added'] = [
                 'car'  => $addedVehicle + ['id' => (int)$carId],
                 'keep' => !empty($_POST['keep']),

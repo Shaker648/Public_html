@@ -2,6 +2,7 @@
 
 require 'auth.php';
 require 'config.php';
+require_once __DIR__ . '/push_helpers.php';
 require_once 'car_images_helpers.php';
 require_once 'reserve_helpers.php';
 require_once 'sold_helpers.php';
@@ -424,6 +425,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             'customer' => $isCust ? $customer_name : '', 'phone' => $isCust ? $customer_phone : '',
             'dealer'   => $isCust ? '' : $dealer_name, 'salesman' => $salesman,
         ];
+
+        $offPrice = '';
+        try {
+            $pp = $pdo->prepare("SELECT official_price FROM pricing WHERE brand = ? AND model_name = ? AND trim_name = ? AND car_year = ? LIMIT 1");
+            $pp->execute([$ci['brand'], $ci['model'], $ci['trim_name'], $ci['car_year']]);
+            $ov = $pp->fetchColumn();
+            if ($ov !== false && $ov !== null && $ov !== '') $offPrice = number_format((float)$ov);
+        } catch (Throwable $e) {}
+        notify_event($pdo, $svDone === 'amana' ? 'amana_out' : ($closingAmana ? 'amana_closed' : 'car_sold'), [
+            'car'      => $_SESSION['sv_done']['car'],
+            'customer' => $isCust ? $customer_name : '',
+            'dealer'   => $isCust ? '' : $dealer_name,
+            'salesman' => $salesman,
+            'price'    => $svDone === 'amana' ? '' : $offPrice,
+        ]);
 
         header('Location: sold_vehicle.php?lang=' . $lang);
         exit;

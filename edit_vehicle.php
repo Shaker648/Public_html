@@ -2,6 +2,7 @@
 
 require 'auth.php';
 require 'config.php';
+require_once __DIR__ . '/push_helpers.php';
 require_once 'car_images_helpers.php';
 require_once 'car_edits_helpers.php';
 
@@ -222,6 +223,10 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                         ->execute([$id, $changes['branch'][0], $changes['branch'][1], $_SESSION['username'], $t['ar']['edit_transfer']]);
                 }
                 $pdo->commit();
+
+                $carNow = $car;
+                foreach ($changes as $f => [$o, $n]) $carNow[$f] = $n;
+                notify_event($pdo, 'car_edited', ['car' => $carNow, 'changes' => $changes]);
 
                 /* Show the result on a fresh GET, so a refresh never re-sends the form */
                 $_SESSION['ev_done'] = ['id' => $id, 'changes' => $changes];

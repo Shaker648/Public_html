@@ -1,6 +1,7 @@
 <?php
 require 'auth.php';
 require 'config.php';
+require_once __DIR__ . '/push_helpers.php';
 require 'car_images_helpers.php';
 
 $lang = $_GET['lang'] ?? 'ar';
@@ -230,6 +231,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
         }
     } catch (Exception $e) { error_log('pricing_history write failed: ' . $e->getMessage()); }
 
+    if (!empty($changed)) {
+        notify_event($pdo, 'price_changed', [
+            'brand' => $brand, 'model' => $model_name, 'trim' => $trim_name, 'year' => $car_year,
+            'old' => ($oldVals['official'] ?? '') !== $newVals['official'] ? (string)($oldVals['official'] ?? '') : '',
+            'new' => (string)$official_price,
+            'customer' => (string)($customer_price ?? ''),
+            'type' => $type ?? 'update',
+        ]);
+    }
     echo json_encode(['ok' => true, 'updated_by' => $updated_by, 'updated_at' => date('d M Y h:i A'), 'car_year' => $car_year]);
     exit;
 }

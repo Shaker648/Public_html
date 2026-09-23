@@ -12,6 +12,7 @@
 
 require 'auth.php';
 require 'config.php';
+require_once __DIR__ . '/push_helpers.php';
 
 $lang = $_GET['lang'] ?? 'ar';
 if (!in_array($lang, ['ar', 'en'], true)) $lang = 'ar';
@@ -76,6 +77,7 @@ if ($car) {
         ]);
 
         $pdo->commit();
+        notify_event($pdo, 'amana_returned', ['car' => array_merge($car, ['branch' => $return_branch]), 'to' => $return_branch]);
     } catch (Exception $e) {
         $pdo->rollBack();
         error_log('Consignment return failed: ' . $e->getMessage());

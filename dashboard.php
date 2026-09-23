@@ -356,6 +356,7 @@ function fmtPrice($p) {
 <!DOCTYPE html>
 <html lang="<?= $lang ?>" dir="<?= $lang === 'ar' ? 'rtl' : 'ltr' ?>">
 <head>
+<?php include __DIR__ . '/pwa_head.php'; ?>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
     <meta name="theme-color" content="#0f172a">
@@ -1484,6 +1485,11 @@ function fmtPrice($p) {
             <?php if (can('page.installments')): ?>
             <a href="installments.php?lang=<?= $lang ?>" class="more-item">
                 <span class="mi-icon">🏦</span><?= $lang === 'ar' ? 'التقسيط' : 'Installments' ?>
+            </a>
+            <?php endif; ?>
+            <?php if (can('page.notifications')): ?>
+            <a href="notifications.php?lang=<?= $lang ?>" class="more-item">
+                <span class="mi-icon">🔔</span><?= $lang === 'ar' ? 'الإشعارات' : 'Notifications' ?>
             </a>
             <?php endif; ?>
             <?php if (can('page.ads')): ?>

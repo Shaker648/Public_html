@@ -2,6 +2,7 @@
 
 require 'auth.php';
 require 'config.php';
+require_once __DIR__ . '/push_helpers.php';
 require_once 'car_images_helpers.php';
 
 perm_require('page.transfer_vehicle');
@@ -167,6 +168,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                 'trim_name' => $car['trim_name'], 'color' => $car['color'], 'chassis' => $car['chassis'], 'from' => $car['branch']];
                 }
                 $pdo->commit();
+
+                if (count($moved) === 1) {
+                    notify_event($pdo, 'car_transferred', ['car' => $moved[0] + ['branch' => $to_branch], 'from' => $moved[0]['from'], 'to' => $to_branch]);
+                } else {
+                    $froms = array_values(array_unique(array_column($moved, 'from')));
+                    notify_event($pdo, 'car_transferred', ['count' => count($moved), 'to' => $to_branch, 'from' => count($froms) === 1 ? $froms[0] : '',
+                                                           'names' => array_map(fn($c) => $c['brand'] . ' ' . $c['model'] . ' (' . $c['chassis'] . ')', $moved)]);
+                }
 
                 /* Show the result on a fresh GET, so a refresh never re-sends the form */
                 $skipped = array_values(array_map(fn($r) => $r['chassis'], array_filter($rows, fn($r) => $r['branch'] === $to_branch)));
