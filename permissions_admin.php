@@ -435,7 +435,7 @@ body {
 
 <?php if (can('page.notifications_admin')): ?>
 <a class="notif-card" href="notifications_admin.php?lang=<?= $lang ?>">
-    <img src="icons/icon-192.png?v=2" alt="">
+    <img src="icons/logo.png?v=3" alt="">
     <div>
         <div class="nc-t">🔔 <?= $lang === 'ar' ? 'التحكم في الإشعارات' : 'Notification control' ?></div>
         <div class="nc-s"><?= $lang === 'ar' ? 'من يستلم أي إشعار (المبيعات / المديرين / الأدمن أو أشخاص بعينهم)، ساعات الهدوء، الأجهزة المفعّلة، إشعار تجربة وسجل كل ما أُرسل' : 'Who receives which notification (sales / managers / admins or specific people), quiet hours, enabled phones, a test notification and a log of everything sent' ?></div>
