@@ -31,7 +31,8 @@
   let regPromise = null;
   function registration() {
     if (!('serviceWorker' in navigator)) return Promise.reject(new Error('no_sw'));
-    if (!regPromise) regPromise = navigator.serviceWorker.register('sw.js', { scope: './' }).then(() => navigator.serviceWorker.ready);
+    if (!regPromise) regPromise = navigator.serviceWorker.register('sw.js', { scope: './', updateViaCache: 'none' })
+      .then((r) => { r.update().catch(() => {}); return navigator.serviceWorker.ready; });   // always pick up a new sw.js (e.g. new icon)
     return regPromise;
   }
 

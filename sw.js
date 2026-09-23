@@ -20,8 +20,8 @@ self.addEventListener('push', (event) => {
   const title = d.title || APP_NAME;
   const options = {
     body: d.body || '',
-    icon: 'icons/logo.png?v=3',
-    badge: 'icons/badge-96.png?v=3',
+    icon: 'icons/icon-192.png?v=4',
+    badge: 'icons/badge-96.png?v=4',
     tag: d.tag || undefined,
     renotify: !!d.tag,
     timestamp: d.ts || Date.now(),

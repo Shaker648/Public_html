@@ -356,19 +356,10 @@ function fmtPrice($p) {
 <!DOCTYPE html>
 <html lang="<?= $lang ?>" dir="<?= $lang === 'ar' ? 'rtl' : 'ltr' ?>">
 <head>
-<?php include __DIR__ . '/pwa_head.php'; ?>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-    <meta name="theme-color" content="#0f172a">
-
-    <!-- PWA / Add to Home Screen -->
-    <link rel="manifest" href="/pwa/manifest.json">
-    <meta name="apple-mobile-web-app-capable" content="yes">
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <meta name="apple-mobile-web-app-title" content="First 1 Car">
-    <link rel="apple-touch-icon" href="/pwa/icon-192.png">
-    <link rel="apple-touch-icon" sizes="192x192" href="/pwa/icon-192.png">
-    <link rel="apple-touch-icon" sizes="512x512" href="/pwa/icon-512.png">
+    <!-- PWA / Add to Home Screen: logo icons + manifest -->
+<?php include __DIR__ . '/pwa_head.php'; ?>
 
     <title><?= $t[$lang]['title'] ?></title>
 
