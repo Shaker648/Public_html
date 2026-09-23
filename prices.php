@@ -520,7 +520,6 @@ foreach ($trimMap as $bk => $trims) {
         ];
     }
 }
-$pxCanWa   = can('dash.wa_customer');
 $pxCanHist = can('page.price_history');
 
 function fmt($val, $currency) {
@@ -2261,21 +2260,21 @@ tr:has(.price-input-wrap.active) .px-stock, tr:has(.price-input-wrap.active) .px
     const PX = <?= json_encode($pxData, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>;
     const PXB = <?= json_encode($pxBrands, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>;
     const AR = <?= json_encode($lang === 'ar') ?>, LANG = <?= json_encode($lang) ?>;
-    const SALES = <?= $isSales ? 'true' : 'false' ?>, CAN_WA = <?= $pxCanWa ? 'true' : 'false' ?>, CAN_HIST = <?= $pxCanHist ? 'true' : 'false' ?>;
+    const SALES = <?= $isSales ? 'true' : 'false' ?>, CAN_HIST = <?= $pxCanHist ? 'true' : 'false' ?>;
     const CUR = <?= json_encode($t[$lang]['currency'], JSON_UNESCAPED_UNICODE) ?>;
     const T = AR ? {
         models:'إجمالي الموديلات', priced:'مسعّرة', unpriced:'بدون سعر', offers:'عروض أوفر', discs:'خصومات', week:'تحدّثت هذا الأسبوع',
         ofPriced:'من الموديلات لها سعر', all:'الكل', allBrands:'كل الماركات', cDisc:'فيها خصم', cOffer:'فيها أوفر', cUnp:'بدون سعر',
-        cStock:'متوفرة في المخزون', cWeek:'تغيّرت هذا الأسبوع', cStale:'تحتاج مراجعة', inStock:'في المخزون', noStock:'غير متوفرة',
-        daysAgo:d=>d===0?'اليوم':(d===1?'أمس':'منذ '+d+' يوم'), fresh:'حُدّث', copy:'نسخ السعر', wa:'مشاركة واتساب', copied:'✓ تم النسخ',
+        cStock:'متوفرة في المخزون', cWeek:'تغيّرت هذا الأسبوع', inStock:'في المخزون', noStock:'غير متوفرة',
+        daysAgo:d=>d===0?'اليوم':(d===1?'أمس':'منذ '+d+' يوم'), fresh:'حُدّث', copy:'نسخ السعر', copied:'✓ تم النسخ',
         official:'السعر الرسمي', cust:'العميل', trade:'التاجر', years:'الأسعار حسب السنة', history:'آخر تغييرات السعر', byBranch:'المخزون حسب الفرع',
         noHist:'لا توجد تغييرات مسجلة خلال آخر ٦ أشهر', t_create:'تسعير جديد', t_update:'تعديل', t_delete:'حذف سنة', histPage:'📈 سجل الأسعار الكامل',
         by:'بواسطة', stockAll:'سيارة في المخزون', none:'—', changed:'تغيّر'
     } : {
         models:'Total models', priced:'Priced', unpriced:'Unpriced', offers:'Offers', discs:'Discounts', week:'Updated this week',
         ofPriced:'of models are priced', all:'All', allBrands:'All brands', cDisc:'Has a discount', cOffer:'Has an offer', cUnp:'Unpriced',
-        cStock:'In stock', cWeek:'Changed this week', cStale:'Needs checking', inStock:'in stock', noStock:'none in stock',
-        daysAgo:d=>d===0?'today':(d===1?'yesterday':d+' days ago'), fresh:'Updated', copy:'Copy price', wa:'Share on WhatsApp', copied:'✓ Copied',
+        cStock:'In stock', cWeek:'Changed this week', inStock:'in stock', noStock:'none in stock',
+        daysAgo:d=>d===0?'today':(d===1?'yesterday':d+' days ago'), fresh:'Updated', copy:'Copy price', copied:'✓ Copied',
         official:'Official', cust:'Customer', trade:'Trade', years:'Prices by year', history:'Recent price changes', byBranch:'Stock by branch',
         noHist:'No changes recorded in the last 6 months', t_create:'Newly priced', t_update:'Changed', t_delete:'Year removed', histPage:'📈 Full price history',
         by:'by', stockAll:'cars in stock', none:'—', changed:'changed'
@@ -2328,8 +2327,7 @@ tr:has(.price-input-wrap.active) .px-stock, tr:has(.price-input-wrap.active) .px
         if (offTd && yd.off) {
             const box = document.createElement('div');
             let h = '';
-            if (yd.chg) h += '<span class="px-chg ' + yd.chg.dir + '" title="' + esc(yd.chg.from + ' → ' + yd.chg.to) + '">' + (yd.chg.dir === 'up' ? '▲' : '▼') + ' ' + esc(T.daysAgo(yd.chg.days)) + '</span>';
-            h += '<span class="px-tools"><button type="button" data-a="copy" title="' + esc(T.copy) + '">📋</button>' + (CAN_WA ? '<button type="button" data-a="wa" title="' + esc(T.wa) + '">💬</button>' : '') + '</span>';
+            h += '<span class="px-tools"><button type="button" data-a="copy" title="' + esc(T.copy) + '">📋</button></span>';
             box.innerHTML = h;
             offTd.appendChild(box);
             box.querySelectorAll('button').forEach(b => b.addEventListener('click', ev => { ev.stopPropagation(); share(d, y, yd, b.dataset.a); }));
@@ -2355,7 +2353,6 @@ tr:has(.price-input-wrap.active) .px-stock, tr:has(.price-input-wrap.active) .px
     }
     function share(d, y, yd, how) {
         const txt = shareText(d, y, yd);
-        if (how === 'wa') { window.open('https://wa.me/?text=' + encodeURIComponent(txt), '_blank', 'noopener'); return; }
         const done = () => toast(T.copied);
         if (navigator.clipboard && window.isSecureContext) navigator.clipboard.writeText(txt).then(done, done);
         else { const ta = document.createElement('textarea'); ta.value = txt; document.body.appendChild(ta); ta.select(); try { document.execCommand('copy'); } catch (e) {} ta.remove(); done(); }
@@ -2393,7 +2390,7 @@ tr:has(.price-input-wrap.active) .px-stock, tr:has(.price-input-wrap.active) .px
 
     /* ═══ chips ═══ */
     const chipDefs = [['', T.all], ['disc', '⬇️ ' + T.cDisc], ['offer', '⬆️ ' + T.cOffer], ['unp', '⚠️ ' + T.cUnp],
-                      ['stock', '🚗 ' + T.cStock], ['week', '🔄 ' + T.cWeek], ['stale', '🔴 ' + T.cStale]];
+                      ['stock', '🚗 ' + T.cStock], ['week', '🔄 ' + T.cWeek]];
     const chips = document.createElement('div'); chips.className = 'px-chips';
     chips.innerHTML = chipDefs.map(([k, l]) => '<button type="button" class="px-chip' + (k === '' ? ' on' : '') + '" data-c="' + k + '">' + esc(l) + ' <b data-n="' + k + '"></b></button>').join('');
     if (form) form.appendChild(chips);
@@ -2411,7 +2408,6 @@ tr:has(.price-input-wrap.active) .px-stock, tr:has(.price-input-wrap.active) .px
             case 'unp':   return ys.length === 0;
             case 'stock': return ys.some(y => y.stock > 0);
             case 'week':  return ys.some(y => y.wk);
-            case 'stale': return ys.some(y => y.age != null && y.age > 30);
             default:      return true;
         }
     }
@@ -2420,7 +2416,7 @@ tr:has(.price-input-wrap.active) .px-stock, tr:has(.price-input-wrap.active) .px
         const br = form && form.elements.brand ? form.elements.brand.value : '';
         const groups = {};
         rows.forEach(tr => (groups[tr.dataset.trimKey] = groups[tr.dataset.trimKey] || []).push(tr));
-        const counts = { '': 0, disc: 0, offer: 0, unp: 0, stock: 0, week: 0, stale: 0 };
+        const counts = { '': 0, disc: 0, offer: 0, unp: 0, stock: 0, week: 0 };
         let vis = 0, pricedN = 0, offN = 0, disN = 0, wkN = 0;
         blocks.forEach(bl => {
             let n = 0;
