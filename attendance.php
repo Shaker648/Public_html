@@ -6,6 +6,7 @@
 
 require 'auth.php';
 require 'config.php';
+require_once 'attendance_helpers.php';
 
 perm_require('page.attendance');
 
@@ -64,6 +65,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                  VALUES (?, ?, NOW(), ?, ?, ?, ?, 'active')"
             );
             $stmt->execute([$userId, $branchName, $lat, $lng, $locDenied, $inDist]);
+
+            // phone alerts (who gets them is set on notifications_admin.php)
+            $newId = (int)$pdo->lastInsertId();
+            $q = $pdo->prepare("SELECT clock_in, (SELECT COUNT(*) FROM attendance_logs x WHERE x.user_id = a.user_id AND DATE(x.clock_in) = DATE(a.clock_in) AND x.id <> a.id) AS earlier
+                                FROM attendance_logs a WHERE a.id = ?");
+            $q->execute([$newId]);
+            $row = $q->fetch(PDO::FETCH_ASSOC) ?: ['clock_in' => '', 'earlier' => 1];
+            $set = att_settings($pdo);
+            $nd  = ['actor' => $userName, 'branch' => $branchName, 'time' => $row['clock_in'], 'dist' => $inDist, 'dir' => 'in'];
+            notify_event($pdo, 'att_in', $nd);
+            $late = (int)$row['earlier'] === 0 ? att_late_min($set, (string)$row['clock_in']) : 0;   // only the day's first clock-in
+            if ($late > 0) notify_event($pdo, 'att_late', $nd + ['late' => $late, 'start' => $set['start']]);
+            if ($inDist !== null && $inDist > $set['fence']) notify_event($pdo, 'att_far', $nd);
         }
     } elseif ($_POST['action'] === 'clock_out') {
         $outBranch = trim($_POST['branch_name'] ?? '');
@@ -72,6 +86,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
             exit;
         }
         $outDist = branchDistance($pdo, $outBranch, $lat, $lng);
+        $cur = $pdo->prepare("SELECT id FROM attendance_logs WHERE user_id = ? AND status = 'active' LIMIT 1");
+        $cur->execute([$userId]);
+        $curId = (int)$cur->fetchColumn();
         $stmt = $pdo->prepare(
             "UPDATE attendance_logs
              SET clock_out = NOW(), clock_out_lat = ?, clock_out_lng = ?, out_loc_denied = ?,
@@ -79,6 +96,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
              WHERE user_id = ? AND status = 'active'"
         );
         $stmt->execute([$lat, $lng, $locDenied, $outBranch, $outDist, $userId]);
+
+        if ($curId && $stmt->rowCount()) {
+            $q = $pdo->prepare("SELECT clock_out, TIMESTAMPDIFF(SECOND, clock_in, clock_out) AS secs FROM attendance_logs WHERE id = ?");
+            $q->execute([$curId]);
+            $row = $q->fetch(PDO::FETCH_ASSOC) ?: ['clock_out' => '', 'secs' => 0];
+            $set = att_settings($pdo);
+            $nd  = ['actor' => $userName, 'branch' => $outBranch, 'time' => $row['clock_out'], 'dist' => $outDist, 'dir' => 'out', 'secs' => (int)$row['secs']];
+            notify_event($pdo, 'att_out', $nd);
+            if ($outDist !== null && $outDist > $set['fence']) notify_event($pdo, 'att_far', $nd);
+        }
     }
     header('Location: attendance.php?lang=' . urlencode($lang));
     exit;

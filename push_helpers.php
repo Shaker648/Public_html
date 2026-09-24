@@ -24,7 +24,7 @@
 /* ════════════════════════ events ════════════════════════ */
 function notify_events(): array
 {
-    // key => [ar, en, icon, default roles]
+    // key => [ar, en, icon, default roles, (on by default — optional, true)]
     return [
         'car_added'        => ['إضافة سيارة جديدة',          'New car added',              '🚗', ['admin']],
         'shipment_received'=> ['استلام شحنة',                 'Shipment received',          '📦', ['admin']],
@@ -38,6 +38,11 @@ function notify_events(): array
         'sale_returned'    => ['إرجاع سيارة مباعة للمخزون',    'Sold car returned to stock', '⏪', ['admin']],
         'car_edited'       => ['تعديل بيانات سيارة',           'Car details edited',         '✏️', ['admin']],
         'price_changed'    => ['تغيير سعر',                    'Price changed',              '📈', ['admin']],
+        // attendance — [4] = on by default (every clock-in / out would be a lot, so those start off)
+        'att_late'         => ['تأخير في الحضور',              'Late arrival',               '⏰', ['admin']],
+        'att_far'          => ['بصمة بعيدة عن الفرع',          'Punch far from the branch',  '🛑', ['admin']],
+        'att_in'           => ['تسجيل حضور',                   'Clock in',                   '🟢', ['admin'], false],
+        'att_out'          => ['تسجيل انصراف',                 'Clock out',                  '🔵', ['admin'], false],
     ];
 }
 
@@ -116,7 +121,7 @@ function notify_rules(PDO $pdo): array
     foreach (notify_events() as $ev => $meta) {
         $r = is_array($saved[$ev] ?? null) ? $saved[$ev] : null;
         $out[$ev] = [
-            'on'    => $r ? !empty($r['on']) : true,
+            'on'    => $r ? !empty($r['on']) : ($meta[4] ?? true),
             'roles' => $r ? array_values(array_intersect((array)($r['roles'] ?? []), ['admin', 'manager', 'sales'])) : $meta[3],
             'plus'  => $r ? array_values(array_map('intval', (array)($r['plus'] ?? []))) : [],   // extra users
             'minus' => $r ? array_values(array_map('intval', (array)($r['minus'] ?? []))) : [],  // excluded users
@@ -406,6 +411,24 @@ function notify_message(PDO $pdo, string $event, array $d, string $lang): array
             if (!empty($d['customer'])) $body[] = '🏷️ ' . $d['customer'];
             $url = 'prices.php?lang=' . $lang . '&search=' . urlencode((string)($d['model'] ?? ''));
             break;
+        case 'att_in':
+        case 'att_out':
+        case 'att_late':
+        case 'att_far':
+            $who  = (string)($d['actor'] ?? '');
+            $at   = !empty($d['time']) ? date('h:i', strtotime((string)$d['time'])) . ($ar ? (date('A', strtotime((string)$d['time'])) === 'AM' ? ' ص' : ' م') : ' ' . date('A', strtotime((string)$d['time']))) : '';
+            $abr  = push_branch_label($pdo, (string)($d['branch'] ?? ''), $lang);
+            $url  = 'attendance_admin.php?lang=' . $lang;
+            if ($event === 'att_in')   $title = $ev[2] . ' ' . $who . ($ar ? ' سجّل حضور' : ' clocked in');
+            if ($event === 'att_out')  $title = $ev[2] . ' ' . $who . ($ar ? ' سجّل انصراف' : ' clocked out');
+            if ($event === 'att_late') $title = $ev[2] . ' ' . $who . ($ar ? ' متأخر ' . (int)$d['late'] . ' دقيقة' : ' is ' . (int)$d['late'] . ' min late');
+            if ($event === 'att_far')  $title = $ev[2] . ' ' . ($ar ? 'بصمة بعيدة: ' : 'Far punch: ') . $who;
+            if ($event === 'att_far')  $body[] = (($d['dir'] ?? 'in') === 'out' ? ($ar ? 'انصراف' : 'Clock-out') : ($ar ? 'حضور' : 'Clock-in')) . ($ar ? ' على بعد ' . (int)$d['dist'] . ' متر من ' . $abr : ' ' . (int)$d['dist'] . ' m from ' . $abr);
+            $st   = !empty($d['start']) ? date('h:i', strtotime('2000-01-01 ' . $d['start'])) . ($ar ? (date('A', strtotime('2000-01-01 ' . $d['start'])) === 'AM' ? ' ص' : ' م') : ' ' . date('A', strtotime('2000-01-01 ' . $d['start']))) : '';
+            if ($event === 'att_late') $body[] = ($ar ? 'حضر ' . $at . ' · الموعد ' . $st : 'Arrived ' . $at . ' · start ' . $st) . ($abr !== '' ? ' · 📍 ' . $abr : '');
+            if ($event === 'att_in' || $event === 'att_far') $body[] = '🕐 ' . $at . ($abr !== '' && $event === 'att_in' ? ' · 📍 ' . $abr : '');
+            if ($event === 'att_out')  $body[] = '🕐 ' . $at . (isset($d['secs']) ? ' · ⏱️ ' . sprintf($ar ? '%dس %02dد' : '%dh %02dm', intdiv((int)$d['secs'], 3600), intdiv((int)$d['secs'] % 3600, 60)) : '') . ($abr !== '' ? ' · 📍 ' . $abr : '');
+            break;
         case 'test':
             $title = '🔔 ' . ($ar ? 'تجربة إشعارات First 1 Car' : 'First 1 Car test notification');
             $body[] = $ar ? 'الإشعارات تعمل على هذا الجهاز ✅' : 'Notifications work on this device ✅';
@@ -414,7 +437,7 @@ function notify_message(PDO $pdo, string $event, array $d, string $lang): array
         default:
             $title = $ev[2] . ' ' . ($ar ? $ev[0] : $ev[1]);
     }
-    if ($by !== '' && $event !== 'test') $body[] = ($ar ? '✍️ بواسطة ' : '✍️ by ') . $by;
+    if ($by !== '' && $event !== 'test' && strpos($event, 'att_') !== 0) $body[] = ($ar ? '✍️ بواسطة ' : '✍️ by ') . $by;
     return [
         'title' => mb_substr($title, 0, 120),
         'body'  => mb_substr(implode("\n", array_filter($body, fn($x) => trim((string)$x) !== '')), 0, 400),
