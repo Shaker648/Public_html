@@ -9,9 +9,32 @@
 
 require 'auth.php';
 require 'config.php';
-require_once 'attendance_helpers.php';
 
 ini_set('display_errors', 0);
+
+// If anything goes wrong, show the admin exactly what (this page is admin-only) instead of a blank page.
+function att_admin_problem(string $msg): void
+{
+    if (!headers_sent()) { http_response_code(500); header('Content-Type: text/html; charset=utf-8'); }
+    echo '<div style="font-family:Segoe UI,Tahoma,Arial,sans-serif;max-width:640px;margin:40px auto;padding:20px 22px;border-radius:16px;background:#1e1b2e;border:1px solid #ef4444;color:#fecaca;direction:ltr;text-align:left">'
+       . '<div style="font-size:18px;font-weight:800;color:#fff;margin-bottom:6px" dir="rtl">⚠️ صفحة سجل البصمة لم تفتح</div>'
+       . '<div style="font-size:13px;color:#fca5a5;margin-bottom:12px" dir="rtl">انسخ هذه الرسالة وأرسلها كما هي:</div>'
+       . '<pre style="white-space:pre-wrap;word-break:break-word;background:#0f0d1a;padding:12px;border-radius:10px;font-size:12.5px;color:#fde68a">' . htmlspecialchars($msg) . '</pre>'
+       . '<a href="dashboard.php" style="color:#a5b4fc;font-weight:700">← Dashboard</a></div>';
+}
+register_shutdown_function(function () {
+    $e = error_get_last();
+    if ($e && in_array($e['type'], [E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR], true)) {
+        att_admin_problem($e['message'] . "\n" . basename($e['file']) . ':' . $e['line'] . "\nPHP " . PHP_VERSION);
+    }
+});
+foreach (['attendance_helpers.php', 'push_helpers.php'] as $need) {
+    if (!is_file(__DIR__ . '/' . $need)) { att_admin_problem("Missing file: $need\nUpload it to the same folder as attendance_admin.php\nPHP " . PHP_VERSION); exit; }
+}
+require_once __DIR__ . '/attendance_helpers.php';
+foreach (['att_settings', 'push_setting', 'push_setting_set', 'push_tables'] as $fn) {
+    if (!function_exists($fn)) { att_admin_problem("Old file: $fn() not found — upload the new push_helpers.php and attendance_helpers.php\nPHP " . PHP_VERSION); exit; }
+}
 
 $lang = $_GET['lang'] ?? 'ar';
 if (!in_array($lang, ['ar','en'])) $lang = 'ar';
@@ -76,9 +99,16 @@ $qs = function (array $over = []) use ($lang, $filterFrom, $filterTo, $filterBra
     return '?' . http_build_query(array_filter($q, fn($v) => $v !== '' && $v !== null));
 };
 
+// some older databases don't have every column yet — work with what is there
+$cols   = array_flip($pdo->query("SHOW COLUMNS FROM attendance_logs")->fetchAll(PDO::FETCH_COLUMN));
+$hasOut = isset($cols['out_branch_name']);
+
 $where  = ["DATE(a.clock_in) BETWEEN ? AND ?"];
 $params = [$filterFrom, $filterTo];
-if ($filterBranch !== '') { $where[] = "(a.branch_name = ? OR a.out_branch_name = ?)"; $params[] = $filterBranch; $params[] = $filterBranch; }
+if ($filterBranch !== '') {
+    if ($hasOut) { $where[] = "(a.branch_name = ? OR a.out_branch_name = ?)"; $params[] = $filterBranch; $params[] = $filterBranch; }
+    else         { $where[] = "a.branch_name = ?"; $params[] = $filterBranch; }
+}
 if ($filterUser !== '')   { $where[] = "a.user_id = ?";     $params[] = (int)$filterUser; }
 $whereSql = implode(' AND ', $where);
 
@@ -90,14 +120,16 @@ $pdo->exec(
      WHERE status = 'active' AND clock_in < DATE_SUB(NOW(), INTERVAL 14 HOUR)"
 );
 
+$outSel  = $hasOut ? "b2.name_ar AS out_ar, b2.name_en AS out_en," : "NULL AS out_ar, NULL AS out_en,";
+$outJoin = $hasOut ? "LEFT JOIN branches b2 ON b2.name = a.out_branch_name" : "";
 $sql = "SELECT a.*, u.username, u.role AS user_role,
                b.name_ar AS branch_ar, b.name_en AS branch_en,
-               b2.name_ar AS out_ar, b2.name_en AS out_en,
+               $outSel
                TIMESTAMPDIFF(SECOND, a.clock_in, COALESCE(a.clock_out, NOW())) AS dur_secs
         FROM attendance_logs a
         LEFT JOIN users u ON u.id = a.user_id
         LEFT JOIN branches b ON b.name = a.branch_name
-        LEFT JOIN branches b2 ON b2.name = a.out_branch_name
+        $outJoin
         WHERE $whereSql
         ORDER BY a.clock_in DESC";
 $stmt = $pdo->prepare($sql);
@@ -115,6 +147,8 @@ $people = [];   // user_id => ['name','role','total','sessions'=>[], 'active'=>b
 $grandTotal = 0;
 $autoCount = 0; $lateCount = 0; $issueCount = 0;
 foreach ($logs as $log) {
+    $log += ['in_dist_m' => null, 'out_dist_m' => null, 'out_branch_name' => null, 'auto_closed' => 0, 'in_loc_denied' => 0, 'out_loc_denied' => 0,
+             'clock_in_lat' => null, 'clock_in_lng' => null, 'clock_out_lat' => null, 'clock_out_lng' => null];
     $uid  = $log['user_id'];
     $day  = substr((string)$log['clock_in'], 0, 10);
     $secs = max(0, (int)$log['dur_secs']);
