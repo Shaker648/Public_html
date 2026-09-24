@@ -158,6 +158,7 @@ $NT = $ntLang === 'ar' ? [
   document.addEventListener('keydown', e => { if (e.key === 'Escape' && ov.classList.contains('on')) closeReader(); });
 
   async function check(first) {
+    if (document.getElementById('f1cWelcome')) { setTimeout(() => check(first), 1500); return; }   // the "what's new" welcome is on screen
     let r;
     try {
       const u = 'notify_feed.php?action=list' + (first && openMsg ? '&msg=' + openMsg : '');

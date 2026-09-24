@@ -140,6 +140,7 @@ $NP = $lang === 'ar' ? [
   }
 
   async function check() {
+    if (document.getElementById('f1cWelcome')) { setTimeout(check, 1500); return; }   // wait for the "what's new" welcome
     // quietly re-link this phone if it had allowed notifications before (e.g. after a logout or a renewal)
     try { await F1Push.heal(CSRF, LANG); } catch (e) {}
     const s = await F1Push.state();
