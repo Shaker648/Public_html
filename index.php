@@ -650,7 +650,7 @@ html[dir=rtl] .input-wrap input{padding:1.15rem 3.1rem .35rem 3.2rem;text-align:
 
           <div class="extras">
             <label class="switch">
-              <input type="checkbox" name="remember" value="1"><span class="sw"></span><?= htmlspecialchars($T['remember']) ?>
+              <input type="checkbox" name="remember" value="1" checked><span class="sw"></span><?= htmlspecialchars($T['remember']) ?>
             </label>
             <button type="button" class="forgot-link" id="forgotBtn"><?= htmlspecialchars($T['forgot']) ?></button>
           </div>

@@ -140,6 +140,8 @@ $NP = $lang === 'ar' ? [
   }
 
   async function check() {
+    // quietly re-link this phone if it had allowed notifications before (e.g. after a logout or a renewal)
+    try { await F1Push.heal(CSRF, LANG); } catch (e) {}
     const s = await F1Push.state();
     current = s;
     // nothing this phone can do (no https / unsupported / old iOS / in-app browser) → stay quiet

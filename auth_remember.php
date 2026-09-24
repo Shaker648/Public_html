@@ -21,7 +21,7 @@
 
 const F1C_REMEMBER_COOKIE = 'f1c_remember';
 const F1C_LASTUSER_COOKIE = 'f1c_last_user';
-const F1C_REMEMBER_DAYS   = 30;
+const F1C_REMEMBER_DAYS   = 90;
 const F1C_MAX_FAILS_USER  = 5;    // per username, inside the window
 const F1C_MAX_FAILS_IP    = 20;   // per device/IP, inside the window
 const F1C_LOCK_MINUTES    = 15;

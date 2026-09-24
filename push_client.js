@@ -5,6 +5,9 @@
  *   F1Push.state()             → what this phone can do right now
  *   F1Push.enable(csrf, lang)  → ask permission, subscribe, save, send a test
  *   F1Push.disable(csrf)       → unsubscribe this phone
+ *   F1Push.heal(csrf, lang)    → silent repair on every visit: if this phone
+ *                                already allowed notifications but its link is
+ *                                missing or unknown to the server, fix it
  *
  * iPhone/iPad: notifications only work in the app opened from the Home Screen
  * (iOS 16.4+). Android: work in Chrome / Edge / Samsung Internet directly.
@@ -77,7 +80,40 @@
     if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key });
     const r = await post({ action: 'save', csrf, lang, test: 1, sub: sub.toJSON() });
     if (!r || !r.ok) throw new Error(r && r.error || 'save_failed');
+    tellWorker(sub.endpoint);
     return r;
+  }
+
+  // the service worker keeps a copy of this phone's link (used if the browser renews it later)
+  function tellWorker(endpoint) {
+    navigator.serviceWorker.ready.then((r) => { if (r.active) r.active.postMessage({ type: 'f1c-endpoint', endpoint }); }).catch(() => {});
+  }
+
+  /* silent: no permission question, no test notification */
+  async function heal(csrf, lang) {
+    if (!supported || !window.isSecureContext || Notification.permission !== 'granted') return { state: 'skip' };
+    if (isIOS && !standalone) return { state: 'skip' };
+    const reg = await registration();
+    const k = await post({ action: 'key' });
+    if (!k || !k.ok) return { state: 'error' };
+    const key = b64uToBytes(k.key);
+    let sub = await reg.pushManager.getSubscription();
+    if (sub && sub.options && sub.options.applicationServerKey) {
+      const cur = new Uint8Array(sub.options.applicationServerKey);
+      if (cur.length !== key.length || cur.some((v, i) => v !== key[i])) { await sub.unsubscribe().catch(() => {}); sub = null; }
+    }
+    if (!sub) {
+      try { sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key }); }
+      catch (e) { return { state: 'needs_tap' }; }   // some phones only allow this from a tap — the prompt card handles it
+    }
+    const st = await post({ action: 'status', endpoint: sub.endpoint });
+    let healed = false;
+    if (!st || !st.known) {
+      const r = await post({ action: 'save', csrf, lang, sub: sub.toJSON() });
+      healed = !!(r && r.ok);
+    }
+    tellWorker(sub.endpoint);
+    return { state: 'ok', healed };
   }
 
   async function disable(csrf) {
@@ -92,6 +128,6 @@
 
   function test(csrf, lang, id) { return post({ action: 'test', csrf, lang, id: id || 0 }); }
 
-  window.F1Push = { state, enable, disable, test, registration, isIOS, isAndroid, standalone, supported };
+  window.F1Push = { state, enable, disable, test, heal, registration, isIOS, isAndroid, standalone, supported };
   if (supported) registration().catch(() => {});
 })();
