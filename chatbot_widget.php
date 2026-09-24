@@ -24,261 +24,211 @@ $__isAr = ($__lang === 'ar');
 $__side = 'right';   // always on the right — notifications live on the left
 ?>
 <style>
-/* ═════════ THE ROBOT ═════════ */
+/* ═════════ THE ROBOT v5 — chrome body, holographic visor, hover ring ═════════ */
 #f1c-chat-bubble {
     position: fixed;
-    bottom: calc(76px + env(safe-area-inset-bottom, 0px) + 14px);
-    <?= $__side ?>: 16px;
-    width: 78px; height: 122px;
+    bottom: calc(76px + env(safe-area-inset-bottom, 0px) + 10px);
+    <?= $__side ?>: 12px;
+    width: 88px; height: 138px;
     cursor: pointer; z-index: 998;
-    perspective: 520px;
+    perspective: 560px;
     -webkit-tap-highlight-color: transparent;
     will-change: transform;
+    --ex: 0px; --ey: 0px;
 }
+#f1c-chat-bubble.f1c-hidden { display: none; }
 #f1c-chat-bubble.f1c-flying .f1c-bot-body { animation-play-state: paused; transform: rotateZ(var(--f1c-tilt, 0deg)); transition: transform .4s; }
 #f1c-chat-bubble.f1c-flying .f1c-jet::after { animation-duration: .12s; height: 26px; filter: brightness(1.5) saturate(1.3); }
-#f1c-chat-bubble.f1c-flying .f1c-bot-shadow { opacity: 0; }
-#f1c-chat-bubble.f1c-hidden { display: none; }
+#f1c-chat-bubble.f1c-flying .f1c-bot-shadow { opacity: 0; transform: scale(.5); }
+#f1c-chat-bubble.f1c-flying .f1c-aura { opacity: .35; }
+
+/* soft aura behind him */
+.f1c-aura {
+    position: absolute; left: 50%; top: 18px; width: 110px; height: 110px; margin-left: -55px; border-radius: 50%;
+    background: radial-gradient(circle, rgba(56,189,248,.34), rgba(168,85,247,.18) 45%, transparent 70%);
+    filter: blur(6px); pointer-events: none; transition: opacity .4s;
+    animation: f1cAura 4.5s ease-in-out infinite;
+}
+@keyframes f1cAura { 50% { transform: scale(1.12); opacity: .7; } }
 
 .f1c-bot-body {
-    position: relative; width: 60px; height: 62px; margin: 0 auto;
+    position: relative; width: 66px; margin: 12px auto 0;
     transform-style: preserve-3d;
-    animation: f1cFloat 3.4s ease-in-out infinite;
+    animation: f1cFloat 3.6s ease-in-out infinite;
+    transition: transform .25s cubic-bezier(.2,1.4,.4,1);
 }
 @keyframes f1cFloat {
-    0%, 100% { transform: translateY(0)    rotateY(-8deg) rotateZ(-1.5deg); }
-    50%      { transform: translateY(-8px) rotateY(8deg)  rotateZ(1.5deg); }
+    0%, 100% { transform: translateY(0)    rotateY(-10deg) rotateZ(-1.5deg); }
+    50%      { transform: translateY(-9px) rotateY(10deg)  rotateZ(1.5deg); }
 }
+@media (hover: hover) { #f1c-chat-bubble:hover .f1c-bot-body { animation-play-state: paused; transform: translateY(-6px) scale(1.07) rotateY(0); } }
 #f1c-chat-bubble:active .f1c-bot-body { animation-play-state: paused; transform: scale(.92); }
 
-/* antenna */
-.f1c-bot-ant {
-    position: absolute; top: -11px; left: 50%; margin-left: -1.5px;
-    width: 3px; height: 12px; background: #94a3b8; border-radius: 2px;
-}
+/* antenna with an orbiting spark */
+.f1c-bot-ant { position: absolute; top: -13px; left: 50%; width: 3px; height: 13px; margin-left: -1.5px; border-radius: 2px; background: linear-gradient(#cbd5e1, #64748b); }
 .f1c-bot-ant::after {
-    content: ''; position: absolute; top: -8px; left: 50%;
-    width: 9px; height: 9px; margin-left: -4.5px; border-radius: 50%;
-    background: #38bdf8;
-    animation: f1cAntGlow 1.8s ease-in-out infinite;
+    content: ''; position: absolute; top: -9px; left: 50%; width: 11px; height: 11px; margin-left: -5.5px; border-radius: 50%;
+    background: radial-gradient(circle at 35% 30%, #fff 0 18%, #7dd3fc 22%, #a855f7 100%);
+    animation: f1cAntGlow 2s ease-in-out infinite;
 }
-@keyframes f1cAntGlow {
-    0%, 100% { box-shadow: 0 0 5px #38bdf8;  background: #38bdf8; }
-    50%      { box-shadow: 0 0 14px #a855f7; background: #a855f7; }
-}
-/* expanding signal ring from the antenna tip */
-.f1c-ping {
-    position: absolute; top: -12px; left: 50%; width: 16px; height: 16px;
-    margin-left: -8px; border-radius: 50%;
-    border: 1.5px solid rgba(56,189,248,.8);
-    animation: f1cPing 3.2s ease-out infinite;
-    pointer-events: none;
-}
-@keyframes f1cPing {
-    0%, 55% { transform: scale(.25); opacity: 0; }
-    60%     { opacity: .8; }
-    100%    { transform: scale(2.1); opacity: 0; }
-}
+@keyframes f1cAntGlow { 0%, 100% { box-shadow: 0 0 6px #38bdf8, 0 0 14px rgba(56,189,248,.6); } 50% { box-shadow: 0 0 8px #a855f7, 0 0 22px rgba(168,85,247,.8); } }
+.f1c-orbit { position: absolute; top: -9px; left: 50%; width: 26px; height: 10px; margin-left: -13px; animation: f1cOrbit 2.4s linear infinite; pointer-events: none; }
+.f1c-orbit::before { content: ''; position: absolute; top: 3px; left: 0; width: 4px; height: 4px; border-radius: 50%; background: #fde047; box-shadow: 0 0 6px #fde047; }
+@keyframes f1cOrbit { 0% { transform: rotateY(0) rotateZ(-12deg); } 100% { transform: rotateY(360deg) rotateZ(-12deg); } }
+.f1c-ping { position: absolute; top: -12px; left: 50%; width: 18px; height: 18px; margin-left: -9px; border-radius: 50%; border: 1.5px solid rgba(56,189,248,.8); animation: f1cPing 3.4s ease-out infinite; pointer-events: none; }
+@keyframes f1cPing { 0%, 55% { transform: scale(.25); opacity: 0; } 60% { opacity: .8; } 100% { transform: scale(2.3); opacity: 0; } }
 
-/* head */
+/* chrome head */
 .f1c-bot-head {
-    position: relative; width: 60px; height: 48px;
-    background: linear-gradient(145deg, #e2e8f0, #8ea0b8);
-    border-radius: 17px;
-    box-shadow: inset 0 -7px 12px rgba(2,6,23,.30),
-                inset 0 3px 6px rgba(255,255,255,.75),
-                0 10px 26px rgba(37,99,235,.40);
+    position: relative; width: 66px; height: 54px; border-radius: 23px 23px 19px 19px;
+    background: linear-gradient(160deg, #ffffff 0%, #eef2f8 30%, #c3cedd 68%, #8c9db6 100%);
+    box-shadow: inset 0 -8px 14px rgba(2,6,23,.28), inset 0 3px 6px rgba(255,255,255,.95),
+                0 0 0 1px rgba(255,255,255,.55), 0 14px 30px rgba(56,189,248,.32);
 }
-/* ears */
-.f1c-bot-head::before, .f1c-bot-head::after {
-    content: ''; position: absolute; top: 15px;
-    width: 6px; height: 17px; background: linear-gradient(145deg,#cbd5e1,#7b8ea6);
-    border-radius: 4px;
+.f1c-bot-head::before { /* iridescent rim */
+    content: ''; position: absolute; inset: -1px; border-radius: inherit; pointer-events: none;
+    background: linear-gradient(120deg, rgba(56,189,248,.55), transparent 30%, transparent 70%, rgba(168,85,247,.55));
+    -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor; mask-composite: exclude; padding: 1.5px;
 }
-.f1c-bot-head::before { left: -7px; }
-.f1c-bot-head::after  { right: -7px; }
+.f1c-ear { position: absolute; top: 17px; width: 7px; height: 20px; border-radius: 4px; background: linear-gradient(160deg, #e2e8f0, #7b8ea6); }
+.f1c-ear::after { content: ''; position: absolute; top: 7px; left: 50%; width: 4px; height: 6px; margin-left: -2px; border-radius: 2px; background: #38bdf8; box-shadow: 0 0 6px #38bdf8; animation: f1cAntGlow 2s ease-in-out infinite reverse; }
+.f1c-ear.l { left: -7px; } .f1c-ear.r { right: -7px; }
+.f1c-bot-glare { position: absolute; top: 5px; left: 10px; width: 20px; height: 8px; border-radius: 50%; background: linear-gradient(120deg, rgba(255,255,255,1), rgba(255,255,255,0)); filter: blur(.5px); pointer-events: none; z-index: 2; }
 
-/* face screen */
+/* holographic visor */
 .f1c-bot-face {
-    position: absolute; inset: 8px 8px 9px;
-    background: radial-gradient(circle at 50% 20%, #16233f, #0b1120);
-    border-radius: 11px;
+    position: absolute; inset: 9px 8px 10px; border-radius: 14px; overflow: hidden;
+    background: radial-gradient(120% 90% at 50% 0%, #17305c, #0a1430 55%, #050a1c);
+    box-shadow: inset 0 0 12px rgba(56,189,248,.35), inset 0 -3px 8px rgba(168,85,247,.25);
     display: flex; align-items: center; justify-content: center;
-    overflow: hidden;
 }
-/* holographic light sweep across the visor */
-.f1c-bot-face::before {
-    content: ''; position: absolute; top: -60%; left: -40%;
-    width: 34%; height: 220%;
-    background: linear-gradient(115deg, transparent, rgba(148,220,255,.22), transparent);
-    transform: rotate(0deg);
+.f1c-bot-face::before { /* light sweep */
+    content: ''; position: absolute; top: -60%; left: -45%; width: 34%; height: 220%;
+    background: linear-gradient(115deg, transparent, rgba(148,220,255,.28), transparent);
     animation: f1cVisor 5.5s ease-in-out infinite;
 }
-@keyframes f1cVisor {
-    0%, 55%  { left: -45%; }
-    75%, 100% { left: 115%; }
+@keyframes f1cVisor { 0%, 55% { left: -45%; } 75%, 100% { left: 115%; } }
+.f1c-bot-face::after { /* scanlines */
+    content: ''; position: absolute; inset: 0; pointer-events: none;
+    background: repeating-linear-gradient(180deg, rgba(56,189,248,.07) 0 1px, transparent 1px 3px);
 }
-/* eyes look around while still blinking */
-.f1c-eyes { display: flex; gap: 10px; animation: f1cLook 8.5s ease-in-out infinite; }
-@keyframes f1cLook {
-    0%, 34%, 100% { transform: translateX(0); }
-    40%, 52%      { transform: translateX(3.5px); }
-    58%, 60%      { transform: translateX(0); }
-    72%, 84%      { transform: translateX(-3.5px); }
-}
+.f1c-eyes { position: relative; z-index: 1; display: flex; gap: 11px; margin-top: -4px; transform: translate(var(--ex), var(--ey)); transition: transform .18s ease-out; }
 .f1c-bot-eye {
-    width: 9px; height: 13px; border-radius: 4.5px;
-    background: #38bdf8; box-shadow: 0 0 9px #38bdf8;
-    animation: f1cBlink 4.4s infinite;
+    position: relative; width: 11px; height: 15px; border-radius: 6px;
+    background: radial-gradient(circle at 35% 28%, #fff 0 16%, #bae6fd 19%, #38bdf8 58%, #0284c7 100%);
+    box-shadow: 0 0 8px #38bdf8, 0 0 18px rgba(56,189,248,.55);
+    animation: f1cBlink 4.6s infinite; transition: height .2s, border-radius .2s;
 }
-.f1c-bot-eye.f1c-e2 { animation-delay: .06s; }
-/* soft glow cheeks */
-.f1c-cheek {
-    position: absolute; bottom: 12px; width: 7px; height: 4px;
-    border-radius: 50%; background: rgba(168,85,247,.55); filter: blur(1.5px);
-}
-.f1c-cheek.f1c-cl { left: 7px; }
-.f1c-cheek.f1c-cr { right: 7px; }
-/* glossy highlight on the head shell */
-.f1c-bot-glare {
-    position: absolute; top: 4px; left: 8px; width: 18px; height: 8px;
-    border-radius: 50%;
-    background: linear-gradient(120deg, rgba(255,255,255,.95), rgba(255,255,255,0));
-    filter: blur(.6px); pointer-events: none;
-}
-@keyframes f1cBlink {
-    0%, 90%, 100% { transform: scaleY(1); }
-    93%           { transform: scaleY(.08); }
-    96%           { transform: scaleY(1); }
-}
-/* smile */
-.f1c-bot-face::after {
-    content: ''; position: absolute; bottom: 6px; left: 50%;
-    width: 14px; height: 6px; margin-left: -7px;
-    border-bottom: 2.5px solid #38bdf8; border-radius: 0 0 10px 10px;
-    box-shadow: 0 2px 6px rgba(56,189,248,.6);
-}
+.f1c-bot-eye.f1c-e2 { animation-delay: .07s; }
+@keyframes f1cBlink { 0%, 91%, 100% { transform: scaleY(1); } 94% { transform: scaleY(.08); } 97% { transform: scaleY(1); } }
+.f1c-mouth { position: absolute; z-index: 1; bottom: 5px; left: 50%; width: 14px; height: 6px; margin-left: -7px; border-bottom: 2.5px solid #38bdf8; border-radius: 0 0 10px 10px; filter: drop-shadow(0 0 4px rgba(56,189,248,.8)); transition: all .25s; }
+.f1c-cheek { position: absolute; z-index: 1; bottom: 9px; width: 8px; height: 4px; border-radius: 50%; background: rgba(244,114,182,.6); filter: blur(1.5px); opacity: .7; transition: opacity .3s; }
+.f1c-cheek.f1c-cl { left: 6px; } .f1c-cheek.f1c-cr { right: 6px; }
 
-/* ── white t-shirt, full-chest First 1 Car logo print ── */
+/* moods */
+#f1c-chat-bubble.f1c-happy .f1c-bot-eye, #f1c-chat-bubble:hover .f1c-bot-eye {
+    height: 8px; margin-top: 4px; background: transparent; border-top: 3px solid #7dd3fc; border-radius: 12px 12px 0 0;
+    box-shadow: none; filter: drop-shadow(0 0 4px #38bdf8); animation: none;
+}
+#f1c-chat-bubble.f1c-happy .f1c-mouth, #f1c-chat-bubble:hover .f1c-mouth { width: 16px; height: 8px; margin-left: -8px; border: 0; background: linear-gradient(#38bdf8, #0ea5e9); border-radius: 2px 2px 10px 10px; }
+#f1c-chat-bubble.f1c-happy .f1c-cheek, #f1c-chat-bubble:hover .f1c-cheek { opacity: 1; }
+#f1c-chat-bubble.f1c-love .f1c-bot-eye { background: transparent; box-shadow: none; animation: f1cBeat .6s ease-in-out infinite; }
+#f1c-chat-bubble.f1c-love .f1c-bot-eye::before { content: '♥'; position: absolute; inset: -3px -2px; display: grid; place-items: center; font-size: 15px; line-height: 1; color: #f472b6; text-shadow: 0 0 8px #f472b6; }
+@keyframes f1cBeat { 50% { transform: scale(1.25); } }
+#f1c-chat-bubble.f1c-sleep .f1c-bot-eye { animation: none; height: 3px; margin-top: 6px; background: #64748b; box-shadow: none; border-radius: 3px; }
+#f1c-chat-bubble.f1c-sleep .f1c-mouth { width: 8px; margin-left: -4px; border-bottom-color: #64748b; filter: none; border-radius: 0; }
+#f1c-chat-bubble.f1c-sleep .f1c-bot-ant::after { animation: none; opacity: .35; box-shadow: none; }
+#f1c-chat-bubble.f1c-sleep .f1c-jet::after { opacity: .18; animation-duration: 1.4s; }
+#f1c-chat-bubble.f1c-sleep .f1c-bot-body { animation-duration: 6.5s; }
+#f1c-chat-bubble.f1c-sleep .f1c-orbit { animation-play-state: paused; opacity: .3; }
+
+/* neck + torso + arms */
+.f1c-neck { width: 20px; height: 5px; margin: -1px auto 0; border-radius: 0 0 6px 6px; background: linear-gradient(#475569, #1e293b); box-shadow: 0 0 6px rgba(56,189,248,.4); }
+.f1c-torso-wrap { position: relative; width: 54px; margin: 0 auto; }
 .f1c-bot-torso {
-    position: relative; width: 52px; height: 34px; margin: 2px auto 0;
-    background: linear-gradient(160deg, #ffffff, #dbe3ee 70%, #b9c6d8);
-    border-radius: 8px 8px 12px 12px;
-    box-shadow: inset 0 -6px 9px rgba(2,6,23,.22),
-                inset 0 3px 5px rgba(255,255,255,.9),
-                0 6px 16px rgba(15,23,42,.35);
+    position: relative; width: 54px; height: 38px; margin: 0 auto;
+    background: linear-gradient(160deg, #ffffff, #e2e8f0 60%, #b6c3d6);
+    border-radius: 10px 10px 16px 16px; overflow: hidden;
+    box-shadow: inset 0 -6px 10px rgba(2,6,23,.22), inset 0 3px 5px rgba(255,255,255,.95), 0 8px 18px rgba(15,23,42,.4);
     display: flex; align-items: center; justify-content: center;
-    overflow: hidden;
 }
-/* collar */
-.f1c-bot-collar {
-    position: absolute; top: 0; left: 50%; width: 22px; height: 6px;
-    margin-left: -11px; border-radius: 0 0 10px 10px;
-    background: #16a34a;
-    box-shadow: 0 1px 3px rgba(2,6,23,.25);
+.f1c-bot-torso::after { /* neon belt */
+    content: ''; position: absolute; left: 6px; right: 6px; bottom: 4px; height: 3px; border-radius: 3px;
+    background: linear-gradient(90deg, #22c55e, #38bdf8, #a855f7); box-shadow: 0 0 6px rgba(56,189,248,.8);
+    animation: f1cBelt 2.6s linear infinite; background-size: 200% 100%;
 }
-/* sleeves */
-.f1c-bot-sleeve {
-    position: absolute; top: 3px; width: 11px; height: 17px;
-    background: linear-gradient(160deg, #ffffff, #c3cfdd);
-    border-radius: 6px;
-    box-shadow: inset 0 -3px 5px rgba(2,6,23,.22);
-    z-index: -1;
-}
-.f1c-bot-sleeve.f1c-sl { <?= $__isAr ? 'right' : 'left' ?>: 3px;  transform: rotate(<?= $__isAr ? '-16deg' : '16deg' ?>); }
-.f1c-bot-sleeve.f1c-sr { <?= $__isAr ? 'left' : 'right' ?>: 3px; transform: rotate(<?= $__isAr ? '16deg' : '-16deg' ?>); }
-/* FULL-CHEST logo print — like a real printed tee */
+@keyframes f1cBelt { to { background-position: -200% 0; } }
 .f1c-bot-logo {
-    width: 86%; height: 66%; margin-top: 5px;
-    object-fit: contain;
-    background: #0b1120;           /* unify with the logo's own dark bg  */
-    border-radius: 6px;            /* → reads as a printed chest patch   */
-    padding: 1.5px;
+    width: 84%; height: 60%; margin-top: -3px; object-fit: contain;
+    background: #0b1120; border-radius: 6px; padding: 1.5px;
     box-shadow: 0 1px 3px rgba(2,6,23,.35), inset 0 0 0 1px rgba(255,255,255,.14);
 }
-.f1c-bot-logo-txt {
-    display: none; align-items: center; justify-content: center;
-    width: 84%; height: 70%; margin-top: 4px;
-    color: #16a34a; font-size: 11px; font-weight: 900; letter-spacing: .5px;
-}
+.f1c-bot-logo-txt { display: none; align-items: center; justify-content: center; width: 84%; height: 60%; color: #16a34a; font-size: 10px; font-weight: 900; letter-spacing: .5px; }
+.f1c-arm { position: absolute; top: 3px; width: 11px; height: 24px; border-radius: 6px; transform-origin: 50% 3px;
+    background: linear-gradient(160deg, #ffffff, #b9c6d8); box-shadow: inset 0 -3px 5px rgba(2,6,23,.22); animation: f1cArm 3.6s ease-in-out infinite; }
+.f1c-arm::after { content: ''; position: absolute; bottom: -4px; left: 50%; width: 10px; height: 10px; margin-left: -5px; border-radius: 50%;
+    background: radial-gradient(circle at 35% 30%, #fff, #94a3b8); box-shadow: 0 2px 4px rgba(2,6,23,.3); }
+.f1c-arm.l { left: -9px; transform: rotate(14deg); } .f1c-arm.r { right: -9px; transform: rotate(-14deg); animation-delay: -1.8s; }
+@keyframes f1cArm { 50% { rotate: 6deg; } }
+#f1c-chat-bubble.f1c-wave .f1c-arm.r { z-index: 3; animation: f1cArmWave .42s ease-in-out 4 alternate; }
+@keyframes f1cArmWave { from { transform: rotate(-175deg); rotate: 0deg; } to { transform: rotate(-135deg); rotate: 0deg; } }
+#f1c-chat-bubble.f1c-wave .f1c-arm.l { animation-play-state: paused; }
 
-/* ── jet thrusters + flames ── */
-.f1c-bot-jets { display: flex; justify-content: center; gap: 12px; margin-top: 1px; height: 26px; }
-.f1c-jet {
-    position: relative; width: 9px; height: 8px;
-    background: linear-gradient(145deg, #cbd5e1, #64748b);
-    border-radius: 0 0 4px 4px;
-}
-.f1c-jet::after {          /* the flame */
-    content: ''; position: absolute; top: 8px; left: 50%;
-    width: 8px; height: 15px; margin-left: -4px;
+/* thrusters */
+.f1c-bot-jets { display: flex; justify-content: center; gap: 14px; margin-top: 1px; height: 22px; }
+.f1c-jet { position: relative; width: 9px; height: 7px; background: linear-gradient(145deg, #cbd5e1, #64748b); border-radius: 0 0 4px 4px; }
+.f1c-jet::after {
+    content: ''; position: absolute; top: 7px; left: 50%; width: 8px; height: 14px; margin-left: -4px;
     background: linear-gradient(180deg, #a855f7, #38bdf8 45%, rgba(56,189,248,0));
     border-radius: 50% 50% 50% 50% / 20% 20% 80% 80%;
     filter: blur(.4px) drop-shadow(0 3px 7px rgba(56,189,248,.7));
-    transform-origin: top center;
-    animation: f1cFlame .22s ease-in-out infinite alternate;
+    transform-origin: top center; animation: f1cFlame .22s ease-in-out infinite alternate;
 }
 .f1c-jet.f1c-j2::after { animation-delay: .1s; }
-@keyframes f1cFlame {
-    from { transform: scaleY(.75) scaleX(.9);  opacity: .8; }
-    to   { transform: scaleY(1.15) scaleX(1.05); opacity: 1; }
-}
+@keyframes f1cFlame { from { transform: scaleY(.75) scaleX(.9); opacity: .8; } to { transform: scaleY(1.15) scaleX(1.05); opacity: 1; } }
 
-/* chest */
-.f1c-bot-chest {
-    position: absolute; bottom: 0; left: 50%; margin-left: -14px;
-    width: 28px; height: 12px;
-    background: linear-gradient(145deg, #cbd5e1, #7b8ea6);
-    border-radius: 0 0 9px 9px;
-    box-shadow: inset 0 -3px 5px rgba(2,6,23,.35);
-}
-.f1c-bot-chest::after {
-    content: ''; position: absolute; top: 3px; left: 50%; margin-left: -3px;
-    width: 6px; height: 6px; border-radius: 50%;
-    background: #a855f7; box-shadow: 0 0 6px #a855f7;
-    animation: f1cAntGlow 1.8s ease-in-out infinite reverse;
-}
-
-/* floating shadow under the robot */
+/* neon hover ring he floats over */
 .f1c-bot-shadow {
-    width: 48px; height: 13px; margin: 5px auto 0;
-    border-radius: 50%;
-    border: 1.5px solid rgba(56,189,248,.45);
-    background: radial-gradient(ellipse at center, rgba(56,189,248,.28), rgba(168,85,247,.10) 55%, transparent 75%);
-    box-shadow: 0 0 12px rgba(56,189,248,.35), inset 0 0 8px rgba(168,85,247,.30);
-    animation: f1cShadow 3.4s ease-in-out infinite;
+    position: relative; width: 64px; height: 16px; margin: 2px auto 0; border-radius: 50%;
+    border: 2px solid rgba(56,189,248,.7);
+    background: radial-gradient(ellipse at center, rgba(56,189,248,.35), rgba(168,85,247,.12) 55%, transparent 75%);
+    box-shadow: 0 0 14px rgba(56,189,248,.55), inset 0 0 10px rgba(168,85,247,.45);
+    animation: f1cPad 3.6s ease-in-out infinite; transition: opacity .3s, transform .3s;
 }
-@keyframes f1cShadow {
-    0%, 100% { transform: scaleX(1);   opacity: .85; }
-    50%      { transform: scaleX(.62); opacity: .45; }
-}
+@keyframes f1cPad { 0%, 100% { transform: scaleX(1); opacity: .95; } 50% { transform: scaleX(.72); opacity: .55; } }
+.f1c-bot-shadow i { position: absolute; inset: -2px; border-radius: 50%; border: 2px solid rgba(125,211,252,.9); opacity: 0; pointer-events: none; }
+#f1c-chat-bubble.f1c-landing .f1c-bot-shadow i { animation: f1cShock .9s ease-out forwards; }
+#f1c-chat-bubble.f1c-landing .f1c-bot-shadow i:nth-child(2) { animation-delay: .15s; border-color: rgba(196,181,253,.9); }
+@keyframes f1cShock { from { transform: scale(.4); opacity: 1; } to { transform: scale(2.8); opacity: 0; } }
 
-/* ── sleeping mode ── */
-#f1c-chat-bubble.f1c-sleep .f1c-bot-eye {
-    animation: none; transform: scaleY(.08); box-shadow: none; background: #64748b;
+/* ── entrance when the system opens: flies in with a light trail, lands, waves ── */
+#f1c-chat-bubble.f1c-enter .f1c-bot-body { animation: f1cEnter 1.35s cubic-bezier(.25,.9,.3,1.15) both; }
+#f1c-chat-bubble.f1c-enter .f1c-bot-shadow { animation: f1cPadIn 1.35s ease both; }
+#f1c-chat-bubble.f1c-enter .f1c-aura { animation: f1cPadIn 1.35s ease both; }
+@keyframes f1cEnter {
+    0%   { transform: translate(170px, -340px) rotate(-28deg) scale(.45); opacity: 0; filter: drop-shadow(40px -80px 18px rgba(56,189,248,.8)); }
+    55%  { opacity: 1; filter: drop-shadow(10px -20px 10px rgba(168,85,247,.6)); }
+    72%  { transform: translate(-4px, 8px) rotate(5deg) scale(1.08, .92); filter: none; }
+    86%  { transform: translate(0, -10px) rotate(-2deg) scale(.98, 1.03); }
+    100% { transform: none; opacity: 1; }
 }
-#f1c-chat-bubble.f1c-sleep .f1c-bot-ant::after { animation: none; opacity: .3; box-shadow: none; }
-#f1c-chat-bubble.f1c-sleep .f1c-jet::after { opacity: .18; animation-duration: 1.4s; }
-#f1c-chat-bubble.f1c-sleep .f1c-bot-body { animation-duration: 6.5s; }
-#f1c-chat-bubble.f1c-sleep .f1c-bot-face::after { border-radius: 10px 10px 0 0; border-bottom: none; border-top: 2.5px solid #64748b; box-shadow: none; }
+@keyframes f1cPadIn { 0%, 55% { opacity: 0; transform: scale(.3); } 80% { opacity: 1; transform: scale(1.15); } 100% { opacity: 1; transform: none; } }
+.f1c-trail { position: absolute; top: -150px; right: -110px; width: 230px; height: 4px; border-radius: 4px; opacity: 0; pointer-events: none;
+    transform-origin: 0 50%; transform: rotate(122deg); background: linear-gradient(90deg, rgba(255,255,255,.95), rgba(56,189,248,.8) 30%, rgba(168,85,247,.5) 60%, transparent); filter: blur(1px); }
+#f1c-chat-bubble.f1c-enter .f1c-trail { animation: f1cTrail 1s ease-out .05s both; }
+@keyframes f1cTrail { 0% { opacity: 0; transform: rotate(122deg) scaleX(.2); } 30% { opacity: 1; } 100% { opacity: 0; transform: rotate(122deg) scaleX(1.2) translateX(60px); } }
+#f1c-chat-bubble.f1c-pop .f1c-bot-body { animation: f1cPop .6s cubic-bezier(.2,1.5,.4,1) both; }
+@keyframes f1cPop { from { transform: scale(.2) translateY(30px); opacity: 0; } }
 
-/* ── fireworks sparks ── */
-.f1c-spark {
-    position: absolute; top: 30px; left: 50%; width: 7px; height: 7px;
-    border-radius: 50%; pointer-events: none; z-index: 3;
-    background: var(--clr, #22c55e);
-    box-shadow: 0 0 8px var(--clr, #22c55e);
-    animation: f1cSpark .95s ease-out forwards;
-}
-@keyframes f1cSpark {
-    0%   { transform: translate(0,0) scale(1);   opacity: 1; }
-    100% { transform: translate(var(--dx), var(--dy)) scale(.1); opacity: 0; }
-}
+/* fireworks */
+.f1c-spark { position: absolute; top: 34px; left: 50%; width: 7px; height: 7px; border-radius: 50%; pointer-events: none; z-index: 3;
+    background: var(--clr, #22c55e); box-shadow: 0 0 8px var(--clr, #22c55e); animation: f1cSpark .95s ease-out forwards; }
+@keyframes f1cSpark { 0% { transform: translate(0,0) scale(1); opacity: 1; } 100% { transform: translate(var(--dx), var(--dy)) scale(.1); opacity: 0; } }
 #f1c-chat-bubble.f1c-party .f1c-bot-body { animation: f1cPartySpin .9s ease-in-out; }
-@keyframes f1cPartySpin {
-    0%   { transform: rotateY(0)      translateY(0); }
-    50%  { transform: rotateY(180deg) translateY(-14px); }
-    100% { transform: rotateY(360deg) translateY(0); }
+@keyframes f1cPartySpin { 0% { transform: rotateY(0) translateY(0); } 50% { transform: rotateY(180deg) translateY(-16px); } 100% { transform: rotateY(360deg) translateY(0); } }
+#f1c-chat-bubble.f1c-ascar .f1c-aura, #f1c-chat-bubble.f1c-ascar .f1c-trail { display: none; }
+@media (prefers-reduced-motion: reduce) {
+    .f1c-bot-body, .f1c-aura, .f1c-bot-shadow, .f1c-arm, .f1c-orbit, .f1c-bot-torso::after { animation: none !important; }
 }
 
 /* ═════════ CAR TRANSFORM MODE ═════════ */
@@ -325,32 +275,35 @@ $__side = 'right';   // always on the right — notifications live on the left
 #f1c-chat-bubble.f1c-ascar .f1c-wheel2 { animation: f1cRoll .3s linear infinite; }
 @keyframes f1cRoll { to { transform: rotate(360deg); } }
 
-/* ═════════ GREETING SPEECH BUBBLE ═════════ */
+/* ═════════ SPEECH BUBBLE (glass, gradient edge) ═════════ */
 #f1c-bot-say {
     position: absolute;
-    bottom: calc(100% + 8px);
-    <?= $__side ?>: -4px;
-    width: max-content;
-    max-width: 220px;
-    background: #fff; color: #0f172a;
-    font-size: 12.5px; font-weight: 800; line-height: 1.55;
-    border-radius: 15px; padding: 11px 14px;
-    box-shadow: 0 10px 30px rgba(0,0,0,.45);
+    bottom: calc(100% + 6px);
+    <?= $__side ?>: -2px;
+    width: max-content; max-width: 230px;
+    background: linear-gradient(160deg, rgba(15,23,42,.96), rgba(30,27,75,.96)) padding-box,
+                linear-gradient(120deg, #22c55e, #38bdf8, #a855f7) border-box;
+    border: 1.5px solid transparent;
+    color: #f1f5f9;
+    font-size: 13px; font-weight: 800; line-height: 1.6;
+    border-radius: 18px; padding: 11px 15px;
+    box-shadow: 0 14px 34px rgba(0,0,0,.5), 0 0 24px rgba(56,189,248,.25);
     z-index: 998; cursor: pointer;
-    opacity: 0; transform: translateY(10px) scale(.9);
-    transition: opacity .3s, transform .3s cubic-bezier(.2,1.4,.4,1);
+    opacity: 0; transform: translateY(10px) scale(.85); transform-origin: bottom <?= $__side ?>;
+    transition: opacity .3s, transform .35s cubic-bezier(.2,1.5,.4,1);
     pointer-events: none;
     direction: <?= $__isAr ? 'rtl' : 'ltr' ?>;
 }
+#f1c-bot-say b { background: linear-gradient(90deg, #86efac, #7dd3fc); -webkit-background-clip: text; background-clip: text; color: transparent; }
 #f1c-bot-say.show { opacity: 1; transform: none; pointer-events: auto; }
-#f1c-chat-bubble.f1c-far #f1c-bot-say { <?= $__side ?>: auto; <?= $__isAr ? 'left' : 'right' ?>: -4px; }
-#f1c-chat-bubble.f1c-far #f1c-bot-say::after { <?= $__side ?>: auto; <?= $__isAr ? 'left' : 'right' ?>: 22px; }
+#f1c-chat-bubble.f1c-far #f1c-bot-say { <?= $__side ?>: auto; <?= $__isAr ? 'left' : 'right' ?>: -2px; }
+#f1c-chat-bubble.f1c-far #f1c-bot-say::after { <?= $__side ?>: auto; <?= $__isAr ? 'left' : 'right' ?>: 26px; }
 #f1c-bot-say::after {           /* tail toward the robot */
-    content: ''; position: absolute; bottom: -7px; <?= $__side ?>: 22px;
-    width: 14px; height: 14px; background: #fff;
-    transform: rotate(45deg); border-radius: 3px;
+    content: ''; position: absolute; bottom: -7px; <?= $__side ?>: 30px;
+    width: 12px; height: 12px; background: #1e1b4b;
+    border-right: 1.5px solid #6366f1; border-bottom: 1.5px solid #6366f1;
+    transform: rotate(45deg); border-radius: 0 0 3px 0;
 }
-
 
 /* ═════════════════════ CHAT PANEL v4 — "command center" ═════════════════════ */
 #f1c-chat-panel {
@@ -665,25 +618,29 @@ $__side = 'right';   // always on the right — notifications live on the left
 
 <!-- ═════════ the robot ═════════ -->
 <div id="f1c-chat-bubble" onclick="F1CChat.toggle()" title="<?= $__isAr ? 'مساعد المخزون' : 'Stock Assistant' ?>">
+    <span class="f1c-aura" aria-hidden="true"></span>
+    <span class="f1c-trail" aria-hidden="true"></span>
     <div class="f1c-bot-body">
-        <div class="f1c-bot-ant"><span class="f1c-ping"></span></div>
+        <div class="f1c-bot-ant"><span class="f1c-ping"></span><i class="f1c-orbit"></i></div>
         <div class="f1c-bot-head">
+            <span class="f1c-ear l"></span><span class="f1c-ear r"></span>
             <span class="f1c-bot-glare"></span>
             <div class="f1c-bot-face">
                 <span class="f1c-eyes">
                     <span class="f1c-bot-eye"></span>
                     <span class="f1c-bot-eye f1c-e2"></span>
                 </span>
+                <span class="f1c-mouth"></span>
                 <span class="f1c-cheek f1c-cl"></span>
                 <span class="f1c-cheek f1c-cr"></span>
             </div>
         </div>
-        <div style="position:relative">
-            <span class="f1c-bot-sleeve f1c-sl"></span>
-            <span class="f1c-bot-sleeve f1c-sr"></span>
+        <div class="f1c-neck"></div>
+        <div class="f1c-torso-wrap">
+            <span class="f1c-arm l"></span>
+            <span class="f1c-arm r"></span>
             <div class="f1c-bot-torso">
-                <span class="f1c-bot-collar"></span>
-                <img class="f1c-bot-logo" src="pwa/icon-192.png" alt=""
+                <img class="f1c-bot-logo" src="icons/icon-192.png?v=4" alt=""
                      onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
                 <span class="f1c-bot-logo-txt">FIRST 1 CAR</span>
             </div>
@@ -693,7 +650,7 @@ $__side = 'right';   // always on the right — notifications live on the left
             <span class="f1c-jet f1c-j2"></span>
         </div>
     </div>
-    <div class="f1c-bot-shadow"></div>
+    <div class="f1c-bot-shadow"><i></i><i></i></div>
     <!-- car transform mode (hidden until he transforms) -->
     <div class="f1c-car" aria-hidden="true">
         <div class="f1c-car-roof"></div>
@@ -867,13 +824,54 @@ const F1CChat = {
         return !!document.querySelector('#ntStack .nt-card:not(.out), #ntOv.on, #npCard.on, .ov.on');
     },
 
-    say(text, ms) {
+    say(text, ms, name) {
         const el = document.getElementById('f1c-bot-say');
         if (!el || this.opened || this.screenBusy()) return;
-        el.textContent = text;
+        el.textContent = '';
+        if (name) {   // "أهلاً <b>ahmed</b>! …"
+            const i = text.indexOf('{name}');
+            el.append(text.slice(0, i), Object.assign(document.createElement('b'), { textContent: name }), text.slice(i + 6));
+        } else el.textContent = text;
         el.classList.add('show');
         clearTimeout(this._sayT);
         this._sayT = setTimeout(() => el.classList.remove('show'), ms || 7500);
+    },
+
+    HELLO: <?= json_encode($__isAr
+        ? ['morning' => 'صباح الفل يا {name}! ☀️ يلا يوم جامد', 'day' => 'أهلاً يا {name}! 👋 أنا جاهز — اسألني عن أي عربية', 'night' => 'سهرانين يا {name}؟ 🌙 أنا معاك']
+        : ['morning' => 'Good morning, {name}! ☀️ Big day ahead', 'day' => "Hey {name}! 👋 I'm ready — ask me about any car", 'night' => "Working late, {name}? 🌙 I'm with you"], JSON_UNESCAPED_UNICODE) ?>,
+
+    mood(cls, ms) {
+        const el = document.getElementById('f1c-chat-bubble');
+        if (!el) return;
+        el.classList.add(cls);
+        clearTimeout(this['_m' + cls]);
+        this['_m' + cls] = setTimeout(() => el.classList.remove(cls), ms || 2000);
+    },
+    wave() { this.mood('f1c-wave', 1900); this.mood('f1c-happy', 2400); },
+
+    /* eyes follow the mouse / finger */
+    trackEyes() {
+        const el = document.getElementById('f1c-chat-bubble');
+        if (!el || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+        let raf = 0, px = 0, py = 0, lastMove = 0;
+        const apply = () => {
+            raf = 0;
+            const r = el.getBoundingClientRect();
+            const cx = r.left + r.width / 2, cy = r.top + 44;
+            const dx = px - cx, dy = py - cy, d = Math.max(1, Math.hypot(dx, dy));
+            const k = Math.min(1, d / 260);
+            el.style.setProperty('--ex', (dx / d * 4 * k).toFixed(2) + 'px');
+            el.style.setProperty('--ey', (dy / d * 3 * k).toFixed(2) + 'px');
+        };
+        addEventListener('pointermove', (e) => { px = e.clientX; py = e.clientY; lastMove = Date.now(); if (!raf) raf = requestAnimationFrame(apply); }, { passive: true });
+        addEventListener('pointerdown', (e) => { px = e.clientX; py = e.clientY; lastMove = Date.now(); if (!raf) raf = requestAnimationFrame(apply); }, { passive: true });
+        /* no pointer for a while → glance around on his own */
+        setInterval(() => {
+            if (Date.now() - lastMove < 5000 || document.hidden) return;
+            const g = [[0, 0], [4, -1], [-4, -1], [0, 2], [3, 2], [-3, 2]][Math.floor(Math.random() * 6)];
+            el.style.setProperty('--ex', g[0] + 'px'); el.style.setProperty('--ey', g[1] + 'px');
+        }, 2600);
     },
 
     greet() {
@@ -882,11 +880,24 @@ const F1CChat = {
             greeted = !!sessionStorage.getItem('f1cBotGreeted');
             sessionStorage.setItem('f1cBotGreeted', '1');
         } catch (e) {}
+        const bot = document.getElementById('f1c-chat-bubble');
+        const still = matchMedia('(prefers-reduced-motion: reduce)').matches;
+        if (!greeted && bot && !still) {
+            /* first page after login: fly in, land with a shockwave, wave hello */
+            bot.classList.add('f1c-enter');
+            setTimeout(() => { bot.classList.add('f1c-landing'); }, 950);
+            setTimeout(() => { bot.classList.remove('f1c-enter'); }, 1400);
+            setTimeout(() => { bot.classList.remove('f1c-landing'); this.wave(); }, 1900);
+        } else if (bot && !still) {
+            bot.classList.add('f1c-pop');
+            setTimeout(() => bot.classList.remove('f1c-pop'), 700);
+        }
         if (!greeted) {
             const h = new Date().getHours();
-            const first = (h >= 5 && h < 12) ? this.MORNING : (h >= 21 || h < 5) ? this.NIGHT : this.MSGS[0];
-            setTimeout(() => this.say(first, 8500), 2600);
+            const key = (h >= 5 && h < 12) ? 'morning' : (h >= 21 || h < 5) ? 'night' : 'day';
+            setTimeout(() => this.me ? this.say(this.HELLO[key], 8500, this.me) : this.say(key === 'morning' ? this.MORNING : key === 'night' ? this.NIGHT : this.MSGS[0], 8500), 2000);
         }
+        this.trackEyes();
         ['pointerdown', 'keydown', 'scroll', 'touchstart'].forEach(ev => addEventListener(ev, () => { this.lastAct = Date.now(); }, { passive: true, capture: true }));
         document.addEventListener('visibilitychange', () => { if (document.hidden) this.landNow(); });
         this.scheduleAct();
@@ -915,8 +926,9 @@ const F1CChat = {
 
     act() {
         const r = Math.random();
-        if      (r < 0.26) this.wander();
-        else if (r < 0.42) this.carDrive();        /* 🤖→🚗 transform + drive */
+        if      (r < 0.22) this.wander();
+        else if (r < 0.36) this.carDrive();        /* 🤖→🚗 transform + drive */
+        else if (r < 0.46) { this.wave(); this.say(this.randMsg(this.MSGS)); }
         else if (r < 0.60) this.say(this.randMsg(this.MSGS));
         else if (r < 0.72) this.sleep();
         else if (r < 0.82) this.party();
@@ -1034,6 +1046,7 @@ const F1CChat = {
             el.appendChild(sp);
             setTimeout(() => sp.remove(), 1400);
         }
+        this.mood('f1c-love', 2200);
         this.say(this.randMsg(this.PARTY_MSGS), 6500);
     },
 
