@@ -3,7 +3,6 @@
 require 'auth.php';
 require 'config.php';
 require 'reserve_helpers.php';
-require 'car_images_helpers.php';
 
 $lang = $_GET['lang'] ?? 'ar';
 
@@ -265,8 +264,10 @@ $query = "
         colors.color_en,
         branches.name_ar,
         branches.name_en,
+        MAX(pricing.official_price) AS official_price,
         MAX(pricing.customer_price) AS customer_price,
-        MAX(pricing.trade_price)    AS trade_price
+        MAX(pricing.trade_price)    AS trade_price,
+        TIMESTAMPDIFF(DAY, cars.created_at, NOW()) AS days_in
     FROM cars
     LEFT JOIN colors   ON cars.color  = colors.color_en
     LEFT JOIN branches ON cars.branch = branches.name
@@ -315,9 +316,6 @@ foreach ($availableCarsList as $c) {
 }
 ksort($branchChips);
 
-/* ─── Car image library: one image per model+colour, loaded once for every
-       card on the page rather than a query per card ─── */
-$carImgMap = car_images_map($pdo);
 
 /* ─── Pull active امانة details (dealer, since-when, who) for the cards ─── */
 $amanaInfo = [];
@@ -341,15 +339,49 @@ if ($canAmanaActions && !empty($amanaCarsList)) {
     $amanaBranches = $pdo->query("SELECT name, name_ar, name_en FROM branches ORDER BY name_en")->fetchAll(PDO::FETCH_ASSOC);
 }
 
-$totalCars     = (int) $pdo->query("SELECT COUNT(*) FROM cars")->fetchColumn();
-$availableCars = (int) $pdo->query("SELECT COUNT(*) FROM cars WHERE status='available'")->fetchColumn();
-$soldCars      = (int) $pdo->query("SELECT COUNT(*) FROM cars WHERE status='sold'")->fetchColumn();
-$amanaCars     = (int) $pdo->query("SELECT COUNT(*) FROM cars WHERE status='consignment'")->fetchColumn();
-$reservedCars  = (int) $pdo->query("SELECT COUNT(*) FROM cars WHERE status='reserved'")->fetchColumn();
+$byStatus = $pdo->query("SELECT status, COUNT(*) n FROM cars GROUP BY status")->fetchAll(PDO::FETCH_KEY_PAIR);
+$totalCars     = (int) array_sum($byStatus);
+$availableCars = (int) ($byStatus['available']   ?? 0);
+$soldCars      = (int) ($byStatus['sold']        ?? 0);
+$amanaCars     = (int) ($byStatus['consignment'] ?? 0);
+$reservedCars  = (int) ($byStatus['reserved']    ?? 0);
+
+/* live-update fingerprint of every car on screen (see dashboard_pulse.php) */
+function car_sig(array $c): int {
+    return crc32(implode('|', [$c['status'], $c['branch'], $c['color'], $c['trim_name'], $c['model'], $c['car_year'], $c['chassis']]));
+}
+$sigMap = [];
+foreach ($cars as $c) $sigMap[(int)$c['id']] = car_sig($c);
+$canSeePrice = can('page.prices');
 
 function fmtPrice($p) {
     if ($p === null || $p === '') return '';
     return number_format((float)$p, 0, '.', ',') . ' ج.م';
+}
+/* customer / trade prices can be a number or a deal label (رسمي · خصم 50,000 · أوفر 10,000) */
+function fmtMoney($v) {
+    $v = trim((string)$v);
+    if ($v === '') return '';
+    return preg_match('/^[\d.,\s]+$/u', $v) ? fmtPrice(str_replace([',', ' '], '', $v)) : $v;
+}
+/* the customer's price line: the official number + the deal label */
+function customerPriceText($official, $label) {
+    $label = trim((string)$label);
+    $off = ($official !== null && $official !== '' && (float)$official > 0) ? fmtPrice($official) : '';
+    if ($off !== '' && $label !== '' && !preg_match('/^[\d.,\s]+$/u', $label)) return $off . ' (' . $label . ')';
+    if ($off !== '') return $off;
+    return fmtMoney($label);
+}
+function roleLabel($r, $lang) {
+    if ($lang !== 'ar') return ucfirst((string)$r);
+    return ['admin' => 'أدمن', 'manager' => 'مدير', 'sales' => 'مبيعات'][$r] ?? (string)$r;
+}
+function arDate($dt, $lang) {
+    $ts = strtotime((string)$dt);
+    if (!$ts) return '';
+    if ($lang !== 'ar') return date('d M Y', $ts);
+    $m = ['يناير', 'فبراير', 'مارس', 'أبريل', 'مايو', 'يونيو', 'يوليو', 'أغسطس', 'سبتمبر', 'أكتوبر', 'نوفمبر', 'ديسمبر'];
+    return date('j', $ts) . ' ' . $m[(int)date('n', $ts) - 1] . ' ' . date('Y', $ts);
 }
 
 ?>
@@ -621,87 +653,29 @@ function fmtPrice($p) {
         /* Vehicle card */
         .vehicle-card { background:rgba(15,23,42,.88); border:1px solid rgba(255,255,255,.08); border-radius:26px; padding:20px; transition:transform .25s,border-color .25s,box-shadow .25s; backdrop-filter:blur(15px); display:flex; flex-direction:column; gap:16px; }
         .vehicle-card:hover { transform:translateY(-4px); border-color:rgba(147,51,234,.4); box-shadow:0 12px 40px rgba(147,51,234,.1); }
-        /* Car photo banner — the model+colour image from the image library */
-        /* ══════ Car photo: a slim "showroom stage" ══════
-           About half the height of the old full-width banner. The whole car is
-           shown, never cropped, standing on a soft spotlight with a floor shadow
-           under the wheels. The script at the bottom of the page looks at each
-           photo and picks the right stage for it:
-             studio : official render shot on white, so the white is blended away
-                      and the car stands in a light studio
-             scene  : a real photo that fills its frame, shown as a cinematic strip
-             default: anything else, on the dark stage */
-        .vehicle-photo {
-            position:relative; height:118px; border-radius:18px; overflow:hidden; isolation:isolate;
-            border:1px solid rgba(255,255,255,.06);
-            background:
-                radial-gradient(ellipse 70% 95% at 50% 110%, rgba(147,51,234,.26), transparent 70%),
-                radial-gradient(ellipse 55% 70% at 50% -10%, rgba(255,255,255,.08), transparent 70%),
-                linear-gradient(180deg,#101b33 0%,#0a1222 100%);
-        }
-        .vehicle-photo::before {           /* floor shadow under the wheels */
-            content:''; position:absolute; left:20%; right:20%; bottom:10px; height:12px; z-index:0;
-            background:radial-gradient(ellipse at center, rgba(0,0,0,.6), transparent 70%);
-        }
-        .vehicle-photo img {
-            position:relative; z-index:1; display:block;
-            width:100%; height:100%; padding:10px 16px 13px;
-            object-fit:contain; object-position:center 88%;
-            filter:drop-shadow(0 6px 9px rgba(0,0,0,.4));
-            opacity:0; transform:translateY(6px);
-            transition:opacity .45s ease, transform .5s cubic-bezier(.22,1,.36,1);
-        }
-        .vehicle-photo.ready img { opacity:1; transform:none; }
-        .vehicle-card:hover .vehicle-photo.ready img { transform:translateY(-3px) scale(1.045); }
-
-        .vehicle-photo.studio {
-            border-color:rgba(255,255,255,.2);
-            background:
-                radial-gradient(ellipse 85% 60% at 50% 104%, #cbd5e1, transparent 72%),
-                linear-gradient(180deg,#ffffff 0%,#eef2f7 62%,#e2e8f0 100%);
-        }
-        .vehicle-photo.studio img  { mix-blend-mode:multiply; filter:none; }
-        .vehicle-photo.studio::before { background:radial-gradient(ellipse at center, rgba(15,23,42,.32), transparent 70%); }
-
-        .vehicle-photo.scene img { object-fit:cover; object-position:center 58%; padding:0; filter:none; }
-        .vehicle-photo.scene::before { display:none; }
-        .vehicle-photo.scene::after {       /* soft vignette so the strip sits in the card */
-            content:''; position:absolute; inset:0; z-index:2; pointer-events:none;
-            background:linear-gradient(90deg,rgba(10,18,34,.55),transparent 22%,transparent 78%,rgba(10,18,34,.55));
-        }
-
-        /* matte: the stage takes the exact colour the photo was shot on */
-        .vehicle-photo.matte { background:var(--stage-bg,#0a1222); }
-        .vehicle-photo.matte::after {       /* a faint spotlight laid over the whole stage */
-            content:''; position:absolute; inset:0; z-index:2; pointer-events:none; mix-blend-mode:screen;
-            background:radial-gradient(ellipse 70% 80% at 50% 118%, rgba(147,51,234,.22), transparent 70%);
-        }
-        .vehicle-card.reserved-card .vehicle-photo.matte::after {
-            background:radial-gradient(ellipse 70% 80% at 50% 118%, rgba(234,179,8,.3), transparent 70%);
-        }
-
-        /* reserved cars: gold light on the floor, matching the gold card */
-        .vehicle-card.reserved-card .vehicle-photo:not(.studio):not(.scene) {
-            background:
-                radial-gradient(ellipse 70% 95% at 50% 110%, rgba(234,179,8,.32), transparent 70%),
-                radial-gradient(ellipse 55% 70% at 50% -10%, rgba(255,255,255,.08), transparent 70%),
-                linear-gradient(180deg,#171a2c 0%,#0f1220 100%);
-        }
-        .vehicle-card.reserved-card .vehicle-photo.studio {
-            background:
-                radial-gradient(ellipse 85% 60% at 50% 104%, #f3e3a3, transparent 72%),
-                linear-gradient(180deg,#fffdf5 0%,#fbf5e1 62%,#f1e6c0 100%);
-        }
-
-        .vehicle-photo .vp-tag {
-            position:absolute; bottom:7px; inset-inline-end:9px; z-index:3;
-            font-size:8.5px; font-weight:800; letter-spacing:.02em;
-            padding:2px 7px; border-radius:50px;
-            background:rgba(2,6,23,.55); color:#cbd5e1;
-        }
-        .vehicle-photo.studio .vp-tag { background:rgba(15,23,42,.07); color:#64748b; }
-
-        @media (max-width:768px) { .vehicle-photo { height:106px; border-radius:16px; } }
+        @media (hover:none) { .vehicle-card:hover { transform:none; } }
+        /* price + days in stock */
+        .card-strip { display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; margin-top:-4px; }
+        .cs-price { display:flex; align-items:baseline; gap:6px; flex-wrap:wrap; }
+        .cs-price b { font-size:21px; font-weight:900; color:#4ade80; letter-spacing:.3px; font-variant-numeric:tabular-nums; text-shadow:0 0 18px rgba(74,222,128,.25); }
+        .cs-price small { font-size:11px; color:#86efac; font-weight:800; opacity:.8; }
+        .cs-price .deal { font-size:11.5px; font-weight:800; padding:3px 9px; border-radius:999px; background:rgba(56,189,248,.12); color:#7dd3fc; border:1px solid rgba(56,189,248,.3); }
+        .cs-age { font-size:11.5px; font-weight:800; padding:4px 10px; border-radius:999px; white-space:nowrap; }
+        .cs-age.new { background:rgba(34,197,94,.1); color:#86efac; border:1px solid rgba(34,197,94,.25); }
+        .cs-age.mid { background:rgba(245,158,11,.12); color:#fcd34d; border:1px solid rgba(245,158,11,.35); }
+        .cs-age.old { background:rgba(239,68,68,.13); color:#fca5a5; border:1px solid rgba(239,68,68,.4); box-shadow:0 0 14px rgba(239,68,68,.15); }
+        /* sort control */
+        .chip-sort { margin-inline-start:auto; height:34px; border-radius:999px; border:1px solid rgba(255,255,255,.12); background:rgba(15,23,42,.9); color:#e2e8f0; font:inherit; font-size:12.5px; font-weight:800; padding:0 12px; cursor:pointer; outline:none; }
+        .chip-sort:focus { border-color:rgba(147,51,234,.6); }
+        .match-note { font-size:12px; color:#94a3b8; font-weight:700; }
+        /* "the stock changed" bar */
+        .live-bar { position:fixed; top:calc(12px + env(safe-area-inset-top)); left:50%; z-index:1500; transform:translate(-50%,-140%); transition:transform .45s cubic-bezier(.2,1.3,.3,1);
+            display:flex; align-items:center; gap:10px; padding:10px 12px 10px 16px; border-radius:999px; cursor:pointer; border:0; font:inherit; color:#fff; font-size:13.5px; font-weight:800;
+            background:linear-gradient(135deg,#7c3aed,#2563eb 60%,#0891b2); box-shadow:0 14px 36px rgba(37,99,235,.45); white-space:nowrap; }
+        .live-bar.on { transform:translate(-50%,0); }
+        .live-bar .dot { width:9px; height:9px; border-radius:50%; background:#fde047; box-shadow:0 0 10px #fde047; animation:lbBlink 1.2s infinite; }
+        .live-bar .go { background:rgba(255,255,255,.18); padding:4px 11px; border-radius:999px; font-size:12px; }
+        @keyframes lbBlink { 50% { opacity:.35; } }
         .vehicle-card.sold-card { opacity:.85; border-color:rgba(239,68,68,.15); }
         .vehicle-card.sold-card:hover { border-color:rgba(239,68,68,.4); box-shadow:0 12px 40px rgba(239,68,68,.1); }
         .vehicle-header { display:flex; justify-content:space-between; align-items:flex-start; gap:10px; }
@@ -1032,11 +1006,15 @@ function fmtPrice($p) {
   var cv=document.getElementById('f1c-amb-stars'); if(!cv) return;
   var cx=cv.getContext('2d'), stars=[];
   function resize(){cv.width=innerWidth;cv.height=innerHeight;
-    stars=Array.from({length:Math.min(110,Math.round(innerWidth/12))},function(){
+    stars=Array.from({length:Math.min(innerWidth<600?45:90,Math.round(innerWidth/14))},function(){
       return {x:Math.random()*cv.width,y:Math.random()*cv.height,z:Math.random(),r:Math.random()*1.3+.3};});}
   resize(); addEventListener('resize',resize,{passive:true});
   var reduce=matchMedia('(prefers-reduced-motion:reduce)').matches;
-  (function draw(){
+  var last=0;
+  (function draw(now){
+    requestAnimationFrame(draw);
+    if(document.hidden||now-last<33) return;   /* ~30 fps is plenty for drifting stars */
+    last=now;
     cx.clearRect(0,0,cv.width,cv.height);
     for(var i=0;i<stars.length;i++){var s=stars[i];
       if(!reduce){s.y+=s.z*.18; if(s.y>cv.height){s.y=0; s.x=Math.random()*cv.width;}}
@@ -1045,8 +1023,8 @@ function fmtPrice($p) {
       cx.fillStyle=s.z>.7?'#4ade80':(s.z>.4?'#a855f7':'#cbd5e1');
       cx.beginPath(); cx.arc(px,py,s.r,0,6.28); cx.fill();
     }
-    cx.globalAlpha=1; requestAnimationFrame(draw);
-  })();
+    cx.globalAlpha=1;
+  })(0);
 })();
 </script>
 
@@ -1069,7 +1047,7 @@ function fmtPrice($p) {
             </div>
             <div class="welcome-badge">
                 <span><?= htmlspecialchars($_SESSION['username']) ?></span>
-                <span class="role-badge"><?= htmlspecialchars($_SESSION['role']) ?></span>
+                <span class="role-badge"><?= htmlspecialchars(roleLabel($_SESSION['role'], $lang)) ?></span>
             </div>
         </div>
     </div>
@@ -1185,6 +1163,15 @@ function fmtPrice($p) {
                 </button>
                 <?php endforeach; ?>
             <?php endif; ?>
+            <select class="chip-sort" id="sortSel" aria-label="<?= $lang === 'ar' ? 'ترتيب' : 'Sort' ?>">
+                <option value="new">↕️ <?= $lang === 'ar' ? 'الأحدث' : 'Newest' ?></option>
+                <option value="old"><?= $lang === 'ar' ? 'الأقدم في المخزون' : 'Longest in stock' ?></option>
+                <?php if ($canSeePrice): ?>
+                <option value="phigh"><?= $lang === 'ar' ? 'السعر: الأعلى' : 'Price: high' ?></option>
+                <option value="plow"><?= $lang === 'ar' ? 'السعر: الأقل' : 'Price: low' ?></option>
+                <?php endif; ?>
+                <option value="model"><?= $lang === 'ar' ? 'الموديل أ-ي' : 'Model A-Z' ?></option>
+            </select>
         </div>
     </div>
 
@@ -1220,7 +1207,7 @@ function fmtPrice($p) {
                     <a href="vehicle_timeline.php?id=<?= $car['id'] ?>&lang=<?= $lang ?>" class="amana-mini-btn mini-eye" title="<?= $t[$lang]['journey'] ?>">👁 <?= $lang === 'ar' ? 'الرحلة' : 'Trip' ?></a>
                     <a href="sold_vehicle.php?id=<?= $car['id'] ?>&lang=<?= $lang ?>" class="amana-mini-btn mini-sold"><?= $t[$lang]['amana_sold_btn'] ?></a>
                     <button type="button" class="amana-mini-btn mini-return"
-                        onclick="openReturn(<?= $car['id'] ?>, '<?= addslashes(htmlspecialchars($car['brand'].' '.$car['model'], ENT_QUOTES)) ?>')"><?= $t[$lang]['amana_return_btn'] ?></button>
+                        data-name="<?= htmlspecialchars($car['brand'].' '.$car['model'], ENT_QUOTES) ?>" onclick="openReturn(<?= (int)$car['id'] ?>, this.dataset.name)"><?= $t[$lang]['amana_return_btn'] ?></button>
                 </div>
                 <?php endif; ?>
             </div>
@@ -1256,16 +1243,16 @@ function fmtPrice($p) {
             $displayColor  = $lang === 'ar' ? ($car['color_ar']  ?: $car['color'])  : ($car['color_en']  ?: $car['color']);
             $displayBranch = $lang === 'ar' ? ($car['name_ar']   ?: $car['branch']) : ($car['name_en']   ?: $car['branch']);
             $noteText      = trim((string)($car['notes'] ?? ''));
-            $officialPrice = $car['customer_price'] ?? null;
-            $tradePrice    = $car['trade_price']     ?? null;
+            $officialNum   = $car['official_price'] ?? null;
+            $dealLabel     = trim((string)($car['customer_price'] ?? ''));
+            $tradePrice    = $car['trade_price'] ?? null;
+            $daysIn        = $car['days_in'] !== null ? max(0, (int)$car['days_in']) : null;
+            $ageCls        = $daysIn === null ? '' : ($daysIn >= 60 ? 'old' : ($daysIn >= 30 ? 'mid' : 'new'));
 
-            $jsName   = addslashes(htmlspecialchars($car['brand'].' '.$car['model'], ENT_QUOTES));
-            $jsChassis = addslashes(htmlspecialchars($car['chassis'], ENT_QUOTES));
-            $jsYear   = addslashes(htmlspecialchars($car['car_year'], ENT_QUOTES));
-            $jsTrim   = addslashes(htmlspecialchars($car['trim_name'], ENT_QUOTES));
-            $jsColor  = addslashes(htmlspecialchars($displayColor, ENT_QUOTES));
-            $jsPrice  = $officialPrice ? addslashes(fmtPrice($officialPrice)) : '';
-            $jsTrade  = $tradePrice    ? addslashes(fmtPrice($tradePrice))    : '';
+            // WhatsApp buttons get their data as JSON in an attribute — safe for any name / trim / colour
+            $waBase = [$car['brand'] . ' ' . $car['model'], (string)$car['car_year'], (string)$car['trim_name'], (string)$displayColor];
+            $waCust = json_encode(array_merge($waBase, [$canWaCustPrice ? customerPriceText($officialNum, $dealLabel) : '']), JSON_UNESCAPED_UNICODE);
+            $waDeal = json_encode(array_merge($waBase, [fmtMoney($tradePrice)]), JSON_UNESCAPED_UNICODE);
             // Searchable text blob (brand, model, trim, color, branch, chassis, year) — both languages
             $searchBlob = mb_strtolower(trim(
                 $car['brand'].' '.$car['model'].' '.$car['trim_name'].' '.
@@ -1276,16 +1263,11 @@ function fmtPrice($p) {
             <div class="vehicle-card <?= $isReserved ? 'reserved-card' : '' ?>"
                  data-search="<?= htmlspecialchars($searchBlob) ?>"
                  data-status="<?= $isReserved ? 'reserved' : 'available' ?>"
-                 data-branch="<?= htmlspecialchars((string)$car['branch'], ENT_QUOTES) ?>">
-
-                <?php $cardImg = car_image_url_for($carImgMap, $car); ?>
-                <?php if ($cardImg !== ''): ?>
-                <div class="vehicle-photo">
-                    <img src="<?= htmlspecialchars($cardImg) ?>" loading="lazy"
-                         alt="<?= htmlspecialchars($car['brand'].' '.$car['model'].' '.$displayColor) ?>">
-                    <span class="vp-tag"><?= $lang === 'ar' ? 'صورة توضيحية' : 'Illustration' ?></span>
-                </div>
-                <?php endif; ?>
+                 data-branch="<?= htmlspecialchars((string)$car['branch'], ENT_QUOTES) ?>"
+                 data-id="<?= (int)$car['id'] ?>"
+                 data-days="<?= $daysIn === null ? -1 : $daysIn ?>"
+                 data-price="<?= (float)($officialNum ?? 0) ?>"
+                 data-model="<?= htmlspecialchars(mb_strtolower($car['brand'] . ' ' . $car['model'] . ' ' . $car['trim_name']), ENT_QUOTES) ?>">
 
                 <div class="vehicle-header">
                     <div class="qr-sticker" title="QR"
@@ -1303,10 +1285,24 @@ function fmtPrice($p) {
                     <?php endif; ?>
                 </div>
 
+                <?php if (($canSeePrice && ($officialNum || $dealLabel !== '')) || $daysIn !== null): ?>
+                <div class="card-strip">
+                    <?php if ($canSeePrice && ($officialNum || $dealLabel !== '')): ?>
+                    <div class="cs-price">
+                        <?php if ($officialNum): ?><b><?= number_format((float)$officialNum) ?></b><small><?= $lang === 'ar' ? 'ج.م' : 'EGP' ?></small><?php endif; ?>
+                        <?php if ($dealLabel !== ''): ?><span class="deal"><?= htmlspecialchars($dealLabel) ?></span><?php endif; ?>
+                    </div>
+                    <?php endif; ?>
+                    <?php if ($daysIn !== null): ?>
+                    <span class="cs-age <?= $ageCls ?>" title="<?= $lang === 'ar' ? 'في المخزون منذ' : 'In stock for' ?>">🕒 <?= $daysIn === 0 ? ($lang === 'ar' ? 'النهارده' : 'today') : ($lang === 'ar' ? 'منذ ' . $daysIn . ' يوم' : $daysIn . ' days') ?></span>
+                    <?php endif; ?>
+                </div>
+                <?php endif; ?>
+
                 <?php if ($isReserved && $resInfo): ?>
                 <div class="reserved-meta">
                     <span>👤 <?= $t[$lang]['reserved_by'] ?>: <?= htmlspecialchars($resInfo['by']) ?></span>
-                    <span>📅 <?= date('d M Y', strtotime($resInfo['at'])) ?></span>
+                    <span>📅 <?= htmlspecialchars(arDate($resInfo['at'], $lang)) ?></span>
                 </div>
                 <?php endif; ?>
 
@@ -1395,16 +1391,16 @@ function fmtPrice($p) {
                 <!-- compact WhatsApp row (role-gated, same handlers) -->
                 <div class="mini-actions">
                     <?php if ($canWaCustomer): ?>
-                        <button class="mini-btn mb-cust"
-                            onclick="waCustomer('<?= $jsName ?>','<?= $jsYear ?>','<?= $jsTrim ?>','<?= $jsColor ?>','<?= $canWaCustPrice ? $jsPrice : '' ?>')">
+                        <button class="mini-btn mb-cust" data-wa="<?= htmlspecialchars($waCust, ENT_QUOTES) ?>"
+                            onclick="waCustomer.apply(null, JSON.parse(this.dataset.wa))">
                             💬 <?= $canWaCustPrice ? $t[$lang]['wa_customer'] : $t[$lang]['wa_share'] ?>
                         </button>
                     <?php else: ?>
                         <div class="mini-btn mb-locked">💬 <?= $t[$lang]['wa_customer'] ?></div>
                     <?php endif; ?>
                     <?php if ($canWaDealer): ?>
-                        <button class="mini-btn mb-deal"
-                            onclick="waDealer('<?= $jsName ?>','<?= $jsYear ?>','<?= $jsTrim ?>','<?= $jsColor ?>','<?= $jsTrade ?>')">
+                        <button class="mini-btn mb-deal" data-wa="<?= htmlspecialchars($waDeal, ENT_QUOTES) ?>"
+                            onclick="waDealer.apply(null, JSON.parse(this.dataset.wa))">
                             🤝 <?= $t[$lang]['wa_dealer'] ?>
                         </button>
                     <?php else: ?>
@@ -1422,6 +1418,10 @@ function fmtPrice($p) {
          about current stock and the scroll stays bounded. -->
 
 </div>
+
+<button type="button" class="live-bar" id="liveBar" onclick="location.reload()">
+    <span class="dot"></span><span id="liveTxt"></span><span class="go"><?= $lang === 'ar' ? 'تحديث' : 'Refresh' ?></span>
+</button>
 
 <!-- Bottom Nav -->
 <nav class="bottom-nav" role="navigation">
@@ -1606,12 +1606,16 @@ function fmtPrice($p) {
         let fBranch = '';
         let emptyMsg = null;
 
+        /* أ/إ/آ → ا, ة → ه, ى → ي, no tashkeel — so "ايدو" finds "إيدو" */
+        const norm = s => String(s || '').toLowerCase().replace(/[\u064B-\u065F\u0640]/g, '').replace(/[أإآ]/g, 'ا').replace(/ة/g, 'ه').replace(/ى/g, 'ي').replace(/\s+/g, ' ');
+        cards.forEach(c => { c._s = norm(c.getAttribute('data-search')); });
+
         function apply() {
-            const q = input ? input.value.trim().toLowerCase() : '';
+            const q = input ? norm(input.value.trim()) : '';
             let shown = 0;
 
             cards.forEach(card => {
-                const okText   = q === '' || (card.getAttribute('data-search') || '').indexOf(q) !== -1;
+                const okText   = q === '' || q.split(' ').every(w => card._s.indexOf(w) !== -1);
                 const okStatus = fStatus === '' || card.getAttribute('data-status') === fStatus;
                 const okBranch = fBranch === '' || card.getAttribute('data-branch') === fBranch;
                 const show = okText && okStatus && okBranch;
@@ -1700,113 +1704,54 @@ function fmtPrice($p) {
         }
 
         apply();   // honour a ?search= value that arrived in the URL
+
+        /* ── sort: newest / longest in stock / price / model (remembered per browser) ── */
+        const sortSel = document.getElementById('sortSel');
+        function sortCards(mode) {
+            if (!grid) return;
+            const num = (c, k) => parseFloat(c.dataset[k]) || 0;
+            const by = {
+                new:   (a, b) => num(b, 'id') - num(a, 'id'),
+                old:   (a, b) => num(b, 'days') - num(a, 'days'),
+                phigh: (a, b) => num(b, 'price') - num(a, 'price'),
+                plow:  (a, b) => (num(a, 'price') || 1e15) - (num(b, 'price') || 1e15),
+                model: (a, b) => (a.dataset.model || '').localeCompare(b.dataset.model || ''),
+            }[mode] || null;
+            if (!by) return;
+            cards.slice().sort(by).forEach(c => grid.appendChild(c));
+            if (emptyMsg) grid.appendChild(emptyMsg);
+        }
+        if (sortSel) {
+            try { const m = localStorage.getItem('f1cDashSort'); if (m && sortSel.querySelector('option[value="' + m + '"]')) { sortSel.value = m; sortCards(m); } } catch (e) {}
+            sortSel.addEventListener('change', () => { sortCards(sortSel.value); try { localStorage.setItem('f1cDashSort', sortSel.value); } catch (e) {} });
+        }
     })();
 
-    /* ── Showroom stage: pick a backdrop for each photo, then frame the car ──
-       Reads a small copy of the image once:
-         1. The ring of edge pixels tells us what the photo was shot on.
-              very mixed colours  -> a real photo filling its frame -> "scene"
-              even and near white -> official render on white      -> "studio"
-              even and not white  -> render on a plain backdrop     -> "matte",
-                                     and the stage takes that exact colour so
-                                     the photo's edges never show
-         2. For studio and matte, every pixel that differs from the backdrop is
-            the car. Its bounding box is found and the photo is zoomed so the car
-            fills the stage, sitting on the floor. Every car therefore appears at
-            the same size, however much empty margin the source photo had.
-       If the file cannot load, the empty stage is removed from the card. */
+    /* ── live: tell the user when someone else changed the stock (sold, reserved, moved, added) ── */
     (function () {
-        const PAD = { l: 18, r: 18, t: 12, b: 13 };
-
-        function frame(box) {
-            const img = box.querySelector('img');
-            const bb  = box._bbox;
-            if (!img || !bb || !img.naturalWidth) return;
-            const sw = box.clientWidth  - PAD.l - PAD.r;
-            const sh = box.clientHeight - PAD.t - PAD.b;
-            if (sw <= 0 || sh <= 0) return;
-            const nw = img.naturalWidth, nh = img.naturalHeight;
-            const cw = (bb.x1 - bb.x0) * nw, ch = (bb.y1 - bb.y0) * nh;
-            const k  = Math.min(sw / cw, sh / ch);
-            img.style.position  = 'absolute';
-            img.style.maxWidth  = 'none';
-            img.style.padding   = '0';
-            img.style.objectFit = 'fill';
-            img.style.width  = (nw * k) + 'px';
-            img.style.height = (nh * k) + 'px';
-            img.style.left   = (PAD.l + (sw - cw * k) / 2 - bb.x0 * nw * k) + 'px';
-            img.style.top    = (PAD.t + (sh - ch * k)     - bb.y0 * nh * k) + 'px';   // wheels on the floor
-        }
-
-        function classify(img) {
-            const box = img.closest('.vehicle-photo');
-            if (!box) return;
+        const SIG = <?= json_encode((object)$sigMap) ?>;
+        const bar = document.getElementById('liveBar'), txt = document.getElementById('liveTxt');
+        const AR = <?= json_encode($lang === 'ar') ?>;
+        let busy = false;
+        async function pulse() {
+            if (busy || document.hidden) return;
+            busy = true;
             try {
-                const w = 120;
-                const h = Math.max(24, Math.round(w * img.naturalHeight / img.naturalWidth));
-                const cv = document.createElement('canvas');
-                cv.width = w; cv.height = h;
-                const cx = cv.getContext('2d', { willReadFrequently: true });
-                cx.drawImage(img, 0, 0, w, h);
-                const d  = cx.getImageData(0, 0, w, h).data;
-                const at = function (x, y) { const i = (y * w + x) * 4; return [d[i], d[i + 1], d[i + 2]]; };
-
-                const ring = [];
-                for (let x = 1; x < w - 1; x += 5) { ring.push(at(x, 1)); ring.push(at(x, h - 2)); }
-                for (let y = 1; y < h - 1; y += 3) { ring.push(at(1, y)); ring.push(at(w - 2, y)); }
-                const m = [0, 1, 2].map(function (c) {
-                    return ring.reduce(function (a, p) { return a + p[c]; }, 0) / ring.length;
-                });
-                const spread = Math.sqrt(ring.reduce(function (a, p) {
-                    return a + (p[0] - m[0]) * (p[0] - m[0]) + (p[1] - m[1]) * (p[1] - m[1]) + (p[2] - m[2]) * (p[2] - m[2]);
-                }, 0) / ring.length);
-                const lum = 0.299 * m[0] + 0.587 * m[1] + 0.114 * m[2];
-
-                if (spread > 34) {
-                    box.classList.add('scene');
-                } else {
-                    if (lum > 226) {
-                        box.classList.add('studio');
-                    } else {
-                        box.classList.add('matte');
-                        box.style.setProperty('--stage-bg', 'rgb(' + m.map(Math.round).join(',') + ')');
-                    }
-                    let x0 = w, y0 = h, x1 = -1, y1 = -1;
-                    for (let y = 0; y < h; y++) {
-                        for (let x = 0; x < w; x++) {
-                            const p = at(x, y);
-                            if (Math.abs(p[0] - m[0]) + Math.abs(p[1] - m[1]) + Math.abs(p[2] - m[2]) > 60) {
-                                if (x < x0) x0 = x; if (x > x1) x1 = x;
-                                if (y < y0) y0 = y; if (y > y1) y1 = y;
-                            }
-                        }
-                    }
-                    const fw = (x1 - x0 + 1) / w, fh = (y1 - y0 + 1) / h;
-                    // only trust a sensible outline; otherwise the photo is simply fitted whole
-                    if (x1 > 0 && fw > 0.08 && fh > 0.08 && !(fw > 0.97 && fh > 0.97)) {
-                        box._bbox = { x0: x0 / w, y0: y0 / h, x1: (x1 + 1) / w, y1: (y1 + 1) / h };
-                        frame(box);
+                const r = await (await fetch('dashboard_pulse.php', { credentials: 'same-origin', cache: 'no-store' })).json();
+                if (r && r.ok) {
+                    let n = 0;
+                    for (const id in r.sig) if (SIG[id] !== r.sig[id]) n++;       // new or changed
+                    for (const id in SIG) if (!(id in r.sig)) n++;               // gone (sold …)
+                    if (n > 0) {
+                        txt.textContent = AR ? (n === 1 ? 'في تغيير جديد في المخزون' : n + ' تغييرات جديدة في المخزون') : (n === 1 ? '1 change in the stock' : n + ' changes in the stock');
+                        bar.classList.add('on');
                     }
                 }
-            } catch (e) { /* stays on the default stage, fitted whole */ }
-            box.classList.add('ready');
+            } catch (e) {}
+            busy = false;
         }
-
-        document.querySelectorAll('.vehicle-photo img').forEach(function (img) {
-            const box = img.closest('.vehicle-photo');
-            img.addEventListener('error', function () { if (box) box.remove(); }, { once: true });
-            if (img.complete && img.naturalWidth) classify(img);
-            else img.addEventListener('load', function () { classify(img); }, { once: true });
-        });
-
-        // cards change width with the screen, so re-frame after a resize or rotate
-        let t = null;
-        window.addEventListener('resize', function () {
-            clearTimeout(t);
-            t = setTimeout(function () {
-                document.querySelectorAll('.vehicle-photo').forEach(function (b) { if (b._bbox) frame(b); });
-            }, 120);
-        });
+        setInterval(pulse, 45000);
+        document.addEventListener('visibilitychange', () => { if (!document.hidden) pulse(); });
     })();
 
     /* Consignment strip open or closed, remembered per browser */
