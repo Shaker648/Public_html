@@ -49,17 +49,37 @@ self.addEventListener('notificationclick', (event) => {
 });
 
 /* the browser renewed the subscription: register the new one right away */
+// The page tells us this phone's current endpoint; kept so a renewal can be
+// matched even when the browser doesn't give the old subscription (Safari).
+const META = 'f1c-push-meta', EP_KEY = '/__f1c_endpoint';
+async function keepEndpoint(ep) { try { const c = await caches.open(META); await c.put(EP_KEY, new Response(ep)); } catch (e) {} }
+async function keptEndpoint() { try { const c = await caches.open(META); const r = await c.match(EP_KEY); return r ? await r.text() : ''; } catch (e) { return ''; } }
+self.addEventListener('message', (event) => {
+  const d = event.data || {};
+  if (d.type === 'f1c-endpoint' && typeof d.endpoint === 'string') event.waitUntil(keepEndpoint(d.endpoint));
+});
+
+// The browser replaced this phone's subscription (happens now and then on
+// Chrome and iPhone) — tell the server, which works even when nobody is
+// logged in, so notifications keep coming.
 self.addEventListener('pushsubscriptionchange', (event) => {
   event.waitUntil((async () => {
     try {
       const old = event.oldSubscription;
-      const key = old && old.options ? old.options.applicationServerKey : null;
-      const sub = event.newSubscription || (key ? await self.registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key }) : null);
+      let key = old && old.options ? old.options.applicationServerKey : null;
+      if (!key) {   // Safari may not give the old one: fetch the server key again
+        const k = await (await fetch('push_subscribe.php?action=key', { credentials: 'include' })).json().catch(() => null);
+        if (k && k.key) { const pad = '='.repeat((4 - (k.key.length % 4)) % 4); key = Uint8Array.from(atob((k.key + pad).replace(/-/g, '+').replace(/_/g, '/')), (c) => c.charCodeAt(0)); }
+      }
+      const sub = event.newSubscription || (await self.registration.pushManager.getSubscription()) ||
+                  (key ? await self.registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key }) : null);
       if (!sub) return;
-      await fetch('push_subscribe.php', {
+      const hint = await keptEndpoint();
+      const r = await fetch('push_subscribe.php', {
         method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'renew', old: old ? old.endpoint : '', sub: sub.toJSON() }),
+        body: JSON.stringify({ action: 'renew', old: old ? old.endpoint : '', hint, sub: sub.toJSON() }),
       });
+      if (r.ok && (await r.json()).ok) await keepEndpoint(sub.endpoint);
     } catch (e) {}
   })());
 });
