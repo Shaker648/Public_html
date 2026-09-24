@@ -88,8 +88,18 @@ function push_tables(PDO $pdo): void
         id INT AUTO_INCREMENT PRIMARY KEY,
         log_id INT NOT NULL,
         user_id INT NOT NULL,
+        seen_at DATETIME NULL,
+        read_at DATETIME NULL,
         INDEX idx_user (user_id, log_id)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    // older installs: add 'shown in the system' / 'message read' — what was sent before counts as already seen
+    try {
+        $cols = $pdo->query("SHOW COLUMNS FROM notify_inbox")->fetchAll(PDO::FETCH_COLUMN);
+        if (!in_array('seen_at', $cols, true)) {
+            $pdo->exec("ALTER TABLE notify_inbox ADD seen_at DATETIME NULL, ADD read_at DATETIME NULL");
+            $pdo->exec("UPDATE notify_inbox SET seen_at = NOW(), read_at = NOW()");
+        }
+    } catch (Throwable $e) { error_log('notify_inbox upgrade: ' . $e->getMessage()); }
     $done = true;
 }
 
@@ -574,6 +584,8 @@ function notify_custom(PDO $pdo, array $userIds, string $title, string $body, st
     $pdo->prepare("INSERT INTO notify_log (event, title, body, url, actor, recipients) VALUES ('message', ?, ?, 'dashboard.php', ?, ?)")
         ->execute([$title, $body, $actor, count($ids)]);
     $logId = (int)$pdo->lastInsertId();
+    $url   = 'dashboard.php?msg=' . $logId;   // tapping it on the phone opens the message inside the system
+    $pdo->prepare("UPDATE notify_log SET url = ? WHERE id = ?")->execute([$url, $logId]);
     $ins = $pdo->prepare("INSERT INTO notify_inbox (log_id, user_id) VALUES (?, ?)");
     foreach ($ids as $id) $ins->execute([$logId, $id]);
 
@@ -583,7 +595,7 @@ function notify_custom(PDO $pdo, array $userIds, string $title, string $body, st
 
     $rtl = (bool)preg_match('/\p{Arabic}/u', $title . $body);
     $res = push_send_many($pdo, $subs, [
-        'title' => $title, 'body' => $body, 'url' => 'dashboard.php', 'tag' => 'msg-' . $logId,
+        'title' => $title, 'body' => $body, 'url' => $url, 'tag' => 'msg-' . $logId,
         'lang' => $rtl ? 'ar' : 'en', 'dir' => $rtl ? 'rtl' : 'ltr', 'ts' => time() * 1000,
     ]);
     $ok = count(array_filter($res, fn($r) => $r[0] >= 200 && $r[0] < 300));
