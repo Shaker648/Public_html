@@ -2177,8 +2177,7 @@ body::before { content:''; position:fixed; inset:0; z-index:-1; pointer-events:n
 
 .px-stock { display:inline-flex; align-items:center; gap:5px; margin-top:6px; height:22px; padding:0 9px; border-radius:50px; font-size:11px; font-weight:900; cursor:default; white-space:nowrap; }
 .px-stock.has { background:rgba(34,197,94,.13); color:#4ade80; border:1px solid rgba(34,197,94,.28); }
-.px-stock.none { background:rgba(255,255,255,.04); color:#64748b; border:1px solid rgba(255,255,255,.07); }
-tr.px-dim > td { opacity:.5; transition:opacity .2s; } tr.px-dim:hover > td { opacity:1; }
+.px-stock.none { background:rgba(251,191,36,.12); color:#fcd34d; border:1px solid rgba(251,191,36,.3); }
 .px-chg { display:inline-flex; align-items:center; gap:3px; margin-top:6px; height:21px; padding:0 8px; border-radius:50px; font-size:10.5px; font-weight:900; white-space:nowrap; cursor:default; }
 .px-chg.up { background:rgba(239,68,68,.13); color:#f87171; } .px-chg.down { background:rgba(34,197,94,.13); color:#4ade80; }
 .px-tools { display:inline-flex; gap:5px; margin-top:6px; margin-inline-start:6px; vertical-align:middle; }
@@ -2330,7 +2329,6 @@ tr:has(.price-input-wrap.active) .px-stock, tr:has(.price-input-wrap.active) .px
             sp.innerHTML = '<span class="px-stock ' + (yd.stock ? 'has' : 'none') + '" title="' + esc(Object.entries(yd.br || {}).map(([b, n]) => b + ': ' + n).join(' · ')) + '">🚗 ' +
                            (yd.stock ? yd.stock + ' ' + esc(T.inStock) : esc(T.noStock)) + '</span>';
             yearTd.appendChild(sp.firstChild);
-            if (!yd.stock) tr.classList.add('px-dim');
         }
         // change arrow + copy / share, under the official price
         const offTd = (document.getElementById('disp-off-' + id) || {}).parentElement;
