@@ -137,6 +137,8 @@ function menuOptions($isManager, $lang) {
     if ($isManager) {
         $opts[] = ['label' => t('📦 Reorder guidance', '📦 توصيات إعادة الطلب', $lang), 'field' => 'intent', 'value' => 'reorder'];
     }
+    if (can('page.attendance'))       $opts[] = ['label' => t('⏱️ My hours', '⏱️ ساعاتي', $lang), 'field' => 'att', 'value' => 'mine'];
+    if (can('page.attendance_admin')) $opts[] = ['label' => t("👥 Who's at work", '👥 مين في الشغل', $lang), 'field' => 'att', 'value' => 'who'];
     return $opts;
 }
 function backOption($lang) {
@@ -153,8 +155,43 @@ function followUps($lang, $isManager) {
     ];
 }
 function respond($ctx, $message, $options) {
-    echo json_encode(['ctx' => $ctx, 'message' => $message, 'options' => $options], JSON_UNESCAPED_UNICODE);
+    echo json_encode(['ctx' => $ctx, 'message' => $message, 'options' => $options, 'cards' => $GLOBALS['F1C_CARDS'] ?? []], JSON_UNESCAPED_UNICODE);
     exit;
+}
+
+/* ── v4: cars in an answer also come back as tappable cards (photo from the
+   car-image library, status, branch → opens the car's timeline) ── */
+$F1C_CARDS = [];
+function addCard($pdo, array $r, $lang) {
+    global $F1C_CARDS;
+    static $imgMap = null;
+    if (count($F1C_CARDS) >= 8 || empty($r['id'])) return;
+    foreach ($F1C_CARDS as $c) if ($c['id'] === (int)$r['id']) return;
+    if ($imgMap === null) {
+        $imgMap = [];
+        try {
+            if (is_file(__DIR__ . '/car_images_helpers.php')) {
+                require_once __DIR__ . '/car_images_helpers.php';
+                if (function_exists('car_images_map')) $imgMap = car_images_map($pdo);
+            }
+        } catch (Throwable $e) { $imgMap = []; }
+    }
+    $img = '';
+    try { if ($imgMap && function_exists('car_image_url_for')) $img = car_image_url_for($imgMap, $r, true); } catch (Throwable $e) {}
+    $stMap = ['available' => t('Available', 'متاحة', $lang), 'reserved' => t('Reserved', 'محجوزة', $lang),
+              'consignment' => t('Consignment', 'أمانة', $lang), 'sold' => t('Sold', 'مباعة', $lang)];
+    $F1C_CARDS[] = [
+        'id'      => (int)$r['id'],
+        'title'   => trim(($r['brand'] ?? '') . ' ' . ($r['model'] ?? '')),
+        'sub'     => trim(($r['trim_name'] ?? '') . ' · ' . ($r['car_year'] ?? ''), ' ·'),
+        'color'   => colorLabel($pdo, (string)($r['color'] ?? ''), $lang),
+        'branch'  => branchTxt($r, $lang),
+        'status'  => (string)($r['status'] ?? ''),
+        'statusL' => $stMap[$r['status'] ?? ''] ?? (string)($r['status'] ?? ''),
+        'chassis' => (string)($r['chassis'] ?? ''),
+        'img'     => $img,
+        'url'     => 'vehicle_timeline.php?id=' . (int)$r['id'] . '&lang=' . $lang,
+    ];
 }
 
 /* ═══════════════════════ NLU: normalization ═══════════════════════ */
@@ -498,7 +535,7 @@ function detectIntent($rawText, $ents) {
 /* ═══════════════════ data fetchers (role-neutral) ═══════════════════ */
 
 function fetchStock($pdo, $brand, $model, $color = null, $branch = null, $year = null) {
-    $sql = "SELECT cars.trim_name, cars.car_year, cars.color, cars.chassis, cars.branch, cars.created_at,
+    $sql = "SELECT cars.id, cars.brand, cars.model, cars.status, cars.trim_name, cars.car_year, cars.color, cars.chassis, cars.branch, cars.created_at,
                    branches.name_ar, branches.name_en
             FROM cars LEFT JOIN branches ON cars.branch = branches.name
             WHERE cars.status IN ('available','reserved','consignment')";
@@ -560,6 +597,7 @@ function answerStock($pdo, $lang, $isManager, $brand, $model, $color = null, $br
             $priceCache[$key] = $pStmt->fetch(PDO::FETCH_ASSOC) ?: null;
         }
         $p = $priceCache[$key];
+        addCard($pdo, $r, $lang);
         $line  = "• {$r['trim_name']} ({$r['car_year']}) — " . colorLabel($pdo, $r['color'], $lang);
         $line .= "\n   📍 " . branchTxt($r, $lang) . "   🔩 {$r['chassis']}";
         if ($p) {
@@ -781,7 +819,7 @@ function buildDataPack($pdo, $lang, $isManager, $ents) {
     return implode("\n", $out);
 }
 
-function callClaudeAI($apiKey, $lang, $isManager, $username, $question, $dataPack) {
+function callClaudeAI($apiKey, $lang, $isManager, $username, $question, $dataPack, array $history = []) {
     $roleName = $isManager ? 'manager' : 'sales';
     $system = "You are the First 1 Car stock assistant (Egyptian multi-brand car dealership internal system). "
             . "Answer ONLY from the DATA section — never invent stock, prices, or numbers. "
@@ -793,10 +831,7 @@ function callClaudeAI($apiKey, $lang, $isManager, $username, $question, $dataPac
         'model'      => 'claude-haiku-4-5',
         'max_tokens' => 600,
         'system'     => $system,
-        'messages'   => [[
-            'role'    => 'user',
-            'content' => "DATA:\n{$dataPack}\n\nUSER ({$username}) ASKS: {$question}",
-        ]],
+        'messages'   => aiMessages($history, "DATA:\n{$dataPack}\n\nUSER ({$username}) ASKS: {$question}"),
     ], JSON_UNESCAPED_UNICODE);
 
     $ch = curl_init('https://api.anthropic.com/v1/messages');
@@ -812,16 +847,128 @@ function callClaudeAI($apiKey, $lang, $isManager, $username, $question, $dataPac
         CURLOPT_TIMEOUT        => 20,
         CURLOPT_CONNECTTIMEOUT => 6,
     ]);
-    $res = curl_exec($ch);
-    $err = curl_errno($ch);
+    $res  = curl_exec($ch);
+    $err  = curl_errno($ch);
+    $code = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
     curl_close($ch);
-    if ($err || !$res) return null;
+    if ($err || !$res) { error_log('chatbot AI: network error ' . $err); return null; }
     $data = json_decode($res, true);
-    if (!isset($data['content'][0]['text'])) return null;
-    return trim($data['content'][0]['text']);
+    if ($code !== 200) {   // 401 bad key · 429 busy · 5xx/529 overloaded → the local answer is used instead
+        error_log('chatbot AI: HTTP ' . $code . ' ' . (($data['error']['type'] ?? '') . ' ' . ($data['error']['message'] ?? '')));
+        return null;
+    }
+    if (($data['stop_reason'] ?? '') === 'refusal') return null;
+    $out = '';
+    foreach ((array)($data['content'] ?? []) as $b) if (($b['type'] ?? '') === 'text') $out .= $b['text'];
+    return trim($out) !== '' ? trim($out) : null;
+}
+
+/* the last few chat lines (from the widget) as proper alternating turns, then the question */
+function aiMessages(array $history, $final) {
+    $msgs = [];
+    foreach (array_slice($history, -6) as $h) {
+        $role = (($h['role'] ?? '') === 'user') ? 'user' : 'assistant';
+        $txt  = mb_substr(trim((string)($h['text'] ?? '')), 0, 600);
+        if ($txt === '') continue;
+        if ($msgs && end($msgs)['role'] === $role) { $msgs[count($msgs) - 1]['content'] .= "\n" . $txt; continue; }
+        $msgs[] = ['role' => $role, 'content' => $txt];
+    }
+    while ($msgs && $msgs[0]['role'] !== 'user') array_shift($msgs);           // must start with the user
+    if ($msgs && end($msgs)['role'] === 'user') array_pop($msgs);               // the new question goes last
+    $msgs[] = ['role' => 'user', 'content' => $final];
+    return $msgs;
+}
+
+/* ═══════════════════ ATTENDANCE (v4) ═══════════════════ */
+
+function attIntent($rawText) {
+    $n = ' ' . normTxt($rawText) . ' ';
+    $hasAny = fn($n, array $w) => hasAny($n, array_map('normTxt', $w));   // keywords get the same clean-up as the question
+    if ($hasAny($n, ['مين غايب', 'مين ما جاش', 'مين مجاش', 'مين ماجاش', 'مين محضرش', 'الغياب', 'غياب النهارده', 'absent', 'who didnt come', "who didn't come"])) return 'absent';
+    if ($hasAny($n, ['مين في الشغل', 'مين موجود', 'مين حاضر', 'مين شغال', 'مين في الفرع', 'who is at work', "who's at work", 'whos at work', 'who is working', 'who is in'])) return 'who';
+    if ($hasAny($n, ['ساعاتي', 'ساعات شغلي', 'اشتغلت كام', 'حضوري', 'بصمتي', 'انا مسجل', 'مسجل حضور', 'my hours', 'am i clocked', 'my attendance', 'clocked in?'])) return 'mine';
+    return null;
+}
+
+function attHM($secs, $lang) {
+    $secs = max(0, (int)$secs);
+    return sprintf($lang === 'ar' ? '%dس %02dد' : '%dh %02dm', intdiv($secs, 3600), intdiv($secs % 3600, 60));
+}
+function attTime($dt, $lang) {
+    $ts = strtotime((string)$dt);
+    if (!$ts) return '';
+    return date('h:i', $ts) . ($lang === 'ar' ? (date('A', $ts) === 'AM' ? ' ص' : ' م') : ' ' . date('A', $ts));
+}
+
+function answerAttendance($pdo, $lang, $which, $username) {
+    $uid = (int)($_SESSION['user_id'] ?? 0);
+    if ($which === 'mine') {
+        if (!can('page.attendance')) return t("Attendance isn't enabled for you.", 'البصمة مش مفعّلة ليك.', $lang);
+        $st = $pdo->prepare("SELECT clock_in, branch_name, TIMESTAMPDIFF(SECOND, clock_in, NOW()) el FROM attendance_logs WHERE user_id = ? AND status = 'active' LIMIT 1");
+        $st->execute([$uid]);
+        $act = $st->fetch(PDO::FETCH_ASSOC);
+        $today = $pdo->query("SELECT CURDATE()")->fetchColumn();
+        $ws = date('Y-m-d', strtotime('-' . (((int)date('w', strtotime($today)) + 1) % 7) . ' day', strtotime($today)));
+        $st = $pdo->prepare("SELECT DATE(clock_in) d, SUM(CASE WHEN auto_closed = 1 THEN 0 ELSE TIMESTAMPDIFF(SECOND, clock_in, COALESCE(clock_out, NOW())) END) s
+                             FROM attendance_logs WHERE user_id = ? AND DATE(clock_in) BETWEEN ? AND ? GROUP BY DATE(clock_in)");
+        $st->execute([$uid, $ws, $today]);
+        $by = []; foreach ($st as $r) $by[$r['d']] = (int)$r['s'];
+        $week = array_sum($by); $days = count(array_filter($by));
+        $lines = [];
+        $lines[] = $act
+            ? t('🟢 You are clocked in since ', '🟢 أنت مسجّل حضور من ', $lang) . attTime($act['clock_in'], $lang) . ' · ⏱️ ' . attHM($act['el'], $lang)
+            : t('⚪ You are not clocked in right now.', '⚪ أنت مش مسجّل حضور دلوقتي.', $lang);
+        $lines[] = t('📅 Today: ', '📅 النهارده: ', $lang) . attHM($by[$today] ?? 0, $lang);
+        $lines[] = t('🗓️ This week: ', '🗓️ الأسبوع ده: ', $lang) . attHM($week, $lang) . ' · ' . $days . t(' days', ' أيام', $lang)
+                 . ($days ? ' · ⌀ ' . attHM(intdiv($week, $days), $lang) : '');
+        return "⏱️ " . t('Your attendance', 'حضورك', $lang) . "\n" . implode("\n", $lines);
+    }
+    if (!can('page.attendance_admin')) return t('That one is for admins only 🔒', 'دي للأدمن بس 🔒', $lang);
+    if ($which === 'who') {
+        $rows = $pdo->query("SELECT u.username, a.clock_in, a.branch_name, b.name_ar, b.name_en, TIMESTAMPDIFF(SECOND, a.clock_in, NOW()) el
+                             FROM attendance_logs a JOIN users u ON u.id = a.user_id LEFT JOIN branches b ON b.name = a.branch_name
+                             WHERE a.status = 'active' ORDER BY a.clock_in")->fetchAll(PDO::FETCH_ASSOC);
+        if (!$rows) return t('Nobody is clocked in right now 🌙', 'مفيش حد مسجّل حضور دلوقتي 🌙', $lang);
+        $lines = array_map(fn($r) => '🟢 ' . $r['username'] . ' · 📍 ' . (($lang === 'ar' ? $r['name_ar'] : $r['name_en']) ?: $r['branch_name'])
+                                    . ' · ' . t('since ', 'من ', $lang) . attTime($r['clock_in'], $lang) . ' (' . attHM($r['el'], $lang) . ')', $rows);
+        return '👥 ' . t(count($rows) . ' at work now', count($rows) . ' في الشغل دلوقتي', $lang) . "\n" . implode("\n", $lines);
+    }
+    // absent: people who normally clock in (in the last 60 days) with nothing today
+    $off = [];
+    try {
+        $sv = $pdo->query("SELECT setting_value FROM settings WHERE setting_key = 'attendance_settings'")->fetchColumn();
+        $off = array_map('intval', (array)((json_decode((string)$sv, true) ?: [])['off'] ?? []));
+    } catch (Throwable $e) {}
+    $today = $pdo->query("SELECT CURDATE()")->fetchColumn();
+    if (in_array((int)date('w', strtotime($today)), $off, true)) return t('Today is the weekly day off 🌙', 'النهارده إجازة أسبوعية 🌙', $lang);
+    $came = array_map('intval', $pdo->query("SELECT DISTINCT user_id FROM attendance_logs WHERE DATE(clock_in) = CURDATE()")->fetchAll(PDO::FETCH_COLUMN));
+    $recent = array_map('intval', $pdo->query("SELECT DISTINCT user_id FROM attendance_logs WHERE clock_in >= DATE_SUB(NOW(), INTERVAL 60 DAY)")->fetchAll(PDO::FETCH_COLUMN));
+    $names = [];
+    foreach ($pdo->query("SELECT id, username, role FROM users WHERE active = 1 ORDER BY username") as $u) {
+        $id = (int)$u['id'];
+        if (in_array($id, $came, true) || !in_array($id, $recent, true)) continue;
+        try { if (function_exists('perm_effective') && empty(perm_effective($pdo, $id, (string)$u['role'])['page.attendance'])) continue; } catch (Throwable $e) {}
+        $names[] = '🔴 ' . $u['username'];
+    }
+    if (!$names) return t('Everyone came in today 🎉', 'الكل حضر النهارده 🎉', $lang);
+    return t(count($names) . " didn't come today", count($names) . ' ما جوش النهارده', $lang) . "\n" . implode("\n", $names);
+}
+
+function attOptions($lang) {
+    $o = [];
+    if (can('page.attendance'))       $o[] = ['label' => t('⏱️ My hours', '⏱️ ساعاتي', $lang), 'field' => 'att', 'value' => 'mine'];
+    if (can('page.attendance_admin')) { $o[] = ['label' => t("👥 Who's at work", '👥 مين في الشغل', $lang), 'field' => 'att', 'value' => 'who'];
+                                        $o[] = ['label' => t("🔴 Who didn't come", '🔴 مين ما جاش', $lang), 'field' => 'att', 'value' => 'absent']; }
+    $o[] = backOption($lang);
+    return $o;
 }
 
 /* ═══════════════════ FREE-TEXT ROUTER ═══════════════════ */
+
+if ($text !== '' && !$tap && ($attQ = attIntent($text))) {
+    try { respond([], answerAttendance($pdo, $lang, $attQ, $username), attOptions($lang)); }
+    catch (Throwable $e) { error_log('chatbot attendance: ' . $e->getMessage()); }
+}
 
 if ($text !== '' && !$tap) {
     $ents   = extractEntities($pdo, $text);
@@ -882,6 +1029,7 @@ if ($text !== '' && !$tap) {
                   'reserved' => t('Reserved ⏳','محجوزة ⏳',$lang), 'consignment' => t('Consignment 🤝','امانة 🤝',$lang)];
         $lines = [];
         foreach ($rows as $r) {
+            addCard($pdo, $r, $lang);
             $days = !empty($r['created_at']) ? (int)floor((time() - strtotime($r['created_at'])) / 86400) : null;
             $l = "🚗 {$r['brand']} {$r['model']} {$r['trim_name']} ({$r['car_year']})"
                . "\n   🔩 {$r['chassis']} · 🎨 " . colorLabel($pdo, $r['color'], $lang)
@@ -1035,7 +1183,8 @@ if ($text !== '' && !$tap) {
         /* ── couldn't resolve locally → AI tier if configured ── */
         if ($AI_KEY !== '') {
             $pack = buildDataPack($pdo, $lang, $isManager, $ents);
-            $ai   = callClaudeAI($AI_KEY, $lang, $isManager, $username, $text, $pack);
+            $hist = is_array($rawBody['hist'] ?? null) ? $rawBody['hist'] : [];
+            $ai   = callClaudeAI($AI_KEY, $lang, $isManager, $username, $text, $pack, $hist);
             if ($ai !== null && $ai !== '') {
                 respond([], $ai, menuOptions($isManager, $lang));
             }
@@ -1050,6 +1199,11 @@ if ($text !== '' && !$tap) {
 }
 
 /* ═══════════════════ TAP FLOW (v2, + deep intent) ═══════════════════ */
+
+if ($tap && ($tap['field'] ?? '') === 'att' && in_array($tap['value'] ?? '', ['mine', 'who', 'absent'], true)) {
+    try { respond([], answerAttendance($pdo, $lang, $tap['value'], $username), attOptions($lang)); }
+    catch (Throwable $e) { error_log('chatbot attendance: ' . $e->getMessage()); respond([], t('Something went wrong.', 'حصل خطأ.', $lang), menuOptions($isManager, $lang)); }
+}
 
 if ($tap && isset($tap['field'])) {
     if ($tap['field'] === '__reset__') {
