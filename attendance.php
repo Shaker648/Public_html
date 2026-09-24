@@ -6,9 +6,70 @@
 
 require 'auth.php';
 require 'config.php';
-// phone alerts are optional: clocking in must work even if these files are missing
-if (is_file(__DIR__ . '/attendance_helpers.php')) require_once __DIR__ . '/attendance_helpers.php';
-$attAlerts = function_exists('att_settings') && function_exists('notify_event');
+// phone alerts are optional: clocking in must work even if push_helpers.php is missing or old
+if (is_file(__DIR__ . '/push_helpers.php')) require_once __DIR__ . '/push_helpers.php';
+/* ---------------- Attendance settings + late rule (kept inside this page, no extra file needed) ---------------- */
+if (!function_exists('att_settings')) {
+    function att_settings_table(PDO $pdo): void
+    {
+        static $done = false;
+        if ($done) return;
+        $pdo->exec("CREATE TABLE IF NOT EXISTS settings (
+            setting_key   VARCHAR(64) PRIMARY KEY,
+            setting_value TEXT,
+            updated_by    VARCHAR(64),
+            updated_at    DATETIME
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+        $done = true;
+    }
+    /** Saved settings, with defaults: start 10:00, 15 min grace, no days off, 50 m geofence. */
+    function att_settings(PDO $pdo): array
+    {
+        $s = [];
+        try {
+            att_settings_table($pdo);
+            $q = $pdo->prepare("SELECT setting_value FROM settings WHERE setting_key = 'attendance_settings' LIMIT 1");
+            $q->execute();
+            $s = json_decode((string)$q->fetchColumn(), true);
+        } catch (Throwable $e) { error_log('att_settings: ' . $e->getMessage()); }
+        $s = is_array($s) ? $s : [];
+        $start = array_key_exists('start', $s) ? (string)$s['start'] : '10:00';
+        return [
+            'start' => preg_match('/^([01]\d|2[0-3]):[0-5]\d$/', $start) ? $start : '',   // '' = late tracking off
+            'grace' => max(0, min(180, (int)($s['grace'] ?? 15))),
+            'off'   => array_values(array_unique(array_intersect(array_map('intval', (array)($s['off'] ?? [])), range(0, 6)))),   // 0 = Sunday … 6 = Saturday
+            'fence' => max(10, min(5000, (int)($s['fence'] ?? 50))),
+        ];
+    }
+    function att_settings_save(PDO $pdo, array $in, string $by): void
+    {
+        att_settings_table($pdo);
+        $start = trim((string)($in['start'] ?? ''));
+        $pdo->prepare("INSERT INTO settings (setting_key, setting_value, updated_by, updated_at) VALUES ('attendance_settings', ?, ?, NOW())
+                       ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value), updated_by = VALUES(updated_by), updated_at = NOW()")
+            ->execute([json_encode([
+                'start' => preg_match('/^([01]\d|2[0-3]):[0-5]\d$/', $start) ? $start : '',
+                'grace' => max(0, min(180, (int)($in['grace'] ?? 15))),
+                'off'   => array_values(array_unique(array_intersect(array_map('intval', (array)($in['off'] ?? [])), range(0, 6)))),
+                'fence' => max(10, min(5000, (int)($in['fence'] ?? 50))),
+            ]), $by]);
+    }
+    /** Is this date (Y-m-d) one of the weekly days off? */
+    function att_is_off(array $set, string $date): bool
+    {
+        return in_array((int)date('w', strtotime($date)), $set['off'], true);
+    }
+    /** Minutes late for a day's FIRST clock-in, counted from the start time; 0 when on time (within grace), on a day off, or tracking is off. */
+    function att_late_min(array $set, string $clockIn): int
+    {
+        if ($set['start'] === '' || $clockIn === '') return 0;
+        $ts = strtotime($clockIn);
+        if ($ts === false || att_is_off($set, date('Y-m-d', $ts))) return 0;
+        $m = intdiv($ts - strtotime(date('Y-m-d', $ts) . ' ' . $set['start'] . ':00'), 60);
+        return $m > $set['grace'] ? $m : 0;
+    }
+}
+$attAlerts = function_exists('notify_event');
 
 perm_require('page.attendance');
 
