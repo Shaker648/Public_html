@@ -659,7 +659,9 @@ function arDate($dt, $lang) {
         .cs-price { display:flex; align-items:baseline; gap:6px; flex-wrap:wrap; }
         .cs-price b { font-size:21px; font-weight:900; color:#4ade80; letter-spacing:.3px; font-variant-numeric:tabular-nums; text-shadow:0 0 18px rgba(74,222,128,.25); }
         .cs-price small { font-size:11px; color:#86efac; font-weight:800; opacity:.8; }
-        .cs-price .deal { font-size:11.5px; font-weight:800; padding:3px 9px; border-radius:999px; background:rgba(56,189,248,.12); color:#7dd3fc; border:1px solid rgba(56,189,248,.3); }
+        .cs-price .lbl { font-size:11.5px; font-weight:800; color:#94a3b8; }
+        .cs-price .sale-link { flex-basis:100%; font-size:11.5px; font-weight:800; color:#7dd3fc; text-decoration:none; opacity:.9; }
+        .cs-price .sale-link:hover { text-decoration:underline; opacity:1; }
         .cs-age { font-size:11.5px; font-weight:800; padding:4px 10px; border-radius:999px; white-space:nowrap; }
         .cs-age.new { background:rgba(34,197,94,.1); color:#86efac; border:1px solid rgba(34,197,94,.25); }
         .cs-age.mid { background:rgba(245,158,11,.12); color:#fcd34d; border:1px solid rgba(245,158,11,.35); }
@@ -1285,12 +1287,13 @@ function arDate($dt, $lang) {
                     <?php endif; ?>
                 </div>
 
-                <?php if (($canSeePrice && ($officialNum || $dealLabel !== '')) || $daysIn !== null): ?>
+                <?php if (($canSeePrice && $officialNum) || $daysIn !== null): ?>
                 <div class="card-strip">
-                    <?php if ($canSeePrice && ($officialNum || $dealLabel !== '')): ?>
+                    <?php if ($canSeePrice && $officialNum): ?>
                     <div class="cs-price">
-                        <?php if ($officialNum): ?><b><?= number_format((float)$officialNum) ?></b><small><?= $lang === 'ar' ? 'ج.م' : 'EGP' ?></small><?php endif; ?>
-                        <?php if ($dealLabel !== ''): ?><span class="deal"><?= htmlspecialchars($dealLabel) ?></span><?php endif; ?>
+                        <span class="lbl"><?= $lang === 'ar' ? 'السعر الرسمي' : 'Official price' ?></span>
+                        <b><?= number_format((float)$officialNum) ?></b><small><?= $lang === 'ar' ? 'ج.م' : 'EGP' ?></small>
+                        <a class="sale-link" href="prices.php?lang=<?= $lang ?>&search=<?= urlencode($car['model']) ?>"><?= $lang === 'ar' ? 'لسعر البيع ادخل على صفحة الأسعار ←' : 'Selling price → prices page' ?></a>
                     </div>
                     <?php endif; ?>
                     <?php if ($daysIn !== null): ?>
