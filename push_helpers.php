@@ -38,11 +38,9 @@ function notify_events(): array
         'sale_returned'    => ['إرجاع سيارة مباعة للمخزون',    'Sold car returned to stock', '⏪', ['admin']],
         'car_edited'       => ['تعديل بيانات سيارة',           'Car details edited',         '✏️', ['admin']],
         'price_changed'    => ['تغيير سعر',                    'Price changed',              '📈', ['admin']],
-        // attendance — [4] = on by default (every clock-in / out would be a lot, so those start off)
-        'att_late'         => ['تأخير في الحضور',              'Late arrival',               '⏰', ['admin']],
-        'att_far'          => ['بصمة بعيدة عن الفرع',          'Punch far from the branch',  '🛑', ['admin']],
-        'att_in'           => ['تسجيل حضور',                   'Clock in',                   '🟢', ['admin'], false],
-        'att_out'          => ['تسجيل انصراف',                 'Clock out',                  '🔵', ['admin'], false],
+        // attendance (bashma) — who receives them is chosen on notifications_admin.php
+        'att_in'           => ['تسجيل حضور',                   'Clock in',                   '🟢', ['admin']],
+        'att_out'          => ['تسجيل انصراف',                 'Clock out',                  '🔵', ['admin']],
     ];
 }
 
@@ -413,21 +411,15 @@ function notify_message(PDO $pdo, string $event, array $d, string $lang): array
             break;
         case 'att_in':
         case 'att_out':
-        case 'att_late':
-        case 'att_far':
             $who  = (string)($d['actor'] ?? '');
-            $at   = !empty($d['time']) ? date('h:i', strtotime((string)$d['time'])) . ($ar ? (date('A', strtotime((string)$d['time'])) === 'AM' ? ' ص' : ' م') : ' ' . date('A', strtotime((string)$d['time']))) : '';
+            $tt   = !empty($d['time']) ? strtotime((string)$d['time']) : false;
+            $at   = $tt ? date('h:i', $tt) . ($ar ? (date('A', $tt) === 'AM' ? ' ص' : ' م') : ' ' . date('A', $tt)) : '';
             $abr  = push_branch_label($pdo, (string)($d['branch'] ?? ''), $lang);
             $url  = 'attendance_admin.php?lang=' . $lang;
-            if ($event === 'att_in')   $title = $ev[2] . ' ' . $who . ($ar ? ' سجّل حضور' : ' clocked in');
-            if ($event === 'att_out')  $title = $ev[2] . ' ' . $who . ($ar ? ' سجّل انصراف' : ' clocked out');
-            if ($event === 'att_late') $title = $ev[2] . ' ' . $who . ($ar ? ' متأخر ' . (int)$d['late'] . ' دقيقة' : ' is ' . (int)$d['late'] . ' min late');
-            if ($event === 'att_far')  $title = $ev[2] . ' ' . ($ar ? 'بصمة بعيدة: ' : 'Far punch: ') . $who;
-            if ($event === 'att_far')  $body[] = (($d['dir'] ?? 'in') === 'out' ? ($ar ? 'انصراف' : 'Clock-out') : ($ar ? 'حضور' : 'Clock-in')) . ($ar ? ' على بعد ' . (int)$d['dist'] . ' متر من ' . $abr : ' ' . (int)$d['dist'] . ' m from ' . $abr);
-            $st   = !empty($d['start']) ? date('h:i', strtotime('2000-01-01 ' . $d['start'])) . ($ar ? (date('A', strtotime('2000-01-01 ' . $d['start'])) === 'AM' ? ' ص' : ' م') : ' ' . date('A', strtotime('2000-01-01 ' . $d['start']))) : '';
-            if ($event === 'att_late') $body[] = ($ar ? 'حضر ' . $at . ' · الموعد ' . $st : 'Arrived ' . $at . ' · start ' . $st) . ($abr !== '' ? ' · 📍 ' . $abr : '');
-            if ($event === 'att_in' || $event === 'att_far') $body[] = '🕐 ' . $at . ($abr !== '' && $event === 'att_in' ? ' · 📍 ' . $abr : '');
-            if ($event === 'att_out')  $body[] = '🕐 ' . $at . (isset($d['secs']) ? ' · ⏱️ ' . sprintf($ar ? '%dس %02dد' : '%dh %02dm', intdiv((int)$d['secs'], 3600), intdiv((int)$d['secs'] % 3600, 60)) : '') . ($abr !== '' ? ' · 📍 ' . $abr : '');
+            $title = $ev[2] . ' ' . $who . ($event === 'att_in' ? ($ar ? ' سجّل حضور' : ' clocked in') : ($ar ? ' سجّل انصراف' : ' clocked out'));
+            $body[] = '🕐 ' . $at . ($abr !== '' ? ' · 📍 ' . $abr : '')
+                    . ($event === 'att_out' && isset($d['secs']) ? ' · ⏱️ ' . sprintf($ar ? '%dس %02dد' : '%dh %02dm', intdiv((int)$d['secs'], 3600), intdiv((int)$d['secs'] % 3600, 60)) : '');
+            if (!empty($d['far'])) $body[] = '🛑 ' . ($ar ? 'على بعد ' . (int)$d['dist'] . ' متر من الفرع' : (int)$d['dist'] . ' m away from the branch');
             break;
         case 'test':
             $title = '🔔 ' . ($ar ? 'تجربة إشعارات First 1 Car' : 'First 1 Car test notification');
