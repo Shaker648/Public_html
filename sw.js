@@ -27,16 +27,36 @@ self.addEventListener('push', (event) => {
     timestamp: d.ts || Date.now(),
     dir: d.dir || 'auto',
     lang: d.lang || 'ar',
-    data: { url: d.url || 'dashboard.php' },
+    data: { url: d.url || 'dashboard.php', acts: d.acts || {} },
     vibrate: [120, 60, 120],
   };
-  event.waitUntil(self.registration.showNotification(title, options));
+  // buttons right on the notification (Android / desktop; iPhone shows the notification only)
+  if (Array.isArray(d.actions) && d.actions.length) options.actions = d.actions.slice(0, 2);
+  const jobs = [self.registration.showNotification(title, options)];
+  // the red number on the app icon = what this person hasn't seen yet
+  if (typeof d.badge === 'number' && self.navigator && 'setAppBadge' in self.navigator) {
+    jobs.push((d.badge > 0 ? self.navigator.setAppBadge(d.badge) : self.navigator.clearAppBadge()).catch(() => {}));
+  }
+  event.waitUntil(Promise.all(jobs));
 });
 
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
-  const target = new URL((event.notification.data && event.notification.data.url) || 'dashboard.php', self.registration.scope).href;
+  const data = event.notification.data || {};
+  const act = event.action && data.acts ? data.acts[event.action] : '';
+  let target = new URL(data.url || 'dashboard.php', self.registration.scope).href;
   event.waitUntil((async () => {
+    // «تمام» / «استلمت»: done in the background — nothing opens
+    if (act && act.indexOf('notify_act.php') === 0) {
+      try {
+        const r = await fetch(new URL(act + '&bg=1', self.registration.scope).href, { credentials: 'include', cache: 'no-store' });
+        const j = await r.json();
+        if (j && j.ok) return;
+      } catch (e) {}
+      target = new URL(act, self.registration.scope).href;   // no answer: open it instead
+    } else if (act) {
+      target = new URL(act, self.registration.scope).href;
+    }
     const wins = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
     for (const w of wins) {
       if (w.url.startsWith(self.registration.scope) && 'focus' in w) {

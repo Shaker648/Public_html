@@ -3,6 +3,7 @@
 require 'auth.php';
 require 'config.php';
 require_once __DIR__ . '/push_helpers.php';
+require_once __DIR__ . '/notify_smart.php';
 require_once 'car_images_helpers.php';
 require_once 'car_edits_helpers.php';
 
@@ -217,16 +218,20 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                 car_edits_log($pdo, $id, $changes, (string)$_SESSION['username']);
 
                 // a new branch is a real move: record it on the journey like a transfer
+                $transferMid = 0;
                 if (isset($changes['branch']) && in_array($car['status'], ['available', 'reserved'], true)) {
                     $pdo->prepare("INSERT INTO movements (car_id, from_branch, to_branch, moved_by, notes, event_type)
                                    VALUES (?, ?, ?, ?, ?, 'transfer')")
                         ->execute([$id, $changes['branch'][0], $changes['branch'][1], $_SESSION['username'], $t['ar']['edit_transfer']]);
+                    $transferMid = (int)$pdo->lastInsertId();
                 }
                 $pdo->commit();
 
                 $carNow = $car;
                 foreach ($changes as $f => [$o, $n]) $carNow[$f] = $n;
                 notify_event($pdo, 'car_edited', ['car' => $carNow, 'changes' => $changes]);
+                smart_car_edit($pdo, $car, $changes);   // chassis / sold car → admin
+                if ($transferMid) smart_transfer($pdo, [['id' => $id, 'mid' => $transferMid, 'from' => $changes['branch'][0]] + $carNow], $changes['branch'][1]);
 
                 /* Show the result on a fresh GET, so a refresh never re-sends the form */
                 $_SESSION['ev_done'] = ['id' => $id, 'changes' => $changes];

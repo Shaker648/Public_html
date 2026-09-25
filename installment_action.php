@@ -175,6 +175,8 @@ if ($action === 'decide') {
         error_log('Installment decide failed: ' . $e->getMessage());
         inst_back($lang, 'inst_err');
     }
+    require_once __DIR__ . '/notify_smart.php';
+    smart_bank($pdo, $lineId, $decision, $note);   // the salesperson hears it right away
 
     inst_back($lang, $decision === 'approved' ? 'approved' : 'rejected');
 }

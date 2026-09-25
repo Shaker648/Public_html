@@ -17,10 +17,12 @@ $ntLang = (isset($lang) && $lang === 'en') ? 'en' : 'ar';
 $NT = $ntLang === 'ar' ? [
     'new'   => 'إشعارات جديدة', 'one' => 'إشعار جديد', 'closeAll' => 'إغلاق الكل', 'more' => 'و %d إشعارات أخرى',
     'msg'   => 'رسالة من الإدارة', 'tap' => 'اضغط لقراءة الرسالة', 'from' => 'من', 'done' => 'تم ✓', 'close' => 'إغلاق',
+    'ack'   => '👍 تمام، فهمت', 'ackNeed' => 'مطلوب تأكيد «تمام»', 'recv' => '✅ استلمت', 'recvd' => '✓ تم تأكيد الاستلام',
     'ago'   => ['الآن', 'منذ %d دقيقة', 'منذ %d ساعة', 'أمس', 'منذ %d يوم'],
 ] : [
     'new'   => 'new notifications', 'one' => 'new notification', 'closeAll' => 'Close all', 'more' => 'and %d more',
     'msg'   => 'Message from management', 'tap' => 'Tap to read the message', 'from' => 'From', 'done' => 'Done ✓', 'close' => 'Close',
+    'ack'   => '👍 OK, got it', 'ackNeed' => 'Please confirm with "OK"', 'recv' => '✅ Received', 'recvd' => '✓ Receipt confirmed',
     'ago'   => ['just now', '%d min ago', '%d h ago', 'yesterday', '%d days ago'],
 ];
 ?>
@@ -65,6 +67,13 @@ $NT = $ntLang === 'ar' ? [
 .nt-read .txt{padding:14px 20px 18px;font-size:16px;line-height:1.9;color:#f1f5f9;white-space:pre-wrap;word-break:break-word;overflow-y:auto}
 .nt-read .ft{padding:14px 20px 18px;border-top:1px solid rgba(255,255,255,.06)}
 .nt-read .ft button{width:100%;height:48px;border:0;border-radius:14px;background:linear-gradient(90deg,#16a34a,#22c55e);color:#fff;font:inherit;font-size:16px;font-weight:900;cursor:pointer;box-shadow:0 10px 26px rgba(34,197,94,.3)}
+.nt-card .rv{margin-top:8px;height:34px;padding:0 14px;border:0;border-radius:10px;background:linear-gradient(90deg,#16a34a,#22c55e);color:#fff;font:inherit;font-size:13px;font-weight:900;cursor:pointer;box-shadow:0 6px 16px rgba(34,197,94,.3)}
+.nt-card .rv.done{background:rgba(34,197,94,.15);color:#86efac;box-shadow:none;cursor:default}
+.nt-card.cele{border-color:rgba(250,204,21,.5);background:linear-gradient(150deg,rgba(22,101,52,.96),rgba(15,23,42,.97))}
+.nt-read .ft button.ack{background:linear-gradient(90deg,#f59e0b,#22c55e)}
+.nt-read .need{display:none;margin:0 20px;padding:8px 12px;border-radius:10px;background:rgba(250,204,21,.12);border:1px solid rgba(250,204,21,.35);color:#fde68a;font-size:12.5px;font-weight:800}
+.nt-read .need.on{display:block}
+.nt-confetti{position:fixed;inset:0;pointer-events:none;z-index:9300}
 @keyframes ntBlink{50%{opacity:.35}}
 @keyframes ntBar{from{transform:scaleX(1)}to{transform:scaleX(0)}}
 @keyframes ntFade{from{opacity:0}}
@@ -78,6 +87,7 @@ $NT = $ntLang === 'ar' ? [
   <div class="nt-read">
     <div class="hd"><img src="icons/icon-192.png?v=4" alt=""><div><div class="l">✉️ <?= htmlspecialchars($NT['msg']) ?></div><h3 id="ntRT"></h3></div></div>
     <div class="meta" id="ntRM"></div>
+    <div class="need" id="ntRN">✋ <?= htmlspecialchars($NT['ackNeed']) ?></div>
     <div class="txt" id="ntRB"></div>
     <div class="ft"><button type="button" id="ntRDone"><?= htmlspecialchars($NT['done']) ?></button></div>
   </div>
@@ -120,7 +130,7 @@ $NT = $ntLang === 'ar' ? [
   function card(item, i) {
     const isMsg = item.event === 'message';
     const el = document.createElement(isMsg || !item.url ? 'div' : 'a');
-    el.className = 'nt-card' + (isMsg ? ' msg' : '');
+    el.className = 'nt-card' + (isMsg ? ' msg' : '') + (item.event === 'sale_celebrate' ? ' cele' : '');
     if (!isMsg && item.url) el.href = item.url;
     el.dir = dirOf(item.title);
     const body = isMsg ? item.body.split('\n')[0] : item.body;
@@ -133,11 +143,46 @@ $NT = $ntLang === 'ar' ? [
     el.querySelector('.x').addEventListener('click', e => { e.preventDefault(); e.stopPropagation(); if (isMsg) markRead(item); remove(el); });
     if (isMsg) el.addEventListener('click', () => openReader(item, el));
     else el.querySelector('.bar').addEventListener('animationend', () => remove(el));   // fades away by itself (pauses while the mouse is on it)
+    if (item.event === 'transfer_incoming') {        // «استلمت» right here
+      const b = document.createElement('button'); b.type = 'button'; b.className = 'rv'; b.textContent = NT.recv;
+      b.addEventListener('click', async e => {
+        e.preventDefault(); e.stopPropagation(); if (b.classList.contains('done')) return;
+        b.disabled = true;
+        try { await post({ action: 'recv', id: item.id }); b.textContent = NT.recvd; b.classList.add('done'); setTimeout(() => remove(el), 2200); }
+        catch (x) { b.disabled = false; }
+      });
+      el.querySelector('.tx').appendChild(b);
+      const bar = el.querySelector('.bar'); if (bar) bar.style.setProperty('--t', '40s');
+    }
+    if (item.event === 'sale_celebrate') confetti();
     return el;
   }
 
-  function markRead(item) {
-    fetch('notify_feed.php', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'read', csrf: CSRF, id: item.id }) }).catch(() => {});
+  const post = d => fetch('notify_feed.php', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(Object.assign({ csrf: CSRF }, d)) }).then(r => r.json());
+  function markRead(item) { post({ action: 'read', id: item.id }).catch(() => {}); }
+  /* the red number on the app icon */
+  let badge = 0;
+  function setBadge(n) {
+    badge = Math.max(0, n | 0);
+    try { if ('setAppBadge' in navigator) (badge ? navigator.setAppBadge(badge) : navigator.clearAppBadge()).catch(() => {}); } catch (e) {}
+  }
+  /* 🎉 a short confetti burst when a car is sold */
+  let confettiOn = false;
+  function confetti() {
+    if (confettiOn || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    confettiOn = true;
+    const c = document.createElement('canvas'); c.className = 'nt-confetti'; document.body.appendChild(c);
+    const x = c.getContext('2d'), W = c.width = innerWidth, H = c.height = innerHeight;
+    const cols = ['#22c55e', '#facc15', '#38bdf8', '#a855f7', '#f472b6', '#fb923c'];
+    const ps = Array.from({ length: 150 }, () => ({ x: W / 2 + (Math.random() - .5) * W * .3, y: H * .35, vx: (Math.random() - .5) * 14, vy: -Math.random() * 14 - 4,
+      s: 5 + Math.random() * 6, r: Math.random() * 6, vr: (Math.random() - .5) * .3, c: cols[Math.floor(Math.random() * cols.length)] }));
+    const t0 = performance.now();
+    (function fr(t) {
+      x.clearRect(0, 0, W, H);
+      ps.forEach(p => { p.vy += .35; p.vx *= .99; p.x += p.vx; p.y += p.vy; p.r += p.vr;
+        x.save(); x.translate(p.x, p.y); x.rotate(p.r); x.fillStyle = p.c; x.fillRect(-p.s / 2, -p.s / 4, p.s, p.s / 2); x.restore(); });
+      if (t - t0 < 3200) requestAnimationFrame(fr); else { c.remove(); confettiOn = false; }
+    })(t0);
   }
   function openReader(item, el) {
     reading = { item, el };
@@ -145,15 +190,23 @@ $NT = $ntLang === 'ar' ? [
     document.getElementById('ntRT').dir = dirOf(item.title);
     document.getElementById('ntRM').textContent = (item.by ? NT.from + ' ' + item.by + ' · ' : '') + ago(item.age);
     const b = document.getElementById('ntRB'); b.textContent = item.body; b.dir = dirOf(item.body || item.title);
+    const done = document.getElementById('ntRDone');
+    done.textContent = item.ack ? NT.ack : NT.done; done.classList.toggle('ack', !!item.ack);
+    document.getElementById('ntRN').classList.toggle('on', !!item.ack);
     ov.classList.add('on');
     markRead(item);                    // opened = read
   }
-  function closeReader() {
+  function closeReader(confirmed) {
     ov.classList.remove('on');
-    if (reading) { remove(reading.el); reading = null; }
+    if (reading) {
+      if (reading.item.ack && confirmed === true) { post({ action: 'ack', id: reading.item.id }).catch(() => {}); reading.item.ack = false; }
+      // a message that asks for «تمام» stays until they confirm it
+      if (!reading.item.ack) { remove(reading.el); setBadge(badge - 1); }
+      reading = null;
+    }
     if (openMsg && history.replaceState) { const u = new URL(location.href); u.searchParams.delete('msg'); history.replaceState(null, '', u); }
   }
-  document.getElementById('ntRDone').addEventListener('click', closeReader);
+  document.getElementById('ntRDone').addEventListener('click', () => closeReader(true));
   ov.addEventListener('click', e => { if (e.target === ov) closeReader(); });
   document.addEventListener('keydown', e => { if (e.key === 'Escape' && ov.classList.contains('on')) closeReader(); });
 
@@ -165,6 +218,7 @@ $NT = $ntLang === 'ar' ? [
       r = await (await fetch(u, { credentials: 'same-origin', cache: 'no-store' })).json();
     } catch (e) { return; }
     if (!r || !r.ok) return;
+    if (typeof r.badge === 'number') setBadge(r.badge);
     const items = [...r.messages, ...r.events].filter(x => !shown.has(x.id));
     items.forEach(x => shown.add(x.id));
     if (!items.length) return;

@@ -3,6 +3,7 @@
 require 'auth.php';
 require 'config.php';
 require_once __DIR__ . '/push_helpers.php';
+require_once __DIR__ . '/notify_smart.php';
 require_once 'car_images_helpers.php';
 require_once 'reserve_helpers.php';
 require_once 'sold_helpers.php';
@@ -440,6 +441,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             'salesman' => $salesman,
             'price'    => $svDone === 'amana' ? '' : $offPrice,
         ]);
+        smart_after_sale($pdo, $_SESSION['sv_done']['car'], $svDone === 'amana' ? 'amana_out' : ($closingAmana ? 'amana_closed' : 'car_sold'));
 
         header('Location: sold_vehicle.php?lang=' . $lang);
         exit;

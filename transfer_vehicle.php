@@ -3,6 +3,7 @@
 require 'auth.php';
 require 'config.php';
 require_once __DIR__ . '/push_helpers.php';
+require_once __DIR__ . '/notify_smart.php';
 require_once 'car_images_helpers.php';
 
 perm_require('page.transfer_vehicle');
@@ -165,7 +166,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $up->execute([$to_branch, $car['id']]);
                     $ins->execute([$car['id'], $car['branch'], $to_branch, $_SESSION['username'], $notes]);
                     $moved[] = ['id' => (int)$car['id'], 'brand' => $car['brand'], 'model' => $car['model'], 'car_year' => $car['car_year'],
-                                'trim_name' => $car['trim_name'], 'color' => $car['color'], 'chassis' => $car['chassis'], 'from' => $car['branch']];
+                                'trim_name' => $car['trim_name'], 'color' => $car['color'], 'chassis' => $car['chassis'], 'from' => $car['branch'],
+                                'mid' => (int)$pdo->lastInsertId()];
                 }
                 $pdo->commit();
 
@@ -176,6 +178,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     notify_event($pdo, 'car_transferred', ['count' => count($moved), 'to' => $to_branch, 'from' => count($froms) === 1 ? $froms[0] : '',
                                                            'names' => array_map(fn($c) => $c['brand'] . ' ' . $c['model'] . ' (' . $c['chassis'] . ')', $moved)]);
                 }
+                smart_transfer($pdo, $moved, $to_branch);   // the receiving branch gets «استلمت»
 
                 /* Show the result on a fresh GET, so a refresh never re-sends the form */
                 $skipped = array_values(array_map(fn($r) => $r['chassis'], array_filter($rows, fn($r) => $r['branch'] === $to_branch)));

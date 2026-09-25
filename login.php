@@ -101,6 +101,8 @@ if ($valid) {
 
 // ── Failed login ──
 f1c_log_attempt($pdo, $username, false);
+require_once __DIR__ . '/notify_smart.php';
+smart_login_failed($pdo, $username, f1c_client_ip());   // many wrong passwords → the admin is told
 $lockLeft = f1c_lock_left($pdo, $username);
 if ($lockLeft > 0) {
     $back(['code' => 'locked', 'until' => time() + $lockLeft]);
