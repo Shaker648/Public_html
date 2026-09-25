@@ -58,10 +58,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             case 'mark':
                 if (!sc_access($pdo, $cid, $uid, false) && !$isBoss) break;
                 $state = in_array($in['state'] ?? '', ['present', 'missing'], true) ? $in['state'] : null;
+                $note  = mb_substr(trim((string)($in['note'] ?? '')), 0, 250);
+                $prev = $pdo->prepare("SELECT i.state, i.note, i.label, i.chassis, c.branch FROM stock_check_items i JOIN stock_checks c ON c.id = i.check_id WHERE i.id = ? AND i.check_id = ?");
+                $prev->execute([(int)($in['item'] ?? 0), $cid]);
+                $prev = $prev->fetch(PDO::FETCH_ASSOC);
                 $pdo->prepare("UPDATE stock_check_items i JOIN stock_checks c ON c.id = i.check_id SET i.state = ?, i.note = ?, i.marked_by = ?, i.marked_at = NOW()
                                WHERE i.id = ? AND i.check_id = ? AND i.car_id > 0 AND c.status IN ('active', 'expired')")
-                    ->execute([$state, mb_substr(trim((string)($in['note'] ?? '')), 0, 250) ?: null, $me, (int)($in['item'] ?? 0), $cid]);
-                echo json_encode(['ok' => true, 'counts' => smart_check_counts($pdo, $cid)]); exit;
+                    ->execute([$state, $note ?: null, $me, (int)($in['item'] ?? 0), $cid]);
+                $counts = smart_check_counts($pdo, $cid);
+                // the admin follows the check car by car (one notification per check on the phone, updated each time)
+                if ($prev && $state && ($prev['state'] !== $state || ($state === 'missing' && $note !== '' && $note !== (string)$prev['note']))) {
+                    notify_event($pdo, 'check_item', ['id' => $cid, 'branch' => $prev['branch'], 'label' => $prev['label'], 'chassis' => $prev['chassis'], 'state' => $state,
+                        'note' => $note, 'done' => $counts[1], 'total' => $counts[0], 'missing' => $counts[3], 'actor' => $me, 'tag' => 'check-' . $cid]);
+                }
+                echo json_encode(['ok' => true, 'counts' => $counts]); exit;
             case 'extra':
                 if (!sc_access($pdo, $cid, $uid, false) && !$isBoss) break;
                 $txt = mb_substr(trim((string)($in['text'] ?? '')), 0, 200);
