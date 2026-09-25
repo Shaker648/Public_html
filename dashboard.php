@@ -675,6 +675,16 @@ function arDate($dt, $lang) {
             display:flex; align-items:center; gap:10px; padding:10px 12px 10px 16px; border-radius:999px; cursor:pointer; border:0; font:inherit; color:#fff; font-size:13.5px; font-weight:800;
             background:linear-gradient(135deg,#7c3aed,#2563eb 60%,#0891b2); box-shadow:0 14px 36px rgba(37,99,235,.45); white-space:nowrap; }
         .live-bar.on { transform:translate(-50%,0); }
+        /* ⏱️ confirm transferred cars before the lock */
+        .duty-bar { display:flex; align-items:center; gap:12px; margin:0 0 12px; padding:12px 14px; border-radius:16px; text-decoration:none; color:#fff;
+            background:linear-gradient(120deg,rgba(220,38,38,.35),rgba(147,51,234,.25)); border:1px solid rgba(248,113,113,.55); box-shadow:0 0 0 0 rgba(239,68,68,.5); animation:dtPulse 2s infinite; }
+        @keyframes dtPulse { 70% { box-shadow:0 0 0 12px rgba(239,68,68,0); } 100% { box-shadow:0 0 0 0 rgba(239,68,68,0); } }
+        .duty-bar .dt-ic { font-size:24px; }
+        .duty-bar .dt-tx { flex:1; min-width:0; font-size:14.5px; font-weight:900; line-height:1.5; }
+        .duty-bar small { display:block; font-size:12.5px; font-weight:700; color:#fecaca; }
+        .duty-bar small b { font-family:Inter,sans-serif; font-variant-numeric:tabular-nums; color:#fff; font-size:14px; }
+        .duty-bar .dt-go { flex-shrink:0; padding:9px 14px; border-radius:12px; background:linear-gradient(90deg,#16a34a,#22c55e); font-size:13.5px; font-weight:900; }
+        @media (max-width:560px) { .duty-bar .dt-go { padding:8px 10px; font-size:12.5px; } }
         /* ⚡ happening now + 🟢 online */
         .live-act { display:flex; gap:10px; align-items:stretch; margin:0 0 12px; }
         .live-act[hidden] { display:none; }
@@ -1109,6 +1119,19 @@ function arDate($dt, $lang) {
                 border-radius:16px;padding:13px 18px;margin-bottom:16px;font-weight:700;font-size:14px;">
         🔒 <?= $lang === 'ar' ? 'ليست لديك صلاحية للوصول لهذه الصفحة' : 'You don\'t have permission to access that page' ?>
     </div>
+    <?php endif; ?>
+
+    <?php
+    // ⏱️ my countdown to confirm transferred cars («استلمت») — before the system locks
+    $myDuty = [];
+    if (is_file(__DIR__ . '/notify_smart.php')) { try { require_once __DIR__ . '/notify_smart.php'; $myDuty = smart_my_duties($pdo, (int)$_SESSION['user_id']); } catch (Throwable $e) {} }
+    if ($myDuty): $dSecs = max(0, (int)$myDuty[0]['secs']); $dLock = transfer_rules($pdo)['lock'] && ($_SESSION['role'] ?? '') !== 'admin'; ?>
+    <a class="duty-bar" href="transfer_receive.php?lang=<?= $lang ?>" id="dutyBar" data-secs="<?= $dSecs ?>">
+        <span class="dt-ic">⏱️</span>
+        <span class="dt-tx"><?= $lang === 'ar' ? 'لازم تأكد استلام ' . count($myDuty) . (count($myDuty) === 1 ? ' عربية' : ' عربيات') . ' وصلت فرعك' : 'Confirm ' . count($myDuty) . ' car(s) that reached your branch' ?>
+            <small><?= $dLock ? ($lang === 'ar' ? 'فاضل ' : 'Time left ') : ($lang === 'ar' ? 'الوقت المتبقي ' : 'Time left ') ?><b id="dutyT">—</b><?= $dLock ? ($lang === 'ar' ? ' وإلا النظام يتقفل عليك' : ' before your system locks') : '' ?></small></span>
+        <span class="dt-go">✅ <?= $lang === 'ar' ? 'أكّد دلوقتي' : 'Confirm now' ?></span>
+    </a>
     <?php endif; ?>
 
     <!-- Quote — one thin line, so it stops eating the top of the page -->
@@ -1816,6 +1839,15 @@ function arDate($dt, $lang) {
         setInterval(pulse, 45000);
         document.addEventListener('visibilitychange', () => { if (!document.hidden) pulse(); });
         if (document.getElementById('liveAct')) setTimeout(pulse, 400);   // fill "happening now" straight away
+    })();
+
+    /* ── ⏱️ countdown to confirm transferred cars ── */
+    (function () {
+        const bar = document.getElementById('dutyBar'); if (!bar) return;
+        const t0 = Date.now(), total = +bar.dataset.secs, out = document.getElementById('dutyT');
+        const tick = () => { const s = Math.max(0, total - Math.floor((Date.now() - t0) / 1000));
+            out.textContent = Math.floor(s / 3600) + ':' + String(Math.floor(s % 3600 / 60)).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0'); };
+        tick(); setInterval(tick, 1000);
     })();
 
     /* ── ⚡ happening now + 🟢 online ── */

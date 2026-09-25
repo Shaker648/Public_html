@@ -37,15 +37,10 @@ $flash = $_SESSION['tr_flash'] ?? null;
 unset($_SESSION['tr_flash']);
 
 /* ─── my branch(es) ─── */
-$mine = [];
-$ub = notify_user_branches($pdo);
-if (isset($ub[$uid])) $mine[] = $ub[$uid];
-try {
-    $st = $pdo->prepare("SELECT DISTINCT branch_name FROM attendance_logs WHERE user_id = ? AND clock_in >= CURDATE() AND clock_out IS NULL");
-    $st->execute([$uid]);
-    $mine = array_merge($mine, $st->fetchAll(PDO::FETCH_COLUMN));
-} catch (Throwable $e) {}
-$mine = array_values(array_unique(array_filter($mine)));
+$mine = transfer_my_branches($pdo, $uid);
+// my countdown per car: movement id => seconds left
+$myDl = [];
+foreach (smart_my_duties($pdo, $uid) as $d) $myDl[(int)$d['mid']] = (int)$d['secs'];
 
 $pending = smart_pending_transfers($pdo, '', 7);
 $groups = [];
@@ -99,6 +94,9 @@ $col = fn($c) => push_color_label($pdo, (string)$c, $lang);
 .tr-ok{height:40px;padding:0 16px;border:0;border-radius:12px;background:linear-gradient(90deg,#16a34a,#22c55e);color:#fff;font:inherit;font-size:14px;font-weight:900;cursor:pointer;box-shadow:0 8px 20px rgba(34,197,94,.3)}
 .tr-ok:active{transform:scale(.96)}
 .tr-all{height:38px;padding:0 14px;border-radius:12px;border:1px solid rgba(34,197,94,.5);background:rgba(34,197,94,.12);color:#86efac;font:inherit;font-size:13px;font-weight:900;cursor:pointer}
+.tr-cd{font-size:13px;font-weight:900;color:#fecaca;background:rgba(239,68,68,.12);border:1px solid rgba(239,68,68,.35);border-radius:10px;padding:6px 10px}
+.tr-cd b{font-family:Inter,sans-serif;font-variant-numeric:tabular-nums;color:#fff}
+.tr-cd.over{background:rgba(239,68,68,.25)}
 .tr-empty{text-align:center;padding:40px 16px}
 .tr-empty .big{font-size:54px;margin-bottom:8px;animation:trBob 3s ease-in-out infinite}
 @keyframes trBob{50%{transform:translateY(-6px)}}
@@ -147,6 +145,7 @@ $col = fn($c) => push_color_label($pdo, (string)$c, $lang);
                 <div class="nm">🚗 <?= htmlspecialchars(trim($c['brand'] . ' ' . $c['model'] . ' ' . $c['trim_name'])) ?></div>
                 <div class="mt"><span><?= htmlspecialchars($col($c['color'])) ?></span><span><?= htmlspecialchars((string)$c['car_year']) ?></span><span class="ch"><?= htmlspecialchars((string)$c['chassis']) ?></span></div>
                 <div class="tr-road"><span><?= htmlspecialchars($br($c['from_branch'])) ?></span><span class="ln"></span><span><?= htmlspecialchars($br($to)) ?></span></div>
+                <?php if (isset($myDl[(int)$c['mid']])): ?><div class="tr-cd" data-secs="<?= $myDl[(int)$c['mid']] ?>">⏱️ <?= $ar ? 'فاضلك' : 'Left' ?> <b>—</b> <?= $ar ? 'تأكد الاستلام' : 'to confirm' ?></div><?php endif; ?>
                 <div class="ft">
                     <small class="<?= $late ? 'late' : '' ?>"><?= $late ? '⏳ ' : '🕐 ' ?><?= htmlspecialchars($ago((int)$c['hours'] * 3600 + 60)) ?> · <?= $ar ? 'نقلها' : 'by' ?> <?= htmlspecialchars((string)$c['moved_by']) ?></small>
                     <form method="post"><input type="hidden" name="csrf_token" value="<?= $csrf ?>"><input type="hidden" name="mids[]" value="<?= (int)$c['mid'] ?>">
@@ -173,5 +172,17 @@ $col = fn($c) => push_color_label($pdo, (string)$c, $lang);
     </section>
     <?php endif; ?>
 </div>
+<script>
+(function () {
+    const els = [...document.querySelectorAll('.tr-cd')], t0 = Date.now();
+    if (!els.length) return;
+    const tick = () => els.forEach(e => {
+        const s = Math.max(0, +e.dataset.secs - Math.floor((Date.now() - t0) / 1000));
+        e.querySelector('b').textContent = Math.floor(s / 3600) + ':' + String(Math.floor(s % 3600 / 60)).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0');
+        e.classList.toggle('over', s === 0);
+    });
+    tick(); setInterval(tick, 1000);
+})();
+</script>
 </body>
 </html>

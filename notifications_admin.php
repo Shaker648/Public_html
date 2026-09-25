@@ -83,11 +83,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     'fail_count' => (int)($o['fail_count'] ?? 5),
                 ]), $by);
                 echo json_encode(['ok' => true, 'smart' => notify_smart($pdo)]); exit;
-            case 'save_branches':
+            case 'save_transfer':
+                $o = (array)($in['tr'] ?? []);
                 $valid = $pdo->query("SELECT name FROM branches")->fetchAll(PDO::FETCH_COLUMN);
-                $map = [];
-                foreach ((array)($in['map'] ?? []) as $id => $b) if ((int)$id > 0 && in_array($b, $valid, true)) $map[(int)$id] = $b;
-                push_setting_set($pdo, 'user_branches', json_encode((object)$map, JSON_UNESCAPED_UNICODE), $by);
+                $brs = [];
+                foreach ((array)($o['branches'] ?? []) as $name => $b) {
+                    if (!in_array($name, $valid, true)) continue;
+                    $brs[$name] = ['confirm' => !empty($b['confirm']), 'users' => array_values(array_unique(array_map('intval', (array)($b['users'] ?? []))))];
+                }
+                push_setting_set($pdo, 'transfer_rules', json_encode(['lock' => !empty($o['lock']), 'hours' => (float)($o['hours'] ?? 2), 'warn' => (int)($o['warn'] ?? 30),
+                    'auto_unlock' => !empty($o['auto_unlock']), 'branches' => (object)$brs], JSON_UNESCAPED_UNICODE), $by);
+                echo json_encode(['ok' => true]); exit;
+            case 'duty_extend':
+                smart_extend($pdo, (int)($in['uid'] ?? 0), (int)($in['minutes'] ?? 60));
+                echo json_encode(['ok' => true]); exit;
+            case 'unlock':
+                smart_unlock($pdo, (int)($in['uid'] ?? 0), $by);
                 echo json_encode(['ok' => true]); exit;
             case 'save_templates':
                 $tpl = [];
@@ -153,7 +164,16 @@ $withDev = count(array_unique(array_column($subs, 'user_id')));
 $devPer  = array_count_values(array_map('intval', array_column($subs, 'user_id')));   // user id => linked phones
 $smart   = notify_smart($pdo);
 $branchL = $pdo->query("SELECT name, name_ar, name_en FROM branches ORDER BY id")->fetchAll(PDO::FETCH_ASSOC);
-$ubr     = notify_user_branches($pdo);
+$trR     = transfer_rules($pdo);
+smart_duty_scan($pdo);   // up-to-date countdowns / locks while the admin looks
+$duties  = $pdo->query("SELECT d.user_id, u.username, m.to_branch, COUNT(*) AS n, TIMESTAMPDIFF(SECOND, NOW(), MIN(d.deadline)) AS secs, MAX(d.warned) AS warned
+                        FROM transfer_duty d JOIN users u ON u.id = d.user_id JOIN movements m ON m.id = d.movement_id JOIN cars c ON c.id = m.car_id
+                        LEFT JOIN transfer_receipts r ON r.movement_id = d.movement_id
+                        WHERE r.movement_id IS NULL AND c.branch = m.to_branch AND c.status IN ('available', 'reserved')
+                        GROUP BY d.user_id, u.username, m.to_branch ORDER BY secs")->fetchAll(PDO::FETCH_ASSOC);
+$locks   = $pdo->query("SELECT l.*, u.username, TIMESTAMPDIFF(SECOND, l.locked_at, NOW()) AS age FROM user_locks l JOIN users u ON u.id = l.user_id
+                        WHERE l.unlocked_at IS NULL ORDER BY l.locked_at")->fetchAll(PDO::FETCH_ASSOC);
+$lockedIds = array_map('intval', array_column($locks, 'user_id'));
 $tpls    = json_decode(push_setting($pdo, 'notify_templates', ''), true) ?: [];
 $lastRun = push_setting($pdo, 'smart_last_run', '');
 $lastAge = $lastRun !== '' ? (int)$pdo->query("SELECT TIMESTAMPDIFF(SECOND, " . $pdo->quote($lastRun) . ", NOW())")->fetchColumn() : null;
@@ -224,8 +244,12 @@ $T += $lang === 'ar' ? [
     's_bank' => 'ذكّر لو البنك ما ردّش بعد', 's_co' => 'تذكير «سجّل انصراف» الساعة', 's_fail' => 'نبّه الأدمن بعد محاولات دخول غلط', 'days' => 'يوم', 'times' => 'محاولات',
     'dows' => ['الأحد', 'الاثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة', 'السبت'],
     's_run' => 'آخر تشغيل للتذكيرات:', 's_never' => 'لسه ما اشتغلتش', 's_cron' => 'علشان تذكير الانصراف بالليل يشتغل حتى لو محدش فاتح النظام: ضيف Cron Job كل ١٥ دقيقة على notify_cron.php (زي الملخص اليومي).',
-    'b_h' => 'فرع كل موظف', 'b_note' => 'لما عربية تتنقل لفرع، إشعار «عربية جاية لفرعك» + زر «استلمت» بيوصل لـ: اللي مسجّل حضور في الفرع ده النهارده + اللي محدد فرعه هنا.',
-    'b_none' => '— بدون فرع ثابت —', 'b_open' => '🚚 عربيات في الطريق',
+    'b_open' => '🚚 عربيات في الطريق', 'g_transfer' => '🚚 استلام العربيات المنقولة',
+    'x_h' => 'استلام العربيات المنقولة', 'x_note' => 'لما عربية تتنقل لفرع: المسؤول في الفرع يدوس «استلمت». الوقت بيبدأ من لحظة ما يبصم حضور في الفرع — لو في إجازة أو محدش في الفرع، الوقت ما بيبدأش.',
+    'x_lock' => 'اقفل النظام على اللي ما يأكدش في الوقت', 'x_hours' => 'الوقت المسموح بعد البصمة', 'x_warn' => 'نبّه (هو والأدمن) قبل القفل بـ', 'x_auto' => 'افتح النظام لوحده أول ما يأكد كل العربيات (لو مقفول: الأدمن بس اللي يفتح)',
+    'hrs' => 'ساعة', 'mins' => 'دقيقة', 'x_br' => 'الفروع', 'x_conf' => 'بيأكد استلام', 'x_store' => 'مخزن — مش محتاج تأكيد', 'x_who' => 'مين يأكد؟', 'x_anyone' => 'أي حد بصم في الفرع',
+    'x_duties' => 'عدّادات شغالة دلوقتي', 'x_noDuty' => 'مفيش حد عليه تأكيد استلام دلوقتي', 'x_cars' => 'عربية', 'x_left' => 'فاضل', 'x_over' => 'الوقت خلص', 'x_plus' => '+ساعة', 'x_plus30' => '+30 د',
+    'x_locks' => 'مقفول عليهم النظام', 'x_noLock' => 'مفيش حد مقفول عليه ✅', 'x_unlock' => '🔓 افتح له', 'x_since' => 'من', 'x_doneAll' => '✅ أكّد كل العربيات', 'x_unlockQ' => 'تفتح النظام لـ %s؟', 'x_admin' => 'الأدمن عمره ما يتقفل عليه',
     't_h' => 'قوالب جاهزة', 't_save' => '⭐ حفظ كقالب', 't_empty' => 'مفيش قوالب — اكتب رسالة واضغط «حفظ كقالب»', 't_del' => 'حذف القالب؟',
     'ack_t' => 'اطلب تأكيد «👍 تمام» من كل واحد', 'when' => 'وقت الإرسال', 'w_now' => 'دلوقتي', 'w_later' => 'في وقت محدد', 'sch_ok' => '🕐 اتجدولت — هتتبعت %t لـ %p شخص', 'sch_bad' => 'اختار وقت في المستقبل',
     'sch_btn' => '🕐 جدولة الرسالة',
@@ -240,8 +264,12 @@ $T += $lang === 'ar' ? [
     's_bank' => 'Remind if the bank has not replied after', 's_co' => '"Clock out" reminder at', 's_fail' => 'Tell the admin after wrong passwords', 'days' => 'days', 'times' => 'tries',
     'dows' => ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'],
     's_run' => 'Reminders last ran:', 's_never' => 'not yet', 's_cron' => 'So the late clock-out reminder works even when nobody has the system open, add a Cron Job every 15 minutes for notify_cron.php (like the daily summary).',
-    'b_h' => "Each person's branch", 'b_note' => 'When a car moves to a branch, "a car is on its way" + the Received button goes to: whoever clocked in at that branch today + the people assigned to it here.',
-    'b_none' => '— no fixed branch —', 'b_open' => '🚚 Cars on the way',
+    'b_open' => '🚚 Cars on the way', 'g_transfer' => '🚚 Receiving transferred cars',
+    'x_h' => 'Receiving transferred cars', 'x_note' => 'When a car moves to a branch, the person responsible there taps "Received". The time starts when they clock in at that branch — on a day off or with nobody there, it does not start.',
+    'x_lock' => 'Lock the system for whoever does not confirm in time', 'x_hours' => 'Time allowed after clocking in', 'x_warn' => 'Warn them (and the admin) before the lock by', 'x_auto' => 'Unlock by itself once they confirm every car (off: only the admin unlocks)',
+    'hrs' => 'h', 'mins' => 'min', 'x_br' => 'Branches', 'x_conf' => 'Confirms receipt', 'x_store' => 'Storage — no confirmation', 'x_who' => 'Who confirms?', 'x_anyone' => 'Anyone clocked in at the branch',
+    'x_duties' => 'Countdowns running now', 'x_noDuty' => 'Nobody has cars to confirm right now', 'x_cars' => 'cars', 'x_left' => 'left', 'x_over' => 'time is up', 'x_plus' => '+1 h', 'x_plus30' => '+30 min',
+    'x_locks' => 'Locked out', 'x_noLock' => 'Nobody is locked ✅', 'x_unlock' => '🔓 Unlock', 'x_since' => 'since', 'x_doneAll' => '✅ confirmed every car', 'x_unlockQ' => 'Unlock the system for %s?', 'x_admin' => 'An admin is never locked out',
     't_h' => 'Templates', 't_save' => '⭐ Save as template', 't_empty' => 'No templates yet — write a message and tap "Save as template"', 't_del' => 'Delete this template?',
     'ack_t' => 'Ask everyone to confirm with "👍 OK"', 'when' => 'Send', 'w_now' => 'now', 'w_later' => 'at a set time', 'sch_ok' => '🕐 Scheduled — goes out %t to %p people', 'sch_bad' => 'Pick a time in the future',
     'sch_btn' => '🕐 Schedule message',
@@ -364,6 +392,35 @@ $rate = ($today['d'] + $today['f']) > 0 ? round($today['d'] * 100 / ($today['d']
 .nm-acts .nf-msg{margin:0;flex:1}
 .nm-go{height:48px;padding:0 22px;border:0;border-radius:14px;background:linear-gradient(90deg,#16a34a,#9333ea);color:#fff;font:inherit;font-size:15px;font-weight:900;cursor:pointer;box-shadow:0 10px 26px rgba(34,197,94,.25)}
 .nm-go:disabled{opacity:.55;cursor:default}
+/* receiving transferred cars */
+.tx{border-color:rgba(56,189,248,.35);background:linear-gradient(160deg,rgba(14,165,233,.08),rgba(147,51,234,.06) 60%,var(--card))}
+.tx-grid{display:grid;grid-template-columns:1fr 1.2fr;gap:18px;align-items:start}
+.tx-sm{display:block;font-size:11.5px;color:var(--mut);font-weight:700;margin-top:2px}
+.tx-l{display:block;font-size:12px;font-weight:800;color:var(--mut);margin:0 0 6px}
+.tx-br{padding:10px 12px;border-radius:14px;border:1px solid var(--line);background:rgba(255,255,255,.03);margin-bottom:8px}
+.tx-bh{display:flex;align-items:center;gap:10px}
+.tx-bh b{flex:1;font-size:14px}
+.tx-st{font-size:12px;color:var(--mut);font-weight:800}
+.tx-store{display:none;font-size:12px;color:#fcd34d;font-weight:800;margin-top:6px}
+.tx-br.off .tx-store{display:block}.tx-br.off .tx-who{display:none}
+.tx-who{margin-top:8px}.tx-who small{font-size:12px;color:var(--mut);font-weight:800}
+.tx-who em{font-style:normal;color:#86efac;margin-inline-start:4px}
+.tx-who.has em{display:none}
+.tx-ppl{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+.tx-p{height:30px;padding:0 11px;border-radius:999px;border:1px solid var(--line);background:rgba(255,255,255,.04);color:var(--txt);font:inherit;font-size:12.5px;font-weight:800;cursor:pointer}
+.tx-p.on{background:linear-gradient(90deg,#0ea5e9,#6366f1);border-color:transparent;color:#fff}
+.tx-live{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-top:16px;padding-top:14px;border-top:1px solid var(--line)}
+.tx-live h3{font-size:14px;font-weight:900;margin:0 0 10px}
+.tx-d,.tx-l1{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:10px 12px;border-radius:14px;border:1px solid var(--line);background:rgba(255,255,255,.03);margin-bottom:8px}
+.tx-d .i,.tx-l1 .i{flex:1;min-width:140px}
+.tx-d b,.tx-l1 b{display:block;font-size:14px}.tx-d small,.tx-l1 small{display:block;font-size:12px;color:var(--mut);font-weight:700}
+.tx-l1 small.r{color:#94a3b8;font-weight:600;margin-top:2px}
+.tx-d .cd{font-family:Inter,sans-serif;font-weight:900;font-variant-numeric:tabular-nums;color:#7dd3fc;font-size:15px}
+.tx-d.warn{border-color:rgba(245,158,11,.5)}.tx-d.warn .cd{color:#fbbf24}
+.tx-d.over{border-color:rgba(239,68,68,.5)}.tx-d.over .cd{color:#f87171}
+.tx-l1{border-color:rgba(239,68,68,.4);background:rgba(239,68,68,.06)}
+.tx-l1.done{border-color:rgba(34,197,94,.45);background:rgba(34,197,94,.07)}
+@media (max-width:900px){.tx-grid,.tx-live{grid-template-columns:1fr}}
 /* groups, person concerned */
 .na-tbl tr.na-grp td{background:none;border:0;padding:14px 4px 2px;font-size:13px;font-weight:900;color:#c4b5fd;text-align:start}
 .na-dash{color:var(--mut);font-weight:800}
@@ -590,22 +647,66 @@ $rate = ($today['d'] + $today['f']) > 0 ? round($today['d'] * 100 / ($today['d']
             <div class="na-run">🔄 <?= $T['s_run'] ?> <b><?= $lastAge !== null && $lastRun > '2001' ? htmlspecialchars($ago($lastAge)) : $T['s_never'] ?></b><small><?= $T['s_cron'] ?></small></div>
             <div class="na-save" style="position:static"><div class="nf-msg" id="smartMsg"></div><button type="button" class="nf-btn grn" id="saveSmart"><?= $T['save'] ?></button></div>
         </section>
+    </div>
 
-        <!-- each person's branch -->
-        <section class="nf-card">
-            <h2>🏢 <?= $T['b_h'] ?></h2>
-            <p class="nf-note"><?= $T['b_note'] ?></p>
-            <div class="na-brs">
-                <?php foreach ($users as $u): if (!(int)$u['active']) continue; ?>
-                <div class="na-br"><b><?= htmlspecialchars($u['username']) ?> <span class="role"><?= htmlspecialchars($T['r_' . $u['role']] ?? $u['role']) ?></span></b>
-                    <select data-ub="<?= (int)$u['id'] ?>"><option value=""><?= $T['b_none'] ?></option>
-                        <?php foreach ($branchL as $b): ?><option value="<?= htmlspecialchars($b['name']) ?>" <?= ($ubr[(int)$u['id']] ?? '') === $b['name'] ? 'selected' : '' ?>><?= htmlspecialchars(($lang === 'ar' ? $b['name_ar'] : $b['name_en']) ?: $b['name']) ?></option><?php endforeach; ?>
-                    </select></div>
+    <!-- receiving transferred cars: time, warning, lock, who confirms -->
+    <section class="nf-card tx" id="tr">
+        <h2>🚚 <?= $T['x_h'] ?></h2>
+        <p class="nf-note"><?= $T['x_note'] ?></p>
+        <div class="tx-grid">
+            <div>
+                <div class="na-opt"><span>🔒 <?= $T['x_lock'] ?><small class="tx-sm"><?= $T['x_admin'] ?></small></span><label class="tg"><input type="checkbox" id="xLock" <?= $trR['lock'] ? 'checked' : '' ?>><span></span></label></div>
+                <div class="na-opt"><span>⏱️ <?= $T['x_hours'] ?></span><div class="na-form"><input type="number" class="na-num" id="xHours" min="0.5" max="24" step="0.5" value="<?= rtrim(rtrim(number_format($trR['hours'], 1, '.', ''), '0'), '.') ?>"> <?= $T['hrs'] ?></div></div>
+                <div class="na-opt"><span>⚠️ <?= $T['x_warn'] ?></span><div class="na-form"><input type="number" class="na-num" id="xWarn" min="5" max="240" step="5" value="<?= $trR['warn'] ?>"> <?= $T['mins'] ?></div></div>
+                <div class="na-opt"><span>🔓 <?= $T['x_auto'] ?></span><label class="tg"><input type="checkbox" id="xAuto" <?= $trR['auto_unlock'] ? 'checked' : '' ?>><span></span></label></div>
+            </div>
+            <div>
+                <label class="l tx-l"><?= $T['x_br'] ?></label>
+                <?php foreach ($trR['branches'] as $bn => $bc): $lbl = ''; foreach ($branchL as $b) if ($b['name'] === $bn) $lbl = ($lang === 'ar' ? $b['name_ar'] : $b['name_en']) ?: $bn; ?>
+                <div class="tx-br<?= $bc['confirm'] ? '' : ' off' ?>" data-br="<?= htmlspecialchars($bn) ?>">
+                    <div class="tx-bh"><b>📍 <?= htmlspecialchars($lbl ?: $bn) ?></b>
+                        <span class="tx-st"><?= $T['x_conf'] ?></span><label class="tg"><input type="checkbox" class="xConf" <?= $bc['confirm'] ? 'checked' : '' ?>><span></span></label></div>
+                    <div class="tx-store"><?= $T['x_store'] ?></div>
+                    <div class="tx-who"><small><?= $T['x_who'] ?> <em class="tx-any"><?= $T['x_anyone'] ?></em></small>
+                        <div class="tx-ppl">
+                            <?php foreach ($users as $u): if (!(int)$u['active'] || $u['role'] === 'admin') continue; ?>
+                            <button type="button" class="tx-p<?= in_array((int)$u['id'], $bc['users'], true) ? ' on' : '' ?>" data-u="<?= (int)$u['id'] ?>"><?= htmlspecialchars($u['username']) ?></button>
+                            <?php endforeach; ?>
+                        </div>
+                    </div>
+                </div>
                 <?php endforeach; ?>
             </div>
-            <div class="na-save" style="position:static"><a class="nf-btn ghost" href="transfer_receive.php?lang=<?= $lang ?>"><?= $T['b_open'] ?></a><div class="nf-msg" id="brMsg"></div><button type="button" class="nf-btn grn" id="saveBr"><?= $T['save'] ?></button></div>
-        </section>
-    </div>
+        </div>
+        <div class="na-save" style="position:static"><a class="nf-btn ghost" href="transfer_receive.php?lang=<?= $lang ?>"><?= $T['b_open'] ?></a><div class="nf-msg" id="xMsg"></div><button type="button" class="nf-btn grn" id="saveX"><?= $T['save'] ?></button></div>
+
+        <div class="tx-live">
+            <div>
+                <h3>⏱️ <?= $T['x_duties'] ?></h3>
+                <?php if (!$duties): ?><div class="nf-empty"><?= $T['x_noDuty'] ?></div><?php endif; ?>
+                <?php foreach ($duties as $d): $sec = (int)$d['secs']; ?>
+                <div class="tx-d<?= $sec <= 0 ? ' over' : ((int)$d['warned'] ? ' warn' : '') ?>">
+                    <div class="i"><b><?= htmlspecialchars($d['username']) ?></b><small><?= (int)$d['n'] ?> <?= $T['x_cars'] ?> · 📍 <?= htmlspecialchars(push_branch_label($pdo, (string)$d['to_branch'], $lang)) ?></small></div>
+                    <span class="cd" data-secs="<?= $sec ?>"><?= $sec <= 0 ? $T['x_over'] : '' ?></span>
+                    <button type="button" class="nf-mini" data-ext="<?= (int)$d['user_id'] ?>" data-min="30"><?= $T['x_plus30'] ?></button>
+                    <button type="button" class="nf-mini" data-ext="<?= (int)$d['user_id'] ?>" data-min="60"><?= $T['x_plus'] ?></button>
+                </div>
+                <?php endforeach; ?>
+            </div>
+            <div>
+                <h3>🔒 <?= $T['x_locks'] ?></h3>
+                <?php if (!$locks): ?><div class="nf-empty"><?= $T['x_noLock'] ?></div><?php endif; ?>
+                <?php foreach ($locks as $l): ?>
+                <div class="tx-l1<?= $l['done_at'] ? ' done' : '' ?>">
+                    <div class="i"><b>🔒 <?= htmlspecialchars($l['username']) ?></b>
+                        <small><?= $T['x_since'] ?> <?= htmlspecialchars($ago($l['age'])) ?><?= $l['done_at'] ? ' · ' . $T['x_doneAll'] : '' ?></small>
+                        <small class="r"><?= htmlspecialchars(mb_substr((string)$l['reason'], 0, 90)) ?></small></div>
+                    <button type="button" class="nf-btn grn" data-unlock="<?= (int)$l['user_id'] ?>" data-name="<?= htmlspecialchars($l['username']) ?>"><?= $T['x_unlock'] ?></button>
+                </div>
+                <?php endforeach; ?>
+            </div>
+        </div>
+    </section>
 
     <!-- people with notifications off -->
     <section class="nf-card">
@@ -885,13 +986,32 @@ $rate = ($today['d'] + $today['f']) > 0 ? round($today['d'] * 100 / ($today['d']
             const s = r.smart; $('sRes').value = s.reserve_days; $('sAged').value = s.aged_days; $('sAmana').value = s.amana_days; $('sBank').value = s.bank_days; $('sFail').value = s.fail_count;
         } else msg('smartMsg', T.fail + r.error, false);
     });
-    /* ── each person's branch ── */
-    $('saveBr').addEventListener('click', async () => {
-        const map = {};
-        document.querySelectorAll('[data-ub]').forEach(s => { if (s.value) map[s.dataset.ub] = s.value; });
-        const r = await post({ action: 'save_branches', map });
-        r.ok ? msg('brMsg', T.saved, true) : msg('brMsg', T.fail + r.error, false);
+    /* ── receiving transferred cars ── */
+    document.querySelectorAll('.tx-br').forEach(br => {
+        const who = br.querySelector('.tx-who'), paint = () => who.classList.toggle('has', !!br.querySelector('.tx-p.on'));
+        br.querySelector('.xConf').addEventListener('change', e => br.classList.toggle('off', !e.target.checked));
+        br.querySelectorAll('.tx-p').forEach(b => b.addEventListener('click', () => { b.classList.toggle('on'); paint(); }));
+        paint();
     });
+    $('saveX').addEventListener('click', async () => {
+        const branches = {};
+        document.querySelectorAll('.tx-br').forEach(br => { branches[br.dataset.br] = { confirm: br.querySelector('.xConf').checked, users: [...br.querySelectorAll('.tx-p.on')].map(b => +b.dataset.u) }; });
+        const r = await post({ action: 'save_transfer', tr: { lock: $('xLock').checked, hours: +$('xHours').value, warn: +$('xWarn').value, auto_unlock: $('xAuto').checked, branches } });
+        r.ok ? msg('xMsg', T.saved, true) : msg('xMsg', T.fail + r.error, false);
+    });
+    (function () {
+        const cds = [...document.querySelectorAll('.tx-d .cd')], t0 = Date.now(), over = <?= json_encode($T['x_over'], JSON_UNESCAPED_UNICODE) ?>;
+        const tick = () => cds.forEach(e => { const s = +e.dataset.secs - Math.floor((Date.now() - t0) / 1000);
+            e.textContent = s <= 0 ? over : Math.floor(s / 3600) + ':' + String(Math.floor(s % 3600 / 60)).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0'); });
+        if (cds.length) { tick(); setInterval(tick, 1000); }
+    })();
+    document.querySelectorAll('[data-ext]').forEach(b => b.addEventListener('click', async () => {
+        b.disabled = true; const r = await post({ action: 'duty_extend', uid: +b.dataset.ext, minutes: +b.dataset.min }); if (r.ok) location.reload(); else b.disabled = false;
+    }));
+    document.querySelectorAll('[data-unlock]').forEach(b => b.addEventListener('click', async () => {
+        if (!confirm(<?= json_encode($T['x_unlockQ'], JSON_UNESCAPED_UNICODE) ?>.replace('%s', b.dataset.name))) return;
+        b.disabled = true; const r = await post({ action: 'unlock', uid: +b.dataset.unlock }); if (r.ok) location.reload(); else b.disabled = false;
+    }));
     /* ── scheduled messages ── */
     document.querySelectorAll('[data-cancel]').forEach(b => b.addEventListener('click', async () => {
         if (!confirm(<?= json_encode($T['q_cancelQ'], JSON_UNESCAPED_UNICODE) ?>)) return;

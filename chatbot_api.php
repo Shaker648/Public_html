@@ -76,12 +76,17 @@ if (!empty($rawBody['briefing'])) {
         $boss = in_array($role, ['admin', 'manager'], true);
 
         // 🚚 cars on their way to my branch
-        $mine = [];
-        $ub = notify_user_branches($pdo);
-        if (isset($ub[$uid])) $mine[] = $ub[$uid];
-        if ($st = $q("SELECT DISTINCT branch_name FROM attendance_logs WHERE user_id = ? AND clock_in >= CURDATE() AND clock_out IS NULL", [$uid])) $mine = array_merge($mine, $st->fetchAll(PDO::FETCH_COLUMN));
+        $mine = transfer_my_branches($pdo, $uid);
         $pend = smart_pending_transfers($pdo, '', 7);
         $toMe = count(array_filter($pend, fn($p) => in_array($p['to_branch'], $mine, true)));
+        // ⏱️ my own countdown comes first
+        $duty = smart_my_duties($pdo, $uid);
+        if ($duty) {
+            $secs = max(0, (int)$duty[0]['secs']);
+            $add('⏱️', $ar ? 'فاضل ' . intdiv($secs, 3600) . ':' . str_pad((string)intdiv($secs % 3600, 60), 2, '0', STR_PAD_LEFT) . ' علشان تأكد استلام ' . count($duty) . ' عربية — وإلا النظام يتقفل'
+                           : intdiv($secs, 3600) . 'h ' . intdiv($secs % 3600, 60) . 'm left to confirm ' . count($duty) . ' car(s)', 'transfer_receive.php?lang=' . $lang);
+            $toMe = max(0, $toMe - count($duty));
+        }
         if ($toMe) $add('🚚', $ar ? $toMe . ' عربية جاية لفرعك — اضغط «استلمت» أول ما توصل' : $toMe . ' car(s) on the way to your branch — tap Received when they arrive', 'transfer_receive.php?lang=' . $lang);
 
         // ⏰ my old reservations
