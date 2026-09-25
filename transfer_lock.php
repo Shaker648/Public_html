@@ -32,7 +32,8 @@ if (isset($_GET['check'])) {
 if (!$lock) { header('Location: dashboard.php?lang=' . $lang); exit; }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && hash_equals($csrf, (string)($_POST['csrf_token'] ?? ''))) {
-    smart_receive($pdo, (array)($_POST['mids'] ?? []), (string)$_SESSION['username']);
+    if (($_POST['act'] ?? '') === 'missing') smart_report_missing($pdo, (int)($_POST['mid'] ?? 0), (string)$_SESSION['username'], (string)($_POST['note'] ?? ''));
+    else smart_receive($pdo, (array)($_POST['mids'] ?? []), (string)$_SESSION['username']);
     header('Location: transfer_lock.php?lang=' . $lang);
     exit;
 }
@@ -76,6 +77,8 @@ body{min-height:100vh;background:radial-gradient(120% 70% at 50% 0%,#3b0a0a 0%,#
 @keyframes lkDots{0%{content:''}25%{content:'.'}50%{content:'..'}75%{content:'...'}}
 .lk-foot{display:flex;gap:10px;justify-content:center;margin-top:24px;flex-wrap:wrap}
 .lk-foot a{display:inline-flex;align-items:center;gap:6px;height:42px;padding:0 16px;border-radius:12px;border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.05);color:#e2e8f0;text-decoration:none;font-weight:800;font-size:14px}
+.lk-car{flex-wrap:wrap}.lk-missf{margin:0}
+.lk-miss{height:44px;padding:0 12px;border-radius:13px;border:1px solid rgba(239,68,68,.5);background:rgba(239,68,68,.1);color:#fca5a5;font:inherit;font-size:13.5px;font-weight:900;cursor:pointer;white-space:nowrap}
 .lk-bas{margin:0 0 16px;padding:10px 14px;border-radius:14px;background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.4);color:#fecaca;font-size:13.5px;font-weight:800}
 .lk-chk{display:flex;align-items:center;gap:12px;padding:14px;margin-bottom:12px;border-radius:18px;text-decoration:none;color:#fff;text-align:start;
   background:linear-gradient(120deg,rgba(220,38,38,.25),rgba(147,51,234,.2));border:1px solid rgba(248,113,113,.5)}
@@ -108,6 +111,8 @@ body{min-height:100vh;background:radial-gradient(120% 70% at 50% 0%,#3b0a0a 0%,#
                 <small><?= htmlspecialchars($col($c['color'])) ?> · <span class="ch"><?= htmlspecialchars((string)$c['chassis']) ?></span> · <?= htmlspecialchars($br($c['from_branch'])) ?> ← <?= htmlspecialchars($br($c['to_branch'])) ?></small></div>
             <form method="post"><input type="hidden" name="csrf_token" value="<?= $csrf ?>"><input type="hidden" name="mids[]" value="<?= (int)$c['mid'] ?>">
                 <button class="lk-ok" type="submit">✅ <?= $ar ? 'تم الاستلام' : 'Received' ?></button></form>
+            <form method="post" class="lk-missf"><input type="hidden" name="csrf_token" value="<?= $csrf ?>"><input type="hidden" name="act" value="missing"><input type="hidden" name="mid" value="<?= (int)$c['mid'] ?>"><input type="hidden" name="note" value="">
+                <button class="lk-miss" type="submit">❌ <?= $ar ? 'لم تصل' : 'Not here' ?></button></form>
         </div>
         <?php endforeach; ?>
     </div>
@@ -128,6 +133,11 @@ body{min-height:100vh;background:radial-gradient(120% 70% at 50% 0%,#3b0a0a 0%,#
     </div>
 </div>
 <script>
+document.querySelectorAll('.lk-missf').forEach(f => f.addEventListener('submit', e => {
+    const n = prompt(<?= json_encode($ar ? 'ملاحظة (اختياري): ماذا حدث؟' : 'Note (optional): what happened?', JSON_UNESCAPED_UNICODE) ?>, '');
+    if (n === null) { e.preventDefault(); return; }
+    f.querySelector('[name=note]').value = n;
+}));
 setInterval(async () => {
     try { const r = await (await fetch('transfer_lock.php?check=1', { credentials: 'same-origin', cache: 'no-store' })).json(); if (r && !r.locked) location.href = 'dashboard.php?lang=<?= $lang ?>'; } catch (e) {}
 }, 10000);

@@ -680,6 +680,7 @@ function arDate($dt, $lang) {
             background:linear-gradient(120deg,rgba(220,38,38,.35),rgba(147,51,234,.25)); border:1px solid rgba(248,113,113,.55); box-shadow:0 0 0 0 rgba(239,68,68,.5); animation:dtPulse 2s infinite; }
         @keyframes dtPulse { 70% { box-shadow:0 0 0 12px rgba(239,68,68,0); } 100% { box-shadow:0 0 0 0 rgba(239,68,68,0); } }
         .duty-bar .dt-ic { font-size:24px; }
+        .duty-bar.iss { background:linear-gradient(120deg,rgba(220,38,38,.55),rgba(127,29,29,.45)); border-color:rgba(248,113,113,.8); }
         .duty-bar.chk { background:linear-gradient(120deg,rgba(220,38,38,.45),rgba(234,88,12,.3)); }
         .duty-bar .dt-tx { flex:1; min-width:0; font-size:14.5px; font-weight:900; line-height:1.5; }
         .duty-bar small { display:block; font-size:12.5px; font-weight:700; color:#fecaca; }
@@ -1132,6 +1133,15 @@ function arDate($dt, $lang) {
         <span class="dt-tx"><?= $lang === 'ar' ? 'مطلوب منك تأكيد استلام ' . count($myDuty) . (count($myDuty) === 1 ? ' سيارة' : ' سيارات') . ' وصلت إلى فرعك' : 'Confirm ' . count($myDuty) . ' car(s) that reached your branch' ?>
             <small><?= $dLock ? ($lang === 'ar' ? 'الوقت المتبقي ' : 'Time left ') : ($lang === 'ar' ? 'الوقت المتبقي ' : 'Time left ') ?><b id="dutyT">—</b><?= $dLock ? ($lang === 'ar' ? ' — بعدها يتوقف النظام' : ' before your system locks') : '' ?></small></span>
         <span class="dt-go">✅ <?= $lang === 'ar' ? 'تأكيد الآن' : 'Confirm now' ?></span>
+    </a>
+    <?php endif; ?>
+    <?php $openIss = (function_exists('smart_open_issues') && in_array($_SESSION['role'] ?? '', ['admin', 'manager'], true)) ? smart_open_issues($pdo) : [];
+    if ($openIss): ?>
+    <a class="duty-bar iss" href="transfer_receive.php?lang=<?= $lang ?>#issues" data-secs="0">
+        <span class="dt-ic">❗</span>
+        <span class="dt-tx"><?= $lang === 'ar' ? (count($openIss) === 1 ? 'سيارة منقولة أُبلغ أنها لم تصل' : count($openIss) . ' سيارات منقولة أُبلغ أنها لم تصل') : count($openIss) . ' transferred car(s) reported as not arrived' ?>
+            <small><?= htmlspecialchars(implode(' · ', array_map(fn($i) => trim($i['brand'] . ' ' . $i['model']) . ' (' . $i['chassis'] . ')', array_slice($openIss, 0, 3)))) ?></small></span>
+        <span class="dt-go">🛠️ <?= $lang === 'ar' ? 'اتخاذ قرار' : 'Decide' ?></span>
     </a>
     <?php endif; ?>
     <?php $myChk = function_exists('smart_checks_for_user') ? smart_checks_for_user($pdo, (int)$_SESSION['user_id']) : [];

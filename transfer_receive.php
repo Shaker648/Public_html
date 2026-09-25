@@ -20,14 +20,22 @@ $csrf = $_SESSION['csrf_token'];
 $me   = (string)$_SESSION['username'];
 $uid  = (int)$_SESSION['user_id'];
 push_tables($pdo);
+$canResolve = in_array($_SESSION['role'] ?? '', ['admin', 'manager'], true);
 
-/* ─── confirm ─── */
+/* ─── confirm / report / decide ─── */
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!hash_equals($csrf, (string)($_POST['csrf_token'] ?? ''))) {
         $_SESSION['tr_flash'] = ['bad', $ar ? 'انتهت صلاحية الصفحة — حاول مرة أخرى' : 'The page expired — try again'];
+    } elseif (($_POST['act'] ?? '') === 'missing') {
+        $ok = smart_report_missing($pdo, (int)($_POST['mid'] ?? 0), $me, (string)($_POST['note'] ?? ''));
+        $_SESSION['tr_flash'] = $ok ? ['ok', $ar ? '❗ تم إبلاغ الإدارة ومن قام بالنقل أن السيارة لم تصل — ولن تُحسب عليك' : '❗ The admin and the sender were told the car did not arrive — it no longer counts against you']
+                                    : ['bad', $ar ? 'تم الإبلاغ عن هذه السيارة من قبل' : 'Already reported'];
+    } elseif (($_POST['act'] ?? '') === 'resolve' && $canResolve) {
+        $ok = smart_resolve_issue($pdo, (int)($_POST['mid'] ?? 0), (string)($_POST['how'] ?? ''), $me, (string)($_POST['branch'] ?? ''));
+        $_SESSION['tr_flash'] = $ok ? ['ok', $ar ? '✅ تم حفظ القرار وإبلاغ المعنيين' : '✅ Decision saved and people told'] : ['bad', $ar ? 'تعذّر حفظ القرار' : 'Could not save the decision'];
     } else {
         $n = smart_receive($pdo, (array)($_POST['mids'] ?? []), $me);
-        $_SESSION['tr_flash'] = $n ? ['ok', $ar ? '✅ تم تأكيد استلام ' . $n . ($n === 1 ? ' سيارة' : ' سيارات') . ' — وأُبلغ من قام بنقلها' : '✅ ' . $n . ' received — the sender was told']
+        $_SESSION['tr_flash'] = $n ? ['ok', $ar ? '✅ تم تأكيد استلام ' . push_ar_cars($n) . ' — وأُبلغ من قام بنقلها' : '✅ ' . $n . ' received — the sender was told']
                                    : ['bad', $ar ? 'تم تأكيد استلام هذه السيارة من قبل' : 'Already confirmed'];
     }
     header('Location: transfer_receive.php?lang=' . $lang);
@@ -97,6 +105,17 @@ $col = fn($c) => push_color_label($pdo, (string)$c, $lang);
 .tr-cd{font-size:13px;font-weight:900;color:#fecaca;background:rgba(239,68,68,.12);border:1px solid rgba(239,68,68,.35);border-radius:10px;padding:6px 10px}
 .tr-cd b{font-family:Inter,sans-serif;font-variant-numeric:tabular-nums;color:#fff}
 .tr-cd.over{background:rgba(239,68,68,.25)}
+.tr-missf{margin:0}
+.tr-miss{width:100%;height:34px;border-radius:10px;border:1px solid rgba(239,68,68,.45);background:rgba(239,68,68,.08);color:#fca5a5;font:inherit;font-size:13px;font-weight:900;cursor:pointer}
+.tr-iss{border-color:rgba(239,68,68,.5);background:linear-gradient(160deg,rgba(239,68,68,.12),rgba(255,255,255,.02))}
+.tr-i{display:flex;flex-wrap:wrap;gap:10px;align-items:center;padding:12px;border-radius:14px;border:1px solid rgba(239,68,68,.35);background:rgba(2,6,23,.4);margin-bottom:8px}
+.tr-i .i{flex:1;min-width:220px}.tr-i b{display:block;font-size:14.5px}.tr-i small{display:block;font-size:12.5px;color:var(--mut);font-weight:700;margin-top:3px}.tr-i small.w{color:#fca5a5}
+.tr-i .ch{font-family:Inter,monospace;color:#a3e635}
+.tr-dec{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.tr-dec button,.tr-dec select{height:36px;border-radius:10px;border:1px solid var(--line);background:rgba(255,255,255,.05);color:var(--txt);font:inherit;font-size:12.5px;font-weight:900;padding:0 10px;cursor:pointer}
+.tr-dec .d1{background:linear-gradient(90deg,#16a34a,#22c55e);border:0;color:#fff}.tr-dec .d2{border-color:rgba(245,158,11,.5);color:#fde68a}
+.tr-dec .d3{display:inline-flex;gap:4px}.tr-dec select{background:#0b1426}
+.tr-wait{font-size:12.5px;font-weight:900;color:#fde68a}
 .tr-empty{text-align:center;padding:40px 16px}
 .tr-empty .big{font-size:54px;margin-bottom:8px;animation:trBob 3s ease-in-out infinite}
 @keyframes trBob{50%{transform:translateY(-6px)}}
@@ -119,6 +138,27 @@ $col = fn($c) => push_color_label($pdo, (string)$c, $lang);
     </header>
 
     <?php if ($flash): ?><div class="tr-flash <?= $flash[0] ?>"><?= htmlspecialchars($flash[1]) ?></div><?php endif; ?>
+
+    <?php $issues = smart_open_issues($pdo); if ($issues): ?>
+    <section class="nf-card tr-iss" id="issues">
+        <h2>❗ <?= $ar ? 'بلاغات «لم تصل» — بانتظار قرار الإدارة' : '"Did not arrive" reports — waiting for a decision' ?> <span class="nf-count"><?= count($issues) ?></span></h2>
+        <?php foreach ($issues as $is): ?>
+        <div class="tr-i">
+            <div class="i"><b>🚗 <?= htmlspecialchars(trim($is['brand'] . ' ' . $is['model'] . ' ' . $is['trim_name'])) ?> · <?= htmlspecialchars($col($is['color'])) ?> · <span class="ch"><?= htmlspecialchars((string)$is['chassis']) ?></span></b>
+                <small>📍 <?= htmlspecialchars($br($is['from_branch'])) ?> ← <?= htmlspecialchars($br($is['to_branch'])) ?> · <?= $ar ? 'نقلها' : 'moved by' ?> <?= htmlspecialchars((string)$is['moved_by']) ?></small>
+                <small class="w">❗ <?= $ar ? 'أبلغ' : 'reported by' ?> <?= htmlspecialchars((string)$is['reported_by']) ?> · <?= htmlspecialchars($ago($is['age'])) ?><?= $is['note'] ? ' · 📝 ' . htmlspecialchars($is['note']) : '' ?></small></div>
+            <?php if ($canResolve): ?>
+            <form method="post" class="tr-dec"><input type="hidden" name="csrf_token" value="<?= $csrf ?>"><input type="hidden" name="act" value="resolve"><input type="hidden" name="mid" value="<?= (int)$is['movement_id'] ?>">
+                <button name="how" value="arrived" class="d1">✅ <?= $ar ? 'وصلت' : 'Arrived' ?></button>
+                <button name="how" value="cancel" class="d2">↩️ <?= $ar ? 'إلغاء النقل (إعادتها إلى ' . htmlspecialchars($br($is['from_branch'])) . ')' : 'Cancel (back to ' . htmlspecialchars($br($is['from_branch'])) . ')' ?></button>
+                <span class="d3"><select name="branch"><?php foreach ($pdo->query("SELECT name, name_ar, name_en FROM branches ORDER BY id") as $bb): ?><option value="<?= htmlspecialchars($bb['name']) ?>"><?= htmlspecialchars(($ar ? $bb['name_ar'] : $bb['name_en']) ?: $bb['name']) ?></option><?php endforeach; ?></select>
+                    <button name="how" value="move">📍 <?= $ar ? 'هي في هذا الفرع' : 'It is at this branch' ?></button></span>
+            </form>
+            <?php else: ?><span class="tr-wait">⏳ <?= $ar ? 'بانتظار قرار الإدارة' : 'Waiting for the admin' ?></span><?php endif; ?>
+        </div>
+        <?php endforeach; ?>
+    </section>
+    <?php endif; ?>
 
     <?php if (!$groups): ?>
     <section class="nf-card tr-empty">
@@ -151,6 +191,8 @@ $col = fn($c) => push_color_label($pdo, (string)$c, $lang);
                     <form method="post"><input type="hidden" name="csrf_token" value="<?= $csrf ?>"><input type="hidden" name="mids[]" value="<?= (int)$c['mid'] ?>">
                         <button type="submit" class="tr-ok">✅ <?= $ar ? 'تم الاستلام' : 'Received' ?></button></form>
                 </div>
+                <form method="post" class="tr-missf"><input type="hidden" name="csrf_token" value="<?= $csrf ?>"><input type="hidden" name="act" value="missing"><input type="hidden" name="mid" value="<?= (int)$c['mid'] ?>"><input type="hidden" name="note" value="">
+                    <button type="submit" class="tr-miss">❌ <?= $ar ? 'لم تصل' : 'Did not arrive' ?></button></form>
             </div>
             <?php endforeach; ?>
         </div>
@@ -173,6 +215,12 @@ $col = fn($c) => push_color_label($pdo, (string)$c, $lang);
     <?php endif; ?>
 </div>
 <script>
+/* «لم تصل»: ask for a short note, then send */
+document.querySelectorAll('.tr-missf').forEach(f => f.addEventListener('submit', e => {
+    const n = prompt(<?= json_encode($ar ? 'ملاحظة (اختياري): ماذا حدث؟ مثال: لم تصل السيارة / وصلت سيارة أخرى' : 'Note (optional): what happened?', JSON_UNESCAPED_UNICODE) ?>, '');
+    if (n === null) { e.preventDefault(); return; }
+    f.querySelector('[name=note]').value = n;
+}));
 (function () {
     const els = [...document.querySelectorAll('.tr-cd')], t0 = Date.now();
     if (!els.length) return;
