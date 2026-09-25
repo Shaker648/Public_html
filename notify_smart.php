@@ -62,6 +62,7 @@ function smart_transfer(PDO $pdo, array $moved, string $to): void
     try {
         if (!$moved) return;
         push_tables($pdo);
+        if (!transfer_needs_confirm($pdo, $to)) return;   // storage: nobody there to press «استلمت»
         $staff = notify_branch_staff($pdo, $to);
         $mids  = array_values(array_filter(array_map(fn($c) => (int)($c['mid'] ?? 0), $moved)));
         $froms = array_values(array_unique(array_column($moved, 'from')));
@@ -69,6 +70,7 @@ function smart_transfer(PDO $pdo, array $moved, string $to): void
         if (count($moved) === 1) $data['car'] = $moved[0] + ['branch' => $to];
         else { $data['count'] = count($moved); $data['names'] = array_map(fn($c) => trim($c['brand'] . ' ' . $c['model']) . ' (' . $c['chassis'] . ')', $moved); }
         notify_event($pdo, 'transfer_incoming', $data);
+        smart_duty_scan($pdo);   // whoever is already clocked in there: their time starts now
     } catch (Throwable $e) { error_log('smart_transfer: ' . $e->getMessage()); }
 }
 
@@ -92,7 +94,8 @@ function smart_pending_transfers(PDO $pdo, string $branch = '', int $days = 7): 
     if ($branch !== '') { $sql .= " AND m.to_branch = ?"; $args[] = $branch; }
     $st = $pdo->prepare($sql . " ORDER BY m.id DESC");
     $st->execute($args);
-    return $st->fetchAll(PDO::FETCH_ASSOC);
+    // only places that confirm (a storage has nobody to press «استلمت»)
+    return array_values(array_filter($st->fetchAll(PDO::FETCH_ASSOC), fn($r) => transfer_needs_confirm($pdo, (string)$r['to_branch'])));
 }
 
 /** A branch confirms it received cars. Returns how many were newly confirmed. */
@@ -118,8 +121,155 @@ function smart_receive(PDO $pdo, array $mids, string $by): int
             else { $data['count'] = count($cars); $data['names'] = array_map(fn($c) => trim($c['brand'] . ' ' . $c['model']) . ' (' . $c['chassis'] . ')', $cars); }
             notify_event($pdo, 'transfer_received', $data);
         }
+        smart_duty_scan($pdo);   // done / auto-unlock
         return count($new);
     } catch (Throwable $e) { error_log('smart_receive: ' . $e->getMessage()); return 0; }
+}
+
+/* ════════════════════════ «استلمت» on time — or the system locks ════════════════════════ */
+/** Is this person's system locked right now? Returns the lock row or null. */
+function user_lock_active(PDO $pdo, int $uid): ?array
+{
+    try {
+        $st = $pdo->prepare("SELECT * FROM user_locks WHERE user_id = ? AND unlocked_at IS NULL ORDER BY id DESC LIMIT 1");
+        $st->execute([$uid]);
+        return $st->fetch(PDO::FETCH_ASSOC) ?: null;
+    } catch (Throwable $e) { return null; }
+}
+
+/** Cars this person still has to confirm (their countdown is running or over). */
+function smart_my_duties(PDO $pdo, int $uid): array
+{
+    $st = $pdo->prepare("SELECT d.movement_id AS mid, d.deadline, TIMESTAMPDIFF(SECOND, NOW(), d.deadline) AS secs, m.to_branch, m.from_branch, m.moved_by,
+                                c.id AS car_id, c.brand, c.model, c.trim_name, c.car_year, c.color, c.chassis
+                         FROM transfer_duty d JOIN movements m ON m.id = d.movement_id JOIN cars c ON c.id = m.car_id
+                         LEFT JOIN transfer_receipts r ON r.movement_id = d.movement_id
+                         WHERE d.user_id = ? AND r.movement_id IS NULL
+                           AND c.branch = m.to_branch AND c.status IN ('available', 'reserved')
+                         ORDER BY d.deadline");
+    $st->execute([$uid]);
+    return $st->fetchAll(PDO::FETCH_ASSOC);
+}
+
+/**
+ * The receiving clock. Safe to call often (cron, clock-in, transfer, «استلمت»):
+ *  1. whoever has to confirm and is at the branch gets a countdown (starts once)
+ *  2. N minutes before the end: the person and the admin are warned
+ *  3. time is up: the person's system locks (never an admin) — both are told
+ *  4. everything confirmed: the admin is told (or it unlocks by itself if set)
+ */
+function smart_duty_scan(PDO $pdo): array
+{
+    $log = [];
+    try {
+        push_tables($pdo);
+        $rules = transfer_rules($pdo);
+        $lang  = notify_options($pdo)['lang'];
+        $fmt   = fn($ts) => date('h:i', $ts) . ($lang === 'ar' ? (date('A', $ts) === 'AM' ? ' ص' : ' م') : ' ' . date('A', $ts));
+        $names = fn($rows) => array_map(fn($c) => trim($c['brand'] . ' ' . $c['model']) . ' (' . $c['chassis'] . ')', $rows);
+        $roles = [];
+        foreach ($pdo->query("SELECT id, username, role FROM users") as $u) $roles[(int)$u['id']] = [$u['username'], $u['role']];
+
+        /* 1 — start the clocks */
+        $pend = smart_pending_transfers($pdo, '', 7);
+        $byBranch = [];
+        foreach ($pend as $p) $byBranch[$p['to_branch']][] = $p;
+        $ins = $pdo->prepare("INSERT IGNORE INTO transfer_duty (movement_id, user_id, started_at, deadline) VALUES (?, ?, NOW(), NOW() + INTERVAL ? MINUTE)");
+        $started = [];
+        foreach ($byBranch as $branch => $rows) {
+            foreach (transfer_responsible($pdo, $branch) as $uid => $uname) {
+                foreach ($rows as $r) {
+                    $ins->execute([(int)$r['mid'], $uid, (int)round($rules['hours'] * 60)]);
+                    if ($ins->rowCount()) $started[$uid][$branch][] = $r;
+                }
+            }
+        }
+        foreach ($started as $uid => $br) foreach ($br as $branch => $rows) {
+            notify_event($pdo, 'duty_start', ['user' => $roles[$uid][0] ?? '', 'owners' => [$roles[$uid][0] ?? ''], 'branch' => $branch, 'count' => count($rows),
+                'names' => $names($rows), 'until' => $fmt(time() + (int)round($rules['hours'] * 3600)), 'lock' => $rules['lock'], 'actor' => '', 'force' => true, 'now' => true]);
+            $log[] = 'duty_start ' . ($roles[$uid][0] ?? $uid) . ' ×' . count($rows);
+        }
+
+        $open = "FROM transfer_duty d JOIN movements m ON m.id = d.movement_id JOIN cars c ON c.id = m.car_id
+                 LEFT JOIN transfer_receipts r ON r.movement_id = d.movement_id
+                 WHERE r.movement_id IS NULL AND c.branch = m.to_branch AND c.status IN ('available', 'reserved')";
+        $cols = "d.movement_id, d.user_id, UNIX_TIMESTAMP(d.deadline) AS dl, m.to_branch, c.brand, c.model, c.chassis";
+
+        /* 2 — warnings */
+        $st = $pdo->prepare("SELECT $cols $open AND d.warned = 0 AND d.deadline > NOW() AND d.deadline <= NOW() + INTERVAL ? MINUTE");
+        $st->execute([$rules['warn']]);
+        $warn = [];
+        foreach ($st->fetchAll(PDO::FETCH_ASSOC) as $r) $warn[(int)$r['user_id']][] = $r;
+        $mark = $pdo->prepare("UPDATE transfer_duty SET warned = 1 WHERE movement_id = ? AND user_id = ?");
+        foreach ($warn as $uid => $rows) {
+            foreach ($rows as $r) $mark->execute([(int)$r['movement_id'], $uid]);
+            if (!$rules['lock']) continue;                                   // nothing will lock — no need to warn
+            $dl = min(array_map(fn($r) => (int)$r['dl'], $rows));
+            notify_event($pdo, 'duty_warn', ['user' => $roles[$uid][0] ?? '', 'owners' => [$roles[$uid][0] ?? ''], 'branch' => $rows[0]['to_branch'],
+                'count' => count($rows), 'mins' => max(1, (int)ceil(($dl - time()) / 60)), 'until' => $fmt($dl), 'actor' => '', 'force' => true, 'now' => true]);
+            $log[] = 'duty_warn ' . ($roles[$uid][0] ?? $uid);
+        }
+
+        /* 3 — time is up */
+        if ($rules['lock']) {
+            $late = [];
+            foreach ($pdo->query("SELECT $cols $open AND d.locked = 0 AND d.deadline <= NOW()")->fetchAll(PDO::FETCH_ASSOC) as $r) $late[(int)$r['user_id']][] = $r;
+            $mark = $pdo->prepare("UPDATE transfer_duty SET locked = 1 WHERE movement_id = ? AND user_id = ?");
+            foreach ($late as $uid => $rows) {
+                foreach ($rows as $r) $mark->execute([(int)$r['movement_id'], $uid]);
+                if (($roles[$uid][1] ?? '') === 'admin') continue;           // an admin is never locked out
+                if (!user_lock_active($pdo, $uid)) {
+                    $pdo->prepare("INSERT INTO user_locks (user_id, reason, locked_at) VALUES (?, ?, NOW())")
+                        ->execute([$uid, mb_substr(implode(', ', $names($rows)), 0, 250)]);
+                    notify_event($pdo, 'duty_locked', ['user' => $roles[$uid][0] ?? '', 'owners' => [$roles[$uid][0] ?? ''], 'branch' => $rows[0]['to_branch'],
+                        'count' => count($rows), 'actor' => '', 'force' => true, 'now' => true]);
+                    $log[] = 'duty_locked ' . ($roles[$uid][0] ?? $uid);
+                }
+            }
+        }
+
+        /* 4 — a locked person confirmed everything */
+        foreach ($pdo->query("SELECT * FROM user_locks WHERE unlocked_at IS NULL AND done_at IS NULL")->fetchAll(PDO::FETCH_ASSOC) as $lk) {
+            $uid = (int)$lk['user_id'];
+            if (smart_my_duties($pdo, $uid)) continue;
+            $pdo->prepare("UPDATE user_locks SET done_at = NOW() WHERE id = ?")->execute([(int)$lk['id']]);
+            if ($rules['auto_unlock']) { smart_unlock($pdo, $uid, 'system'); $log[] = 'auto_unlock ' . ($roles[$uid][0] ?? $uid); }
+            else {
+                notify_event($pdo, 'duty_done', ['user' => $roles[$uid][0] ?? '', 'actor' => '', 'force' => true, 'now' => true]);
+                $log[] = 'duty_done ' . ($roles[$uid][0] ?? $uid);
+            }
+        }
+    } catch (Throwable $e) { error_log('smart_duty_scan: ' . $e->getMessage()); }
+    return $log;
+}
+
+/** The admin opens the system for someone: anything still unconfirmed gets a fresh full period. */
+function smart_unlock(PDO $pdo, int $uid, string $by): void
+{
+    push_tables($pdo);
+    $rules = transfer_rules($pdo);
+    $pdo->prepare("UPDATE user_locks SET unlocked_at = NOW(), unlocked_by = ? WHERE user_id = ? AND unlocked_at IS NULL")->execute([$by, $uid]);
+    $left = smart_my_duties($pdo, $uid);
+    if ($left) {
+        $pdo->prepare("UPDATE transfer_duty SET deadline = NOW() + INTERVAL ? MINUTE, warned = 0, locked = 0 WHERE user_id = ?")
+            ->execute([(int)round($rules['hours'] * 60), $uid]);
+    }
+    $st = $pdo->prepare("SELECT username FROM users WHERE id = ?");
+    $st->execute([$uid]);
+    $lang = notify_options($pdo)['lang'];
+    $ts = time() + (int)round($rules['hours'] * 3600);
+    notify_event($pdo, 'duty_unlocked', ['owners' => [(string)$st->fetchColumn()], 'by' => $by === 'system' ? ($lang === 'ar' ? 'النظام' : 'the system') : $by,
+        'left' => count($left), 'until' => date('h:i', $ts) . ($lang === 'ar' ? (date('A', $ts) === 'AM' ? ' ص' : ' م') : ' ' . date('A', $ts)),
+        'actor' => $by === 'system' ? '' : $by, 'force' => true, 'now' => true]);
+}
+
+/** More time for someone (minutes added to everything they still have to confirm). */
+function smart_extend(PDO $pdo, int $uid, int $minutes): void
+{
+    push_tables($pdo);
+    $pdo->prepare("UPDATE transfer_duty d LEFT JOIN transfer_receipts r ON r.movement_id = d.movement_id
+                   SET d.deadline = GREATEST(d.deadline, NOW()) + INTERVAL ? MINUTE, d.warned = 0, d.locked = 0
+                   WHERE d.user_id = ? AND r.movement_id IS NULL")->execute([max(5, min(1440, $minutes)), $uid]);
 }
 
 /* ════════════════════════ prices ════════════════════════ */
@@ -219,6 +369,9 @@ function smart_run(PDO $pdo): array
         $s = notify_smart($pdo);
         $day = smart_daytime();
 
+        /* 🚚 receiving transferred cars: countdowns, warnings, locks (any time of day) */
+        $done = array_merge($done, smart_duty_scan($pdo));
+
         /* ⏰ old reservations: after N days, then every N days — to the one who reserved it */
         if ($day) {
             $rows = $pdo->query("SELECT c.*, m.id AS mid, m.moved_by, DATEDIFF(NOW(), m.created_at) AS days
@@ -249,8 +402,10 @@ function smart_run(PDO $pdo): array
 
         /* ⏳ transfers nobody confirmed within 24 hours */
         if ($day) {
+            $withDuty = array_map('intval', $pdo->query("SELECT DISTINCT movement_id FROM transfer_duty")->fetchAll(PDO::FETCH_COLUMN));
             foreach (smart_pending_transfers($pdo, '', 3) as $t) {
-                if ((int)$t['hours'] < 24 || !notify_once($pdo, 'tru:' . $t['mid'])) continue;
+                // somebody was there → the countdown / lock handles it; this is for "nobody was at the branch"
+                if ((int)$t['hours'] < 24 || in_array((int)$t['mid'], $withDuty, true) || !notify_once($pdo, 'tru:' . $t['mid'])) continue;
                 notify_event($pdo, 'transfer_unconfirmed', ['car' => ['id' => $t['car_id']] + $t, 'to' => $t['to_branch'], 'hours' => (int)$t['hours'],
                     'mover' => $t['moved_by'], 'actor' => '', 'now' => true]);
                 $done[] = 'transfer_unconfirmed #' . $t['mid'];

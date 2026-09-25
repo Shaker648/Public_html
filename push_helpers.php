@@ -31,8 +31,6 @@ function notify_events(): array
         'car_added'        => ['إضافة سيارة جديدة',          'New car added',              '🚗', ['admin'], true, null, 'live'],
         'shipment_received'=> ['استلام شحنة',                 'Shipment received',          '📦', ['admin'], true, null, 'live'],
         'car_transferred'  => ['نقل سيارة بين الفروع',        'Car transferred',            '🔄', ['admin'], true, null, 'live'],
-        'transfer_incoming'=> ['عربية جاية لفرعك (زر «استلمت»)', 'Car on its way to your branch', '🚚', [], true, true, 'live'],
-        'transfer_received'=> ['تأكيد استلام عربية منقولة',   'Transferred car received',   '📥', ['admin'], true, true, 'live'],
         'car_reserved'     => ['حجز سيارة',                   'Car reserved',               '🔒', ['admin'], true, null, 'live'],
         'reserve_cancelled'=> ['إلغاء حجز',                   'Reservation cancelled',      '↩️', ['admin'], true, null, 'live'],
         'price_reserved'   => ['تغيّر سعر عربية محجوزة',       'Price changed on a reserved car', '🏷️', [], true, true, 'live'],
@@ -52,10 +50,18 @@ function notify_events(): array
         // automatic reminders (notify_cron.php)
         'reserve_old'      => ['حجز قديم',                     'Old reservation',            '⏰', ['admin'], true, true, 'remind'],
         'stock_aged'       => ['عربيات بقالها كتير في المخزون (أسبوعياً)', 'Cars in stock too long (weekly)', '🐢', ['admin', 'manager'], true, null, 'remind'],
-        'transfer_unconfirmed' => ['نقل ما اتأكدش استلامه خلال 24 ساعة', 'Transfer not confirmed within 24 h', '⏳', ['admin'], true, null, 'remind'],
         'amana_long'       => ['أمانة بره من مدة طويلة',        'Consignment out too long',   '🔶', ['admin'], true, true, 'remind'],
         'bank_waiting'     => ['بنك ما ردّش على طلب تقسيط',     'Bank has not replied',       '⌛', ['admin', 'manager'], true, null, 'remind'],
         'clockout_forgot'  => ['نسي يسجّل انصراف (للموظف نفسه)', 'Forgot to clock out (to the employee)', '🌙', [], true, true, 'remind'],
+        // receiving transferred cars
+        'transfer_incoming'=> ['عربية جاية لفرعك (زر «استلمت»)', 'Car on its way to your branch', '🚚', [], true, true, 'transfer'],
+        'duty_start'       => ['بدأ وقت تأكيد الاستلام',          'Time to confirm has started', '⏱️', ['admin'], true, true, 'transfer'],
+        'duty_warn'        => ['قرّب النظام يتقفل عليه',          'About to be locked',         '⚠️', ['admin'], true, true, 'transfer'],
+        'duty_locked'      => ['النظام اتقفل عليه',               'System locked for someone',  '🔒', ['admin'], true, true, 'transfer'],
+        'duty_done'        => ['أكّد كل العربيات ومستني تفتحله',   'Confirmed everything, waiting to be unlocked', '✅', ['admin'], true, null, 'transfer'],
+        'duty_unlocked'    => ['الأدمن فتح النظام',                'Unlocked by the admin',      '🔓', [], true, true, 'transfer'],
+        'transfer_received'=> ['تأكيد استلام عربية منقولة',       'Transferred car received',   '📥', ['admin'], true, true, 'transfer'],
+        'transfer_unconfirmed' => ['محدش كان في الفرع يستلم (24 ساعة)', 'Nobody at the branch to receive (24 h)', '🏖️', ['admin'], true, null, 'transfer'],
         // security
         'login_failed'     => ['محاولات دخول خاطئة',           'Failed sign-in attempts',    '🔐', ['admin'], true, null, 'security'],
         'sensitive_change' => ['تغيير حساس (شاسيه / عربية مباعة / تخفيض سعر)', 'Sensitive change (chassis / sold car / price cut)', '🚨', ['admin'], true, null, 'security'],
@@ -85,34 +91,94 @@ function notify_smart(PDO $pdo): array
     ];
 }
 
-/** Each person's home branch, set by the admin: [userId => branch name]. */
-function notify_user_branches(PDO $pdo): array
+/**
+ * Receiving transferred cars (notifications_admin.php → «استلام العربيات»):
+ *   lock   lock the system for whoever did not confirm in time
+ *   hours  time to confirm, counted from when the person is at the branch
+ *   warn   minutes before the lock when they (and the admin) are warned
+ *   auto_unlock  unlock by itself once everything is confirmed (off = only the admin unlocks)
+ *   branches[name] = [confirm => does this place confirm at all (storage: no), users => who confirms]
+ */
+function transfer_rules(PDO $pdo): array
 {
-    $m = json_decode(push_setting($pdo, 'user_branches', ''), true) ?: [];
-    $out = [];
-    foreach ($m as $id => $b) if ((int)$id > 0 && is_string($b) && $b !== '') $out[(int)$id] = $b;
+    $o = json_decode(push_setting($pdo, 'transfer_rules', ''), true) ?: [];
+    $out = [
+        'lock'        => array_key_exists('lock', $o) ? !empty($o['lock']) : true,
+        'hours'       => max(0.5, min(24, round((float)($o['hours'] ?? 2) * 2) / 2)),
+        'warn'        => max(5, min(240, (int)($o['warn'] ?? 30))),
+        'auto_unlock' => !empty($o['auto_unlock']),
+        'branches'    => [],
+    ];
+    try { $rows = $pdo->query("SELECT name, branch_type FROM branches ORDER BY id")->fetchAll(PDO::FETCH_ASSOC); } catch (Throwable $e) { $rows = []; }
+    foreach ($rows as $b) {
+        $r = is_array($o['branches'][$b['name']] ?? null) ? $o['branches'][$b['name']] : null;
+        $out['branches'][$b['name']] = [
+            'confirm' => $r && array_key_exists('confirm', $r) ? !empty($r['confirm']) : (($b['branch_type'] ?? '') !== 'storage'),
+            'users'   => $r ? array_values(array_unique(array_map('intval', (array)($r['users'] ?? [])))) : [],
+        ];
+    }
     return $out;
 }
 
+/** Does a car moving to this place need «استلمت»? (storage / unknown place: no) */
+function transfer_needs_confirm(PDO $pdo, string $branch): bool
+{
+    static $r = null;
+    if ($r === null) $r = transfer_rules($pdo);
+    return !empty($r['branches'][$branch]['confirm']);
+}
+
+/** People clocked in at a branch right now: [userId => username]. */
+function transfer_clocked_in(PDO $pdo, string $branch): array
+{
+    try {
+        $st = $pdo->prepare("SELECT DISTINCT u.id, u.username FROM attendance_logs a JOIN users u ON u.id = a.user_id
+                             WHERE u.active = 1 AND a.branch_name = ? AND a.clock_in >= CURDATE() AND a.clock_out IS NULL");
+        $st->execute([$branch]);
+        $out = [];
+        foreach ($st->fetchAll(PDO::FETCH_ASSOC) as $r) $out[(int)$r['id']] = (string)$r['username'];
+        return $out;
+    } catch (Throwable $e) { return []; }   // no attendance table yet
+}
+
 /**
- * Who works at a branch right now: people who clocked in there today and have
- * not left yet, plus the people the admin assigned to it. Returns usernames.
+ * Who has to confirm at a branch right now (the clock runs only for them):
+ * the people the admin chose for that branch who are clocked in there — or,
+ * if nobody was chosen, anyone clocked in there. [userId => username]
+ */
+function transfer_responsible(PDO $pdo, string $branch): array
+{
+    $users = transfer_rules($pdo)['branches'][$branch]['users'] ?? [];
+    $in = transfer_clocked_in($pdo, $branch);
+    return $users ? array_intersect_key($in, array_flip($users)) : $in;
+}
+
+/**
+ * Who hears "a car is on its way to your branch": the chosen people of that
+ * branch (even before they clock in), otherwise whoever is clocked in there.
+ * Returns usernames.
  */
 function notify_branch_staff(PDO $pdo, string $branch): array
 {
-    $names = [];
-    try {
-        $st = $pdo->prepare("SELECT DISTINCT u.username FROM attendance_logs a JOIN users u ON u.id = a.user_id
-                             WHERE u.active = 1 AND a.branch_name = ? AND a.clock_in >= CURDATE() AND a.clock_out IS NULL");
-        $st->execute([$branch]);
-        $names = $st->fetchAll(PDO::FETCH_COLUMN);
-    } catch (Throwable $e) {}   // no attendance table yet
-    $ids = array_keys(array_filter(notify_user_branches($pdo), fn($b) => $b === $branch));
-    if ($ids) {
-        $in = implode(',', array_map('intval', $ids));
-        $names = array_merge($names, $pdo->query("SELECT username FROM users WHERE active = 1 AND id IN ($in)")->fetchAll(PDO::FETCH_COLUMN));
+    $users = transfer_rules($pdo)['branches'][$branch]['users'] ?? [];
+    if ($users) {
+        $in = implode(',', array_map('intval', $users));
+        return array_map('strval', $pdo->query("SELECT username FROM users WHERE active = 1 AND id IN ($in)")->fetchAll(PDO::FETCH_COLUMN));
     }
-    return array_values(array_unique(array_map('strval', $names)));
+    return array_values(transfer_clocked_in($pdo, $branch));
+}
+
+/** The branches that are "mine": where I confirm, or where I clocked in today. */
+function transfer_my_branches(PDO $pdo, int $uid): array
+{
+    $mine = [];
+    foreach (transfer_rules($pdo)['branches'] as $name => $b) if (in_array($uid, $b['users'], true)) $mine[] = $name;
+    try {
+        $st = $pdo->prepare("SELECT DISTINCT branch_name FROM attendance_logs WHERE user_id = ? AND clock_in >= CURDATE() AND clock_out IS NULL");
+        $st->execute([$uid]);
+        $mine = array_merge($mine, $st->fetchAll(PDO::FETCH_COLUMN));
+    } catch (Throwable $e) {}
+    return array_values(array_unique(array_filter($mine)));
 }
 
 /** True the first time a key is seen — so a reminder is sent only once. */
@@ -212,6 +278,26 @@ function push_tables(PDO $pdo): void
         url VARCHAR(255) NULL,
         created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
         INDEX idx_time (created_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    $pdo->exec("CREATE TABLE IF NOT EXISTS transfer_duty (
+        movement_id INT NOT NULL,
+        user_id INT NOT NULL,
+        started_at DATETIME NOT NULL,
+        deadline DATETIME NOT NULL,
+        warned TINYINT NOT NULL DEFAULT 0,
+        locked TINYINT NOT NULL DEFAULT 0,
+        PRIMARY KEY (movement_id, user_id),
+        INDEX idx_user (user_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    $pdo->exec("CREATE TABLE IF NOT EXISTS user_locks (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        user_id INT NOT NULL,
+        reason VARCHAR(255) NULL,
+        locked_at DATETIME NOT NULL,
+        done_at DATETIME NULL,
+        unlocked_at DATETIME NULL,
+        unlocked_by VARCHAR(100) NULL,
+        INDEX idx_user (user_id, unlocked_at)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
     $pdo->exec("CREATE TABLE IF NOT EXISTS transfer_receipts (
         movement_id INT PRIMARY KEY,
@@ -611,8 +697,42 @@ function notify_message(PDO $pdo, string $event, array $d, string $lang): array
             $body[] = implode("\n", array_slice((array)($d['names'] ?? []), 0, 4));
             $url = 'dashboard.php?lang=' . $lang . '&sort=old';
             break;
+        case 'duty_start':
+        case 'duty_warn':
+        case 'duty_locked':
+        case 'duty_done':
+        case 'duty_unlocked':
+            $n  = (int)($d['count'] ?? 0);
+            $bn = push_branch_label($pdo, (string)($d['branch'] ?? ''), $lang);
+            $who = (string)($d['user'] ?? '');
+            $cars = $ar ? $n . ($n === 1 ? ' عربية' : ($n === 2 ? ' عربيتين' : ' عربيات')) : $n . ' car' . ($n === 1 ? '' : 's');
+            if ($event === 'duty_start') {
+                $title = $ev[2] . ' ' . ($ar ? 'تأكيد استلام ' . $cars . ' في ' . $bn . ' — لحد ' . $d['until'] : 'Confirm ' . $cars . ' at ' . $bn . ' by ' . $d['until']);
+                $body[] = ($ar ? '👤 المسؤول: ' : '👤 Responsible: ') . $who;
+                if (!empty($d['names'])) $body[] = implode(' · ', array_slice((array)$d['names'], 0, 3));
+                if (!empty($d['lock'])) $body[] = $ar ? '⚠️ لو ما اتأكدش في الوقت النظام هيتقفل' : '⚠️ If not confirmed in time the system locks';
+                $url = 'transfer_receive.php?lang=' . $lang;
+            } elseif ($event === 'duty_warn') {
+                $title = $ev[2] . ' ' . ($ar ? 'فاضل ' . (int)$d['mins'] . ' دقيقة ويتقفل النظام على ' . $who : (int)$d['mins'] . ' min until ' . $who . ' is locked');
+                $body[] = ($ar ? 'لازم يأكد استلام ' : 'Needs to confirm ') . $cars . ($ar ? ' في ' : ' at ') . $bn . ($ar ? ' قبل ' : ' before ') . $d['until'];
+                $url = 'transfer_receive.php?lang=' . $lang;
+            } elseif ($event === 'duty_locked') {
+                $title = $ev[2] . ' ' . ($ar ? 'النظام اتقفل على ' : 'System locked for ') . $who;
+                $body[] = ($ar ? 'ما أكّدش استلام ' : 'Did not confirm ') . $cars . ($ar ? ' في ' : ' at ') . $bn . ($ar ? ' في الوقت' : ' in time');
+                $body[] = $ar ? '🔓 الأدمن بس يقدر يفتحه' : '🔓 Only the admin can unlock it';
+                $url = 'transfer_lock.php?lang=' . $lang;
+            } elseif ($event === 'duty_done') {
+                $title = $ev[2] . ' ' . $who . ($ar ? ' أكّد استلام كل العربيات' : ' confirmed every car');
+                $body[] = $ar ? 'النظام لسه مقفول عليه — افتحله من صفحة التحكم' : 'Still locked — unlock from the control page';
+                $url = 'notifications_admin.php?lang=' . $lang . '#tr';
+            } else {
+                $title = $ev[2] . ' ' . ($ar ? 'النظام اتفتح تاني' : 'Your system is unlocked');
+                $body[] = ($ar ? 'فتحه ' : 'Unlocked by ') . ($d['by'] ?? '') . (!empty($d['left']) ? ($ar ? ' — أكّد استلام العربيات قبل ' : ' — confirm the cars before ') . $d['until'] : '');
+                $url = 'transfer_receive.php?lang=' . $lang;
+            }
+            break;
         case 'transfer_unconfirmed':
-            $title = $ev[2] . ' ' . ($ar ? 'محدش أكّد استلام: ' : 'Nobody confirmed: ') . $line;
+            $title = $ev[2] . ' ' . ($ar ? 'محدش كان في الفرع يستلم: ' : 'Nobody at the branch to receive: ') . $line;
             $body[] = ($ar ? 'منقولة إلى ' : 'Moved to ') . push_branch_label($pdo, (string)($d['to'] ?? ''), $lang) . ' · ' . ($ar ? 'من ' . (int)$d['hours'] . ' ساعة' : (int)$d['hours'] . ' h ago') . (!empty($d['mover']) ? ' · ' . ($ar ? 'نقلها ' : 'moved by ') . $d['mover'] : '');
             $url = 'transfer_receive.php?lang=' . $lang . '&all=1';
             break;
@@ -649,7 +769,7 @@ function notify_message(PDO $pdo, string $event, array $d, string $lang): array
         default:
             $title = $ev[2] . ' ' . ($ar ? $ev[0] : $ev[1]);
     }
-    $noBy = ['test', 'transfer_received', 'sale_celebrate', 'last_car', 'reserve_old', 'stock_aged', 'transfer_unconfirmed',
+    $noBy = ['test', 'transfer_received', 'duty_start', 'duty_warn', 'duty_locked', 'duty_done', 'duty_unlocked', 'sale_celebrate', 'last_car', 'reserve_old', 'stock_aged', 'transfer_unconfirmed',
              'amana_long', 'bank_waiting', 'clockout_forgot', 'login_failed', 'price_reserved'];
     if ($by !== '' && !in_array($event, $noBy, true) && strpos($event, 'att_') !== 0) $body[] = ($ar ? '✍️ بواسطة ' : '✍️ by ') . $by;
     return [

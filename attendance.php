@@ -131,6 +131,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
             notify_event($pdo, 'att_in', ['actor' => $userName, 'branch' => $branchName, 'time' => $_SESSION['att_done']['time'],
                                           'dist' => $inDist, 'far' => $inDist !== null && $inDist > $set['fence']]);
             } catch (Throwable $e) { error_log('attendance alert: ' . $e->getMessage()); }
+            // cars waiting at this branch for «استلمت»: the time to confirm starts now
+            if (is_file(__DIR__ . '/notify_smart.php')) try {
+                require_once __DIR__ . '/notify_smart.php';
+                smart_duty_scan($pdo);
+            } catch (Throwable $e) { error_log('attendance duty: ' . $e->getMessage()); }
         }
     } elseif ($_POST['action'] === 'clock_out') {
         $outBranch = trim($_POST['branch_name'] ?? '');
