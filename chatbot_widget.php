@@ -315,6 +315,31 @@ $__side = 'right';   // always on the right — notifications live on the left
     transform: rotate(45deg); border-radius: 0 0 3px 0;
 }
 
+/* ═════════ DAILY BRIEFING — "what needs you today" ═════════ */
+#f1c-brief {
+    position: fixed; z-index: 1001; <?= $__side ?>: 16px; bottom: calc(118px + env(safe-area-inset-bottom));
+    width: min(330px, calc(100vw - 32px)); padding: 14px 14px 12px; border-radius: 22px;
+    background: linear-gradient(160deg, rgba(15,23,42,.97), rgba(30,27,75,.97)) padding-box,
+                linear-gradient(120deg, #22c55e, #38bdf8, #a855f7) border-box;
+    border: 1.5px solid transparent; color: #f1f5f9; direction: <?= $__isAr ? 'rtl' : 'ltr' ?>;
+    font-family: 'Tajawal', 'Segoe UI', Tahoma, Arial, sans-serif;
+    box-shadow: 0 20px 50px rgba(0,0,0,.55), 0 0 30px rgba(56,189,248,.2);
+    opacity: 0; transform: translateY(16px) scale(.92); transform-origin: bottom <?= $__side ?>; pointer-events: none;
+    transition: opacity .35s, transform .45s cubic-bezier(.2,1.4,.4,1);
+}
+#f1c-brief.show { opacity: 1; transform: none; pointer-events: auto; }
+#f1c-brief .bh { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+#f1c-brief .bh b { flex: 1; font-size: 14.5px; font-weight: 900; background: linear-gradient(90deg, #86efac, #7dd3fc); -webkit-background-clip: text; background-clip: text; color: transparent; }
+#f1c-brief .bh button { width: 28px; height: 28px; border-radius: 50%; border: 0; background: rgba(255,255,255,.08); color: #cbd5e1; cursor: pointer; font-size: 12px; }
+#f1c-brief a { display: flex; gap: 10px; align-items: flex-start; padding: 9px 10px; margin-top: 5px; border-radius: 13px; text-decoration: none; color: #e2e8f0;
+    background: rgba(255,255,255,.04); border: 1px solid rgba(255,255,255,.06); font-size: 13px; font-weight: 800; line-height: 1.55;
+    opacity: 0; transform: translateX(<?= $__isAr ? '-' : '' ?>12px); animation: f1cBriefIn .4s ease forwards; }
+#f1c-brief a:hover { border-color: rgba(56,189,248,.45); background: rgba(56,189,248,.08); }
+#f1c-brief a i { font-style: normal; font-size: 17px; line-height: 1.3; flex-shrink: 0; }
+@keyframes f1cBriefIn { to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { #f1c-brief a { animation: none; opacity: 1; transform: none; } }
+@media print { #f1c-brief { display: none !important; } }
+
 /* ═════════════════════ CHAT PANEL v4 — "command center" ═════════════════════ */
 #f1c-chat-panel {
     --f1c-a: #22c55e; --f1c-b: #a855f7; --f1c-c: #38bdf8;
@@ -774,6 +799,7 @@ html.f1w-lock, html.f1w-lock body { overflow: hidden; }
     <!-- speech bubble travels with the robot -->
     <div id="f1c-bot-say"></div>
 </div>
+<div id="f1c-brief" role="status" aria-live="polite"></div>
 <div id="f1c-chat-panel" role="dialog" aria-label="<?= $__isAr ? 'المساعد الذكي' : 'Smart assistant' ?>">
   <div class="f1c-in">
     <div id="f1c-chat-header">
@@ -931,7 +957,7 @@ const F1CChat = {
 
     /* notification cards / the "turn on notifications" card are on screen → keep out of their way */
     screenBusy() {
-        return !!document.querySelector('#ntStack .nt-card:not(.out), #ntOv.on, #npCard.on, .ov.on, #f1cWelcome');
+        return !!document.querySelector('#ntStack .nt-card:not(.out), #ntOv.on, #npCard.on, .ov.on, #f1cWelcome, #f1c-brief.show, .la-ov.on');
     },
 
     say(text, ms, name) {
@@ -1009,6 +1035,7 @@ const F1CChat = {
                 bot.classList.add('f1c-pop');
                 setTimeout(() => bot.classList.remove('f1c-pop'), 700);
             }
+            setTimeout(() => this.brief(), (!greeted || force) ? 11500 : 2500);   // once a day: what needs you today
             if (!greeted || force) {
                 const h = new Date().getHours();
                 const key = (h >= 5 && h < 12) ? 'morning' : (h >= 21 || h < 5) ? 'night' : 'day';
@@ -1030,6 +1057,45 @@ const F1CChat = {
             setTimeout(fin, 2500);
             this.load3d();
         } else go();
+    },
+
+    /* once a day: the robot tells you what needs you (old reservations, cars coming to your branch, bank replies…) */
+    async brief(tries) {
+        if (!this.me) return;
+        const d = new Date(), key = 'f1cBrief:' + this.me + ':' + d.getFullYear() + '-' + (d.getMonth() + 1) + '-' + d.getDate();
+        try { if (localStorage.getItem(key)) return; } catch (e) { return; }
+        // wait until the screen is free (max ~2 min) — on a wide screen the "turn on notifications" card sits on the other side
+        const busy = innerWidth >= 760
+            ? !!document.querySelector('#ntStack .nt-card:not(.out), #ntOv.on, .ov.on, #f1cWelcome, .la-ov.on')
+            : this.screenBusy();
+        if (this.opened || document.hidden || busy) {
+            if ((tries || 0) < 40) setTimeout(() => this.brief((tries || 0) + 1), 3000);
+            return;
+        }
+        let r = null;
+        try {
+            r = await (await fetch('chatbot_api.php', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ briefing: 1, lang: this.lang }) })).json();
+        } catch (e) { return; }
+        try { localStorage.setItem(key, '1'); } catch (e) {}
+        if (!r || !r.ok || !r.items || !r.items.length) return;
+        const box = document.getElementById('f1c-brief');
+        if (!box) return;
+        const h = d.getHours();
+        box.innerHTML = '<div class="bh"><b></b><button type="button" aria-label="close">✕</button></div>';
+        box.querySelector('b').textContent = (this.lang === 'ar' ? (h < 12 ? 'صباح الخير يا ' : 'أهلاً يا ') + this.me + '! ده اللي مستنيك 👇' : (h < 12 ? 'Good morning, ' : 'Hi, ') + this.me + '! Here is what needs you 👇');
+        r.items.forEach((it, i) => {
+            const a = document.createElement('a'); a.href = it.u || '#'; a.style.animationDelay = (0.15 + i * 0.12) + 's';
+            a.append(Object.assign(document.createElement('i'), { textContent: it.i }), Object.assign(document.createElement('span'), { textContent: it.t }));
+            box.appendChild(a);
+        });
+        const hide = () => box.classList.remove('show');
+        box.querySelector('button').addEventListener('click', hide);
+        let t = setTimeout(hide, 30000);
+        box.onmouseenter = () => clearTimeout(t);
+        box.onmouseleave = () => { t = setTimeout(hide, 8000); };
+        box.classList.add('show');
+        this.wave();
     },
 
     /* can this device run the 3D robot? (the 3D file double-checks and also watches the frame rate) */
@@ -1468,7 +1534,7 @@ document.getElementById('f1cExp')?.addEventListener('click', () => document.getE
 document.addEventListener('keydown', e => { if (e.key === 'Escape' && F1CChat.opened) F1CChat.toggle(); });
 /* ═════════════ "WHAT'S NEW" WELCOME — once per person, per update ═════════════ */
 const F1CWelcome = {
-    VERSION: 'v6',
+    VERSION: 'v7',
     key() { return 'f1cWelcome:' + this.VERSION + ':' + (F1CChat.me || ''); },
     shouldShow() {
         if (!F1CChat.me || new URLSearchParams(location.search).get('msg')) return false;   // opening a message from the phone → straight to it
@@ -1476,27 +1542,27 @@ const F1CWelcome = {
     },
     FEATS: <?php
         $__feats = $__isAr ? [
-            ['🔔', 'إشعارات فورية على موبايلك', 'البيع، النقل، الحجز ورسائل الإدارة — توصلك لحظتها زي واتساب', '#22c55e'],
-            ['🤖', 'مساعدك الذكي بقى 3D', 'اسأله بصوتك عن أي عربية — يوريك الصور والأسعار والشاسيه', '#38bdf8'],
-            ['⏱️', 'بصمة أذكى', 'تأكيد فوري، مدة الجلسة، وساعاتك الأسبوع ده في لمحة', '#f59e0b'],
-            ['✉️', 'رسائل من الإدارة', 'تظهرلك أول ما تفتح النظام وتقراها في مكانها', '#a855f7'],
-            ['✨', 'تصميم جديد بالكامل', 'أسرع وأجمل — على الموبايل والكمبيوتر', '#f472b6'],
+            ['⏰', 'تذكيرات ذكية', 'الحجز القديم، الأمانة، رد البنك، الانصراف — النظام بيفكّرك لوحده', '#22c55e'],
+            ['🚚', '«استلمت» للعربيات المنقولة', 'عربية جاية لفرعك؟ يوصلك إشعار واضغط «استلمت» من الإشعار نفسه', '#38bdf8'],
+            ['👍', 'رسائل الإدارة بـ«تمام»', 'اقرأ الرسالة واضغط تمام — والإدارة تعرف إنك شفتها', '#f59e0b'],
+            ['🔴', 'عدد الإشعارات على أيقونة التطبيق', 'رقم أحمر على الأيقونة زي واتساب — وتجميع الإشعارات المتكررة', '#ef4444'],
+            ['🤖', 'المساعد بيلخصلك يومك', 'كل يوم أول ما تفتح: اللي مستنيك في لمحة', '#a855f7'],
         ] : [
-            ['🔔', 'Instant phone notifications', 'Sales, transfers, reservations and messages — the moment they happen, like WhatsApp', '#22c55e'],
-            ['🤖', 'Your assistant is now 3D', 'Ask by voice about any car — see photos, prices and chassis', '#38bdf8'],
-            ['⏱️', 'Smarter attendance', 'Instant confirmation, session time and your weekly hours at a glance', '#f59e0b'],
-            ['✉️', 'Messages from management', 'They pop up when you open the system and open right there', '#a855f7'],
-            ['✨', 'A whole new look', 'Faster and more beautiful — on phone and desktop', '#f472b6'],
+            ['⏰', 'Smart reminders', 'Old reservations, consignments, bank replies, clocking out — the system reminds you', '#22c55e'],
+            ['🚚', '"Received" for transfers', 'A car coming to your branch? Tap "Received" right on the notification', '#38bdf8'],
+            ['👍', 'Messages with "OK"', 'Read it and tap OK — management knows you saw it', '#f59e0b'],
+            ['🔴', 'Unread count on the app icon', 'A red number like WhatsApp — and repeated alerts grouped into one', '#ef4444'],
+            ['🤖', 'Your assistant sums up your day', 'Every day when you open: what needs you, at a glance', '#a855f7'],
         ];
-        if (function_exists('can') && can('page.attendance_admin')) {
-            $__feats[] = $__isAr ? ['📊', 'لوحة حضور حيّة', 'مين في الشغل، مين ما جاش، وتنبيهات البصمة البعيدة', '#2dd4bf']
-                                 : ['📊', 'Live attendance board', "Who's at work, who didn't come, and far-punch alerts", '#2dd4bf'];
+        if (function_exists('can') && can('dash.activity')) {
+            $__feats[] = $__isAr ? ['⚡', 'اللي بيحصل دلوقتي', 'مين أونلاين وآخر نشاط في النظام — على الرئيسية', '#2dd4bf']
+                                 : ['⚡', 'Happening now', "Who's online and the latest activity — on the dashboard", '#2dd4bf'];
         }
         echo json_encode($__feats, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG);
     ?>,
     T: <?= json_encode($__isAr
-        ? ['hi' => 'أهلاً يا', 'title' => 'First 1 Car بقى أقوى 🚀', 'sub' => 'اتطورنا — وده اللي مستنيك', 'go' => 'يلا نبدأ', 'skip' => 'تخطي']
-        : ['hi' => 'Welcome,', 'title' => 'First 1 Car just leveled up 🚀', 'sub' => "We've evolved — here's what's waiting for you", 'go' => "Let's go", 'skip' => 'Skip'], JSON_UNESCAPED_UNICODE) ?>,
+        ? ['hi' => 'أهلاً يا', 'title' => 'First 1 Car بقى أذكى 🧠', 'sub' => 'إشعارات بتفكّرك قبل ما تنسى — وده الجديد', 'go' => 'يلا نبدأ', 'skip' => 'تخطي']
+        : ['hi' => 'Welcome,', 'title' => 'First 1 Car just got smarter 🧠', 'sub' => "Notifications that remind you before you forget — here's what's new", 'go' => "Let's go", 'skip' => 'Skip'], JSON_UNESCAPED_UNICODE) ?>,
 
     show(done) {
         try { localStorage.setItem(this.key(), '1'); } catch (e) {}

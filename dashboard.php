@@ -675,6 +675,47 @@ function arDate($dt, $lang) {
             display:flex; align-items:center; gap:10px; padding:10px 12px 10px 16px; border-radius:999px; cursor:pointer; border:0; font:inherit; color:#fff; font-size:13.5px; font-weight:800;
             background:linear-gradient(135deg,#7c3aed,#2563eb 60%,#0891b2); box-shadow:0 14px 36px rgba(37,99,235,.45); white-space:nowrap; }
         .live-bar.on { transform:translate(-50%,0); }
+        /* ⚡ happening now + 🟢 online */
+        .live-act { display:flex; gap:10px; align-items:stretch; margin:0 0 12px; }
+        .live-act[hidden] { display:none; }
+        .la-on, .la-feed { display:flex; align-items:center; gap:8px; min-height:44px; padding:6px 12px; border-radius:14px; border:1px solid rgba(255,255,255,.08);
+            background:linear-gradient(160deg,rgba(15,23,42,.9),rgba(30,27,75,.6)); color:#e2e8f0; font:inherit; font-size:13px; font-weight:800; }
+        .la-on { flex-shrink:0; cursor:pointer; }
+        .la-on .dot { width:9px; height:9px; border-radius:50%; background:#22c55e; box-shadow:0 0 10px #22c55e; animation:laPulse 1.6s infinite; }
+        @keyframes laPulse { 50% { box-shadow:0 0 2px #22c55e; } }
+        .la-av { display:flex; }
+        .la-av i { width:26px; height:26px; border-radius:50%; display:grid; place-items:center; font-style:normal; font-size:12px; font-weight:900; color:#fff;
+            border:2px solid #0f172a; margin-inline-start:-7px; position:relative; }
+        .la-av i:first-child { margin-inline-start:0; }
+        .la-av i::after { content:''; position:absolute; bottom:-1px; inset-inline-end:-1px; width:8px; height:8px; border-radius:50%; background:#22c55e; border:2px solid #0f172a; }
+        .la-feed { flex:1; min-width:0; cursor:pointer; text-align:start; }
+        .la-feed .bolt { font-size:16px; filter:drop-shadow(0 0 6px #facc15); }
+        .la-tick { flex:1; min-width:0; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; transition:opacity .35s, transform .35s; }
+        .la-tick.out { opacity:0; transform:translateY(-6px); }
+        .la-tick small { color:#94a3b8; font-weight:700; margin-inline-start:6px; }
+        .la-more { flex-shrink:0; font-size:12px; color:#a5b4fc; }
+        .la-new { flex-shrink:0; font-size:11px; font-weight:900; color:#052e16; background:#4ade80; border-radius:999px; padding:2px 8px; }
+        .la-ov { position:fixed; inset:0; z-index:1600; background:rgba(2,6,23,.7); backdrop-filter:blur(6px); -webkit-backdrop-filter:blur(6px); display:none; }
+        .la-ov.on { display:block; animation:laFade .2s ease; }
+        @keyframes laFade { from { opacity:0; } }
+        .la-dr { position:absolute; top:0; bottom:0; right:0; width:min(420px,100vw); background:linear-gradient(170deg,#0f172a,#0b1022); border-left:1px solid rgba(255,255,255,.08);
+            display:flex; flex-direction:column; animation:laIn .3s cubic-bezier(.22,1,.36,1); }
+        @keyframes laIn { from { transform:translateX(100%); } }   /* opens on the right — notifications live on the left */
+        .la-dr header { display:flex; align-items:center; justify-content:space-between; padding:16px 18px calc(14px); border-bottom:1px solid rgba(255,255,255,.07); padding-top:calc(16px + env(safe-area-inset-top)); }
+        .la-dr header b { font-size:17px; }
+        .la-dr header button { width:34px; height:34px; border-radius:50%; border:0; background:rgba(255,255,255,.08); color:#cbd5e1; font-size:15px; cursor:pointer; }
+        .la-sec { padding:12px 18px 4px; font-size:12px; font-weight:900; color:#94a3b8; }
+        .la-ppl { display:flex; flex-wrap:wrap; gap:6px; padding:0 18px 10px; }
+        .la-ppl span { font-size:12.5px; font-weight:800; padding:5px 11px 5px 9px; border-radius:999px; background:rgba(34,197,94,.1); border:1px solid rgba(34,197,94,.3); color:#bbf7d0; }
+        .la-ppl span::before { content:'● '; color:#22c55e; }
+        .la-list { flex:1; overflow-y:auto; padding:0 12px 18px; }
+        .la-it { display:flex; gap:10px; padding:10px 8px; border-radius:12px; text-decoration:none; color:#e2e8f0; }
+        .la-it:hover { background:rgba(255,255,255,.04); }
+        .la-it.nw { background:rgba(74,222,128,.07); }
+        .la-it .t { font-size:13.5px; font-weight:800; line-height:1.5; }
+        .la-it .m { font-size:11.5px; color:#94a3b8; font-weight:700; margin-top:2px; }
+        .la-empty { padding:24px 18px; color:#94a3b8; font-weight:700; text-align:center; }
+        @media (max-width:640px) { .la-on span.lbl { display:none; } .la-av i:nth-child(n+4) { display:none; } .la-more { display:none; } }
         .live-bar .dot { width:9px; height:9px; border-radius:50%; background:#fde047; box-shadow:0 0 10px #fde047; animation:lbBlink 1.2s infinite; }
         .live-bar .go { background:rgba(255,255,255,.18); padding:4px 11px; border-radius:999px; font-size:12px; }
         @keyframes lbBlink { 50% { opacity:.35; } }
@@ -1082,6 +1123,21 @@ function arDate($dt, $lang) {
                     title="<?= $lang === 'ar' ? 'تعديل العبارات' : 'Edit quotes' ?>">✏️</button>
         <?php endif; ?>
     </div>
+
+    <?php if (can('dash.activity')): ?>
+    <!-- ⚡ happening now + 🟢 who is online (filled by the live refresh) -->
+    <div class="live-act" id="liveAct" hidden>
+        <button type="button" class="la-on" id="laOn"><span class="dot"></span><b id="laOnN">0</b> <span class="lbl"><?= $lang === 'ar' ? 'أونلاين' : 'online' ?></span><span class="la-av" id="laAv"></span></button>
+        <button type="button" class="la-feed" id="laFeed"><span class="bolt">⚡</span><span class="la-tick" id="laTick"></span><span class="la-new" id="laNew" hidden></span><span class="la-more"><?= $lang === 'ar' ? 'الكل ‹' : 'All ›' ?></span></button>
+    </div>
+    <div class="la-ov" id="laOv"><div class="la-dr" role="dialog" aria-modal="true">
+        <header><b>⚡ <?= $lang === 'ar' ? 'اللي بيحصل دلوقتي' : 'Happening now' ?></b><button type="button" id="laX" aria-label="close">✕</button></header>
+        <div class="la-sec">🟢 <?= $lang === 'ar' ? 'فاتحين النظام دلوقتي' : 'Using the system now' ?></div>
+        <div class="la-ppl" id="laPpl"></div>
+        <div class="la-sec">🕘 <?= $lang === 'ar' ? 'آخر النشاط' : 'Latest activity' ?></div>
+        <div class="la-list" id="laList"></div>
+    </div></div>
+    <?php endif; ?>
 
     <!-- ════════ Control band — search, counts and filters in one sticky strip.
          It stays pinned while you scroll, so the controls never leave. ════════ -->
@@ -1725,7 +1781,10 @@ function arDate($dt, $lang) {
             if (emptyMsg) grid.appendChild(emptyMsg);
         }
         if (sortSel) {
-            try { const m = localStorage.getItem('f1cDashSort'); if (m && sortSel.querySelector('option[value="' + m + '"]')) { sortSel.value = m; sortCards(m); } } catch (e) {}
+            try {
+                const m = new URLSearchParams(location.search).get('sort') || localStorage.getItem('f1cDashSort');   // ?sort=old from the weekly reminder
+                if (m && sortSel.querySelector('option[value="' + m + '"]')) { sortSel.value = m; sortCards(m); }
+            } catch (e) {}
             sortSel.addEventListener('change', () => { sortCards(sortSel.value); try { localStorage.setItem('f1cDashSort', sortSel.value); } catch (e) {} });
         }
     })();
@@ -1749,12 +1808,59 @@ function arDate($dt, $lang) {
                         txt.textContent = AR ? (n === 1 ? 'في تغيير جديد في المخزون' : n + ' تغييرات جديدة في المخزون') : (n === 1 ? '1 change in the stock' : n + ' changes in the stock');
                         bar.classList.add('on');
                     }
+                    if (r.act && window.F1CAct) F1CAct.draw(r.online || [], r.act);
                 }
             } catch (e) {}
             busy = false;
         }
         setInterval(pulse, 45000);
         document.addEventListener('visibilitychange', () => { if (!document.hidden) pulse(); });
+        if (document.getElementById('liveAct')) setTimeout(pulse, 400);   // fill "happening now" straight away
+    })();
+
+    /* ── ⚡ happening now + 🟢 online ── */
+    (function () {
+        const box = document.getElementById('liveAct');
+        if (!box) return;
+        const AR = <?= json_encode($lang === 'ar') ?>, ME = <?= json_encode((string)$_SESSION['username']) ?>;
+        const ov = document.getElementById('laOv'), tick = document.getElementById('laTick');
+        const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+        const ago = s => s < 60 ? (AR ? 'الآن' : 'now') : s < 3600 ? (AR ? 'منذ ' + Math.floor(s / 60) + ' د' : Math.floor(s / 60) + 'm') : s < 86400 ? (AR ? 'منذ ' + Math.floor(s / 3600) + ' س' : Math.floor(s / 3600) + 'h') : (AR ? 'منذ ' + Math.floor(s / 86400) + ' يوم' : Math.floor(s / 86400) + 'd');
+        const hue = n => { let h = 0; for (const c of n) h = (h * 31 + c.charCodeAt(0)) % 360; return h; };
+        let seen = 0; try { seen = +localStorage.getItem('f1cActSeen:' + ME) || 0; } catch (e) {}
+        let items = [], ti = 0, timer = 0;
+        function rotate() {
+            if (!items.length) { tick.textContent = AR ? 'لسه مفيش نشاط النهارده' : 'No activity yet'; return; }
+            const it = items[ti % items.length]; ti++;
+            tick.classList.add('out');
+            setTimeout(() => { tick.innerHTML = esc(it.t) + '<small>' + esc(ago(it.a)) + '</small>'; tick.classList.remove('out'); }, 300);
+        }
+        window.F1CAct = {
+            draw(online, act) {
+                box.hidden = false;
+                items = act.slice(0, 6);
+                document.getElementById('laOnN').textContent = online.length;
+                document.getElementById('laAv').innerHTML = online.slice(0, 5).map(p => '<i style="background:hsl(' + hue(p.n) + ',65%,45%)" title="' + esc(p.n) + '">' + esc(p.n.charAt(0).toUpperCase()) + '</i>').join('');
+                document.getElementById('laPpl').innerHTML = online.length ? online.map(p => '<span>' + esc(p.n) + '</span>').join('') : '<div class="la-empty">—</div>';
+                document.getElementById('laList').innerHTML = act.length ? act.map(it =>
+                    '<a class="la-it' + (it.id > seen ? ' nw' : '') + '" href="' + esc(it.u || '#') + '"><div><div class="t">' + esc(it.t) + '</div><div class="m">' +
+                    esc(ago(it.a)) + (it.by ? ' · ' + (AR ? 'بواسطة ' : 'by ') + esc(it.by) : '') + '</div></div></a>').join('')
+                    : '<div class="la-empty">' + (AR ? 'لسه مفيش نشاط' : 'Nothing yet') + '</div>';
+                const fresh = act.filter(it => it.id > seen).length, nb = document.getElementById('laNew');
+                nb.hidden = !fresh; nb.textContent = '+' + fresh;
+                if (!timer) { rotate(); timer = setInterval(() => { if (!document.hidden) rotate(); }, 4500); }
+            },
+        };
+        const open = () => {
+            ov.classList.add('on');
+            try { const ids = items.map(i => i.id); if (ids.length) { seen = Math.max(seen, ...ids); localStorage.setItem('f1cActSeen:' + ME, seen); } } catch (e) {}
+            document.getElementById('laNew').hidden = true;
+        };
+        document.getElementById('laFeed').addEventListener('click', open);
+        document.getElementById('laOn').addEventListener('click', open);
+        document.getElementById('laX').addEventListener('click', () => ov.classList.remove('on'));
+        ov.addEventListener('click', e => { if (e.target === ov) ov.classList.remove('on'); });
+        document.addEventListener('keydown', e => { if (e.key === 'Escape') ov.classList.remove('on'); });
     })();
 
     /* Consignment strip open or closed, remembered per browser */

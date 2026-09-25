@@ -278,6 +278,12 @@ function perm_catalog(): array
                     'dar' => 'زر مشاركة السيارة مع تاجر (بسعر التاجر)', 'den' => 'Share a car with a dealer (with trade price)',
                     'd' => [1, 1, 0],
                 ],
+                'dash.activity' => [
+                    'ar' => 'النشاط المباشر ومين أونلاين', 'en' => 'Live activity & who is online',
+                    'dar' => 'شريط «اللي بيحصل دلوقتي» ومين فاتح النظام حالياً (البيع يظهر بدون اسم البائع)',
+                    'den' => 'The "happening now" strip and who has the system open (sales show without the seller name)',
+                    'd' => [1, 1, 0],
+                ],
                 'dash.nav_attendance' => [
                     'ar' => 'زر البصمة في الشريط السفلي', 'en' => 'Attendance button in bottom nav',
                     'dar' => 'إظهار زر البصمة في شريط التنقل السفلي (افتراضياً يظهر لغير الأدمن)',

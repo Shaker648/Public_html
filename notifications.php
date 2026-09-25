@@ -25,9 +25,11 @@ push_tables($pdo);
 $events = notify_events();
 $rules  = notify_rules($pdo);
 $mine   = [];
+$mineOwn = [];   // events you only get when they are about you
 foreach ($rules as $ev => $r) {
-    $in = $r['on'] && (in_array($role, $r['roles'], true) || in_array($uid, $r['plus'], true)) && !in_array($uid, $r['minus'], true);
+    $in = $r['on'] && (in_array($role, $r['roles'], true) || in_array($uid, $r['plus'], true) || !empty($r['owner'])) && !in_array($uid, $r['minus'], true);
     if ($in) $mine[] = $ev;
+    $mineOwn[$ev] = $r['on'] && !empty($r['owner']) && !in_array($role, $r['roles'], true) && !in_array($uid, $r['plus'], true);
 }
 $st = $pdo->prepare("SELECT id, device, last_error, TIMESTAMPDIFF(SECOND, created_at, NOW()) AS age_created, TIMESTAMPDIFF(SECOND, last_ok_at, NOW()) AS age_ok FROM push_subscriptions WHERE user_id = ? ORDER BY id DESC");
 $st->execute([$uid]);
@@ -109,7 +111,7 @@ $ago = function ($s) use ($lang): string {
             <p class="nf-note"><?= $T['whatNote'] ?></p>
             <?php if (!$mine): ?><div class="nf-empty"><?= $T['none'] ?></div><?php endif; ?>
             <div class="nf-chips">
-                <?php foreach ($mine as $ev): ?><span><?= $events[$ev][2] ?> <?= htmlspecialchars($lang === 'ar' ? $events[$ev][0] : $events[$ev][1]) ?></span><?php endforeach; ?>
+                <?php foreach ($mine as $ev): ?><span><?= $events[$ev][2] ?> <?= htmlspecialchars($lang === 'ar' ? $events[$ev][0] : $events[$ev][1]) ?><?= !empty($mineOwn[$ev]) ? ' <small style="opacity:.7">(' . ($lang === 'ar' ? 'لما يخصك' : 'when it is about you') . ')</small>' : '' ?></span><?php endforeach; ?>
             </div>
         </section>
     </div>

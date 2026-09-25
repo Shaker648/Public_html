@@ -48,5 +48,15 @@ if (!$currentUser || (int)$currentUser['active'] !== 1) {
 $_SESSION['username'] = $currentUser['username'];
 $_SESSION['role']     = $currentUser['role'];
 
+// "Online now": remember when this person was last active (at most once a minute)
+if (time() - (int)($_SESSION['seen_t'] ?? 0) >= 60) {
+    $_SESSION['seen_t'] = time();
+    try {
+        $pdo->prepare("UPDATE users SET last_seen = NOW() WHERE id = ?")->execute([$currentUser['id']]);
+    } catch (Throwable $e) {
+        try { $pdo->exec("ALTER TABLE users ADD last_seen DATETIME NULL"); } catch (Throwable $e2) {}
+    }
+}
+
 // Step 4: Load the permission engine — every protected page gets can() / perm_require().
 require_once __DIR__ . '/permissions.php';

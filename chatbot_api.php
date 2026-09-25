@@ -62,6 +62,79 @@ $ctx  = is_array($rawBody['ctx'] ?? null) ? $rawBody['ctx'] : [];
 $tap  = is_array($rawBody['tap'] ?? null) ? $rawBody['tap'] : null;
 $text = trim($rawBody['text'] ?? '');
 
+/* ═══════════ daily briefing: what needs this person's attention today (never ads) ═══════════ */
+if (!empty($rawBody['briefing'])) {
+    require_once __DIR__ . '/notify_smart.php';
+    $ar = $lang === 'ar';
+    $out = [];
+    $add = function ($i, $t, $u) use (&$out) { $out[] = ['i' => $i, 't' => $t, 'u' => $u]; };
+    $q = function ($sql, $args = []) use ($pdo) { try { $st = $pdo->prepare($sql); $st->execute($args); return $st; } catch (Throwable $e) { return null; } };
+    try {
+        push_tables($pdo);
+        $s = notify_smart($pdo);
+        $uid = (int)($_SESSION['user_id'] ?? 0);
+        $boss = in_array($role, ['admin', 'manager'], true);
+
+        // 🚚 cars on their way to my branch
+        $mine = [];
+        $ub = notify_user_branches($pdo);
+        if (isset($ub[$uid])) $mine[] = $ub[$uid];
+        if ($st = $q("SELECT DISTINCT branch_name FROM attendance_logs WHERE user_id = ? AND clock_in >= CURDATE() AND clock_out IS NULL", [$uid])) $mine = array_merge($mine, $st->fetchAll(PDO::FETCH_COLUMN));
+        $pend = smart_pending_transfers($pdo, '', 7);
+        $toMe = count(array_filter($pend, fn($p) => in_array($p['to_branch'], $mine, true)));
+        if ($toMe) $add('🚚', $ar ? $toMe . ' عربية جاية لفرعك — اضغط «استلمت» أول ما توصل' : $toMe . ' car(s) on the way to your branch — tap Received when they arrive', 'transfer_receive.php?lang=' . $lang);
+
+        // ⏰ my old reservations
+        $res = ($st = $q("SELECT c.id, m.moved_by, DATEDIFF(NOW(), m.created_at) AS d FROM cars c
+                          JOIN movements m ON m.id = (SELECT MAX(x.id) FROM movements x WHERE x.car_id = c.id AND x.event_type = 'reserved')
+                          WHERE c.status = 'reserved'")) ? $st->fetchAll(PDO::FETCH_ASSOC) : [];
+        $old = array_filter($res, fn($r) => (int)$r['d'] >= $s['reserve_days']);
+        $myOld = count(array_filter($old, fn($r) => $r['moved_by'] === $username));
+        if ($myOld) $add('⏰', $ar ? 'عندك ' . $myOld . ' حجز بقالهم أكتر من ' . $s['reserve_days'] . ' أيام — كمّل البيع أو الغي' : "You have $myOld reservation(s) older than {$s['reserve_days']} days", 'dashboard.php?lang=' . $lang . '&sort=old');
+
+        // 🏦 my bank requests: answered in the last day / still waiting
+        if ($st = $q("SELECT b.status, b.bank_key, r.customer_name FROM installment_bank_requests b JOIN installment_requests r ON r.id = b.request_id
+                       WHERE r.created_by = ? AND (b.status = 'pending' OR b.decided_at >= NOW() - INTERVAL 1 DAY)", [$username])) {
+            $bk = $st->fetchAll(PDO::FETCH_ASSOC);
+            $dec = array_filter($bk, fn($b) => $b['status'] !== 'pending');
+            $wait = count($bk) - count($dec);
+            if ($dec) {
+                if (!function_exists('inst_bank_name') && is_file(__DIR__ . '/installment_helpers.php')) require_once __DIR__ . '/installment_helpers.php';
+                $b = array_values($dec)[0];
+                $bn = function_exists('inst_bank_name') ? inst_bank_name((string)$b['bank_key'], $lang) : $b['bank_key'];
+                $add('🏦', ($b['status'] === 'approved' ? ($ar ? '✅ ' . $bn . ' وافق على طلب ' : '✅ ' . $bn . ' approved ') : ($ar ? '❌ ' . $bn . ' رفض طلب ' : '❌ ' . $bn . ' rejected ')) . $b['customer_name']
+                          . (count($dec) > 1 ? ($ar ? ' (+' . (count($dec) - 1) . ' ردود تانية)' : ' (+' . (count($dec) - 1) . ' more)') : ''), 'installments.php?lang=' . $lang);
+            }
+            if ($wait) $add('⌛', $ar ? $wait . ' طلب تقسيط ليك لسه مستني رد البنك' : "$wait of your installment requests still waiting", 'installments.php?lang=' . $lang);
+        }
+
+        if ($boss) {
+            $late = count(array_filter($pend, fn($p) => (int)$p['hours'] >= 24));
+            if ($late) $add('⏳', $ar ? $late . ' عربية منقولة محدش أكّد استلامها من أكتر من 24 ساعة' : "$late transferred car(s) not confirmed for over 24 h", 'transfer_receive.php?lang=' . $lang);
+            $others = count($old) - $myOld;
+            if ($others > 0) $add('🔒', $ar ? $others . ' حجز قديم (أكتر من ' . $s['reserve_days'] . ' أيام) عند الفريق' : "$others old reservation(s) across the team", 'dashboard.php?lang=' . $lang . '&sort=old');
+            if ($st = $q("SELECT COUNT(*) FROM consignments WHERE status = 'active' AND started_at < NOW() - INTERVAL ? DAY", [$s['amana_days']])) {
+                $n = (int)$st->fetchColumn();
+                if ($n) $add('🔶', $ar ? $n . ' عربية أمانة بره من أكتر من ' . $s['amana_days'] . ' يوم' : "$n consignment(s) out for over {$s['amana_days']} days", 'dashboard.php?lang=' . $lang);
+            }
+            if ($st = $q("SELECT COUNT(*) FROM installment_bank_requests WHERE status = 'pending' AND created_at < NOW() - INTERVAL ? DAY", [$s['bank_days']])) {
+                $n = (int)$st->fetchColumn();
+                if ($n) $add('⌛', $ar ? $n . ' طلب تقسيط البنك ما ردّش عليه من أكتر من ' . $s['bank_days'] . ' أيام' : "$n bank request(s) waiting over {$s['bank_days']} days", 'installments.php?lang=' . $lang);
+            }
+            if ($st = $q("SELECT COUNT(*) FROM cars WHERE status IN ('available', 'reserved') AND created_at < NOW() - INTERVAL ? DAY", [$s['aged_days']])) {
+                $n = (int)$st->fetchColumn();
+                if ($n) $add('🐢', $ar ? $n . ' عربية بقالها أكتر من ' . $s['aged_days'] . ' يوم في المخزون' : "$n car(s) in stock for over {$s['aged_days']} days", 'dashboard.php?lang=' . $lang . '&sort=old');
+            }
+            if ($st = $q("SELECT COUNT(*) FROM sold_cars WHERE sold_at >= CURDATE() - INTERVAL 1 DAY AND sold_at < CURDATE() AND (status IS NULL OR status <> 'returned')")) {
+                $n = (int)$st->fetchColumn();
+                if ($n) $add('💰', $ar ? 'امبارح اتباع ' . $n . ($n === 1 ? ' عربية 🎉' : ' عربيات 🎉') : "Yesterday: $n car(s) sold 🎉", 'sold_inventory.php?lang=' . $lang);
+            }
+        }
+    } catch (Throwable $e) { error_log('briefing: ' . $e->getMessage()); }
+    echo json_encode(['ok' => true, 'items' => array_slice($out, 0, 5)], JSON_UNESCAPED_UNICODE);
+    exit;
+}
+
 /* ═══════════════════════ basic helpers (v2) ═══════════════════════ */
 
 function t($en, $ar, $lang) { return $lang === 'ar' ? $ar : $en; }

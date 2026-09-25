@@ -2,6 +2,7 @@
 require 'auth.php';
 require 'config.php';
 require_once __DIR__ . '/push_helpers.php';
+require_once __DIR__ . '/notify_smart.php';
 require 'car_images_helpers.php';
 
 $lang = $_GET['lang'] ?? 'ar';
@@ -239,6 +240,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
             'customer' => (string)($customer_price ?? ''),
             'type' => $type ?? 'update',
         ]);
+        if (($type ?? '') === 'update') smart_price($pdo, $brand, $model_name, $trim_name, $car_year, $oldVals, $newVals);
     }
     echo json_encode(['ok' => true, 'updated_by' => $updated_by, 'updated_at' => date('d M Y h:i A'), 'car_year' => $car_year]);
     exit;
