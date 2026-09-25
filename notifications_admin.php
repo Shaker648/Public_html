@@ -169,7 +169,8 @@ smart_duty_scan($pdo);   // up-to-date countdowns / locks while the admin looks
 $duties  = $pdo->query("SELECT d.user_id, u.username, m.to_branch, COUNT(*) AS n, TIMESTAMPDIFF(SECOND, NOW(), MIN(d.deadline)) AS secs, MAX(d.warned) AS warned
                         FROM transfer_duty d JOIN users u ON u.id = d.user_id JOIN movements m ON m.id = d.movement_id JOIN cars c ON c.id = m.car_id
                         LEFT JOIN transfer_receipts r ON r.movement_id = d.movement_id
-                        WHERE r.movement_id IS NULL AND c.branch = m.to_branch AND c.status IN ('available', 'reserved')
+                        LEFT JOIN transfer_issues ti ON ti.movement_id = d.movement_id
+                        WHERE r.movement_id IS NULL AND ti.movement_id IS NULL AND c.branch = m.to_branch AND c.status IN ('available', 'reserved')
                         GROUP BY d.user_id, u.username, m.to_branch ORDER BY secs")->fetchAll(PDO::FETCH_ASSOC);
 $locks   = $pdo->query("SELECT l.*, u.username, TIMESTAMPDIFF(SECOND, l.locked_at, NOW()) AS age FROM user_locks l JOIN users u ON u.id = l.user_id
                         WHERE l.unlocked_at IS NULL ORDER BY l.locked_at")->fetchAll(PDO::FETCH_ASSOC);
@@ -409,6 +410,8 @@ $rate = ($today['d'] + $today['f']) > 0 ? round($today['d'] * 100 / ($today['d']
 .tx-ppl{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
 .tx-p{height:30px;padding:0 11px;border-radius:999px;border:1px solid var(--line);background:rgba(255,255,255,.04);color:var(--txt);font:inherit;font-size:12.5px;font-weight:800;cursor:pointer}
 .tx-p.on{background:linear-gradient(90deg,#0ea5e9,#6366f1);border-color:transparent;color:#fff}
+.tx-iss{display:flex;justify-content:space-between;gap:10px;margin-top:14px;padding:12px 14px;border-radius:14px;background:rgba(239,68,68,.14);border:1px solid rgba(239,68,68,.55);color:#fecaca;font-weight:900;text-decoration:none}
+.tx-iss span{color:#fff}
 .tx-live{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-top:16px;padding-top:14px;border-top:1px solid var(--line)}
 .tx-live h3{font-size:14px;font-weight:900;margin:0 0 10px}
 .tx-d,.tx-l1{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:10px 12px;border-radius:14px;border:1px solid var(--line);background:rgba(255,255,255,.03);margin-bottom:8px}
@@ -420,7 +423,9 @@ $rate = ($today['d'] + $today['f']) > 0 ? round($today['d'] * 100 / ($today['d']
 .tx-d.over{border-color:rgba(239,68,68,.5)}.tx-d.over .cd{color:#f87171}
 .tx-l1{border-color:rgba(239,68,68,.4);background:rgba(239,68,68,.06)}
 .tx-l1.done{border-color:rgba(34,197,94,.45);background:rgba(34,197,94,.07)}
-@media (max-width:900px){.tx-grid,.tx-live{grid-template-columns:1fr}}
+@media (max-width:900px){.tx-grid,.tx-iss{display:flex;justify-content:space-between;gap:10px;margin-top:14px;padding:12px 14px;border-radius:14px;background:rgba(239,68,68,.14);border:1px solid rgba(239,68,68,.55);color:#fecaca;font-weight:900;text-decoration:none}
+.tx-iss span{color:#fff}
+.tx-live{grid-template-columns:1fr}}
 /* groups, person concerned */
 .na-tbl tr.na-grp td{background:none;border:0;padding:14px 4px 2px;font-size:13px;font-weight:900;color:#c4b5fd;text-align:start}
 .na-dash{color:var(--mut);font-weight:800}
@@ -680,6 +685,9 @@ $rate = ($today['d'] + $today['f']) > 0 ? round($today['d'] * 100 / ($today['d']
         </div>
         <div class="na-save" style="position:static"><a class="nf-btn ghost" href="transfer_receive.php?lang=<?= $lang ?>"><?= $T['b_open'] ?></a><div class="nf-msg" id="xMsg"></div><button type="button" class="nf-btn grn" id="saveX"><?= $T['save'] ?></button></div>
 
+        <?php $iss = smart_open_issues($pdo); if ($iss): ?>
+        <a class="tx-iss" href="transfer_receive.php?lang=<?= $lang ?>#issues">❗ <?= $lang === 'ar' ? (count($iss) === 1 ? 'بلاغ واحد «لم تصل» بانتظار قرارك' : count($iss) . ' بلاغات «لم تصل» بانتظار قرارك') : count($iss) . ' "did not arrive" report(s) waiting for you' ?> <span><?= $lang === 'ar' ? 'اتخاذ قرار ←' : 'Decide →' ?></span></a>
+        <?php endif; ?>
         <div class="tx-live">
             <div>
                 <h3>⏱️ <?= $T['x_duties'] ?></h3>

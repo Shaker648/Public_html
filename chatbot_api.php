@@ -119,6 +119,8 @@ if (!empty($rawBody['briefing'])) {
         }
 
         if ($boss) {
+            $iss = smart_open_issues($pdo);
+            if ($iss) $add('❗', $ar ? (count($iss) === 1 ? 'سيارة منقولة أُبلغ أنها لم تصل — تحتاج قرارك' : count($iss) . ' سيارات منقولة أُبلغ أنها لم تصل — تحتاج قرارك') : count($iss) . ' transferred car(s) reported as not arrived', 'transfer_receive.php?lang=' . $lang . '#issues');
             $late = count(array_filter($pend, fn($p) => (int)$p['hours'] >= 24));
             if ($late) $add('⏳', $ar ? $late . ' سيارة منقولة لم يؤكد أحد استلامها منذ أكثر من 24 ساعة' : "$late transferred car(s) not confirmed for over 24 h", 'transfer_receive.php?lang=' . $lang);
             $others = count($old) - $myOld;

@@ -17,12 +17,12 @@ $ntLang = (isset($lang) && $lang === 'en') ? 'en' : 'ar';
 $NT = $ntLang === 'ar' ? [
     'new'   => 'إشعارات جديدة', 'one' => 'إشعار جديد', 'closeAll' => 'إغلاق الكل', 'more' => 'و %d إشعارات أخرى',
     'msg'   => 'رسالة من الإدارة', 'tap' => 'اضغط لقراءة الرسالة', 'from' => 'من', 'done' => 'تم ✓', 'close' => 'إغلاق',
-    'ack'   => '👍 تم الاطلاع', 'ackNeed' => 'مطلوب منك تأكيد الاطلاع', 'recv' => '✅ تم الاستلام', 'recvd' => '✓ تم تأكيد الاستلام',
+    'ack'   => '👍 تم الاطلاع', 'ackNeed' => 'مطلوب منك تأكيد الاطلاع', 'recv' => '✅ تم الاستلام', 'recvd' => '✓ تم تأكيد الاستلام', 'miss' => '❌ لم تصل', 'missd' => '❗ تم إبلاغ الإدارة', 'missQ' => 'ملاحظة (اختياري): ماذا حدث؟',
     'ago'   => ['الآن', 'منذ %d دقيقة', 'منذ %d ساعة', 'أمس', 'منذ %d يوم'],
 ] : [
     'new'   => 'new notifications', 'one' => 'new notification', 'closeAll' => 'Close all', 'more' => 'and %d more',
     'msg'   => 'Message from management', 'tap' => 'Tap to read the message', 'from' => 'From', 'done' => 'Done ✓', 'close' => 'Close',
-    'ack'   => '👍 OK, got it', 'ackNeed' => 'Please confirm with "OK"', 'recv' => '✅ Received', 'recvd' => '✓ Receipt confirmed',
+    'ack'   => '👍 OK, got it', 'ackNeed' => 'Please confirm with "OK"', 'recv' => '✅ Received', 'recvd' => '✓ Receipt confirmed', 'miss' => '❌ Did not arrive', 'missd' => '❗ The admin was told', 'missQ' => 'Note (optional): what happened?',
     'ago'   => ['just now', '%d min ago', '%d h ago', 'yesterday', '%d days ago'],
 ];
 ?>
@@ -68,6 +68,7 @@ $NT = $ntLang === 'ar' ? [
 .nt-read .ft{padding:14px 20px 18px;border-top:1px solid rgba(255,255,255,.06)}
 .nt-read .ft button{width:100%;height:48px;border:0;border-radius:14px;background:linear-gradient(90deg,#16a34a,#22c55e);color:#fff;font:inherit;font-size:16px;font-weight:900;cursor:pointer;box-shadow:0 10px 26px rgba(34,197,94,.3)}
 .nt-card .rv{margin-top:8px;height:34px;padding:0 14px;border:0;border-radius:10px;background:linear-gradient(90deg,#16a34a,#22c55e);color:#fff;font:inherit;font-size:13px;font-weight:900;cursor:pointer;box-shadow:0 6px 16px rgba(34,197,94,.3)}
+.nt-card .rv.miss{margin-inline-start:6px;background:rgba(239,68,68,.15);border:1px solid rgba(239,68,68,.5);color:#fca5a5;box-shadow:none}
 .nt-card .rv.done{background:rgba(34,197,94,.15);color:#86efac;box-shadow:none;cursor:default}
 .nt-card.cele{border-color:rgba(250,204,21,.5);background:linear-gradient(150deg,rgba(22,101,52,.96),rgba(15,23,42,.97))}
 .nt-read .ft button.ack{background:linear-gradient(90deg,#f59e0b,#22c55e)}
@@ -152,6 +153,15 @@ $NT = $ntLang === 'ar' ? [
         catch (x) { b.disabled = false; }
       });
       el.querySelector('.tx').appendChild(b);
+      const m = document.createElement('button'); m.type = 'button'; m.className = 'rv miss'; m.textContent = NT.miss;
+      m.addEventListener('click', async e => {
+        e.preventDefault(); e.stopPropagation(); if (m.classList.contains('done')) return;
+        const note = prompt(NT.missQ, ''); if (note === null) return;
+        m.disabled = true; b.disabled = true;
+        try { await post({ action: 'missing', id: item.id, note }); m.textContent = NT.missd; m.classList.add('done'); b.remove(); setTimeout(() => remove(el), 2600); }
+        catch (x) { m.disabled = false; b.disabled = false; }
+      });
+      el.querySelector('.tx').appendChild(m);
       const bar = el.querySelector('.bar'); if (bar) bar.style.setProperty('--t', '40s');
     }
     if (item.event === 'sale_celebrate') confetti();

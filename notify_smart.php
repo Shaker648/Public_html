@@ -85,7 +85,8 @@ function smart_pending_transfers(PDO $pdo, string $branch = '', int $days = 7): 
             FROM movements m
             JOIN cars c ON c.id = m.car_id
             LEFT JOIN transfer_receipts r ON r.movement_id = m.id
-            WHERE m.event_type = 'transfer' AND r.movement_id IS NULL
+            LEFT JOIN transfer_issues ti ON ti.movement_id = m.id
+            WHERE m.event_type = 'transfer' AND r.movement_id IS NULL AND ti.movement_id IS NULL
               AND m.created_at >= NOW() - INTERVAL " . (int)$days . " DAY
               AND c.branch = m.to_branch AND c.status IN ('available', 'reserved')
               AND m.id = (SELECT MAX(m2.id) FROM movements m2 WHERE m2.car_id = m.car_id AND m2.event_type = 'transfer')";
@@ -144,7 +145,8 @@ function smart_my_duties(PDO $pdo, int $uid): array
                                 c.id AS car_id, c.brand, c.model, c.trim_name, c.car_year, c.color, c.chassis
                          FROM transfer_duty d JOIN movements m ON m.id = d.movement_id JOIN cars c ON c.id = m.car_id
                          LEFT JOIN transfer_receipts r ON r.movement_id = d.movement_id
-                         WHERE d.user_id = ? AND r.movement_id IS NULL
+                         LEFT JOIN transfer_issues ti ON ti.movement_id = d.movement_id
+                         WHERE d.user_id = ? AND r.movement_id IS NULL AND ti.movement_id IS NULL
                            AND c.branch = m.to_branch AND c.status IN ('available', 'reserved')
                          ORDER BY d.deadline");
     $st->execute([$uid]);
@@ -192,7 +194,8 @@ function smart_duty_scan(PDO $pdo): array
 
         $open = "FROM transfer_duty d JOIN movements m ON m.id = d.movement_id JOIN cars c ON c.id = m.car_id
                  LEFT JOIN transfer_receipts r ON r.movement_id = d.movement_id
-                 WHERE r.movement_id IS NULL AND c.branch = m.to_branch AND c.status IN ('available', 'reserved')";
+                 LEFT JOIN transfer_issues ti ON ti.movement_id = d.movement_id
+                 WHERE r.movement_id IS NULL AND ti.movement_id IS NULL AND c.branch = m.to_branch AND c.status IN ('available', 'reserved')";
         $cols = "d.movement_id, d.user_id, UNIX_TIMESTAMP(d.deadline) AS dl, m.to_branch, c.brand, c.model, c.chassis";
 
         /* 2 — warnings */
@@ -270,6 +273,93 @@ function smart_extend(PDO $pdo, int $uid, int $minutes): void
     $pdo->prepare("UPDATE transfer_duty d LEFT JOIN transfer_receipts r ON r.movement_id = d.movement_id
                    SET d.deadline = GREATEST(d.deadline, NOW()) + INTERVAL ? MINUTE, d.warned = 0, d.locked = 0
                    WHERE d.user_id = ? AND r.movement_id IS NULL")->execute([max(5, min(1440, $minutes)), $uid]);
+}
+
+/* ════════════════════════ «لم تصل» — a transferred car did not arrive ════════════════════════ */
+/**
+ * The receiving branch reports that a car never arrived. The admin and whoever
+ * moved it are told at once, and the car stops counting against the branch
+ * (no countdown, no lock) until the admin decides.
+ */
+function smart_report_missing(PDO $pdo, int $mid, string $by, string $note = ''): bool
+{
+    try {
+        push_tables($pdo);
+        $st = $pdo->prepare("SELECT m.id AS mid, m.from_branch, m.to_branch, m.moved_by, c.id, c.brand, c.model, c.trim_name, c.car_year, c.color, c.chassis
+                             FROM movements m JOIN cars c ON c.id = m.car_id
+                             LEFT JOIN transfer_receipts r ON r.movement_id = m.id
+                             WHERE m.id = ? AND m.event_type = 'transfer' AND r.movement_id IS NULL");
+        $st->execute([$mid]);
+        $r = $st->fetch(PDO::FETCH_ASSOC);
+        if (!$r) return false;
+        $ins = $pdo->prepare("INSERT IGNORE INTO transfer_issues (movement_id, reported_by, reported_at, note) VALUES (?, ?, NOW(), ?)");
+        $ins->execute([$mid, $by, mb_substr(trim($note), 0, 250) ?: null]);
+        if (!$ins->rowCount()) return false;                    // already reported
+        notify_event($pdo, 'transfer_missing', ['car' => $r + ['branch' => $r['to_branch']], 'to' => $r['to_branch'], 'from' => $r['from_branch'], 'mover' => $r['moved_by'],
+            'note' => $note, 'owners' => [(string)$r['moved_by']], 'actor' => $by, 'force' => true, 'now' => true, 'always_admin' => true]);
+        smart_duty_scan($pdo);                                  // a locked person may now have nothing left
+        return true;
+    } catch (Throwable $e) { error_log('smart_report_missing: ' . $e->getMessage()); return false; }
+}
+
+/** Open "did not arrive" reports, oldest first. */
+function smart_open_issues(PDO $pdo): array
+{
+    try {
+        push_tables($pdo);
+        return $pdo->query("SELECT i.*, TIMESTAMPDIFF(SECOND, i.reported_at, NOW()) AS age, m.from_branch, m.to_branch, m.moved_by, m.created_at AS moved_at,
+                                   c.id AS car_id, c.brand, c.model, c.trim_name, c.car_year, c.color, c.chassis, c.branch AS now_branch
+                            FROM transfer_issues i JOIN movements m ON m.id = i.movement_id JOIN cars c ON c.id = m.car_id
+                            WHERE i.status = 'open' ORDER BY i.reported_at")->fetchAll(PDO::FETCH_ASSOC);
+    } catch (Throwable $e) { return []; }
+}
+
+/**
+ * The admin's decision on a report:
+ *   arrived  — it did arrive after all: recorded as received
+ *   cancel   — the transfer is cancelled: the car goes back to where it came from
+ *   move     — the car is really somewhere else: recorded at $branch
+ * The person who reported it and whoever moved it are told.
+ */
+function smart_resolve_issue(PDO $pdo, int $mid, string $how, string $by, string $branch = ''): bool
+{
+    try {
+        push_tables($pdo);
+        $st = $pdo->prepare("SELECT i.*, m.car_id, m.from_branch, m.to_branch, m.moved_by, c.id, c.brand, c.model, c.trim_name, c.car_year, c.color, c.chassis, c.branch AS now_branch, c.status AS car_status
+                             FROM transfer_issues i JOIN movements m ON m.id = i.movement_id JOIN cars c ON c.id = m.car_id
+                             WHERE i.movement_id = ? AND i.status = 'open'");
+        $st->execute([$mid]);
+        $r = $st->fetch(PDO::FETCH_ASSOC);
+        if (!$r) return false;
+        $lang = notify_options($pdo)['lang'];
+        $status = ['arrived' => 'arrived', 'cancel' => 'cancelled', 'move' => 'moved'][$how] ?? null;
+        if (!$status) return false;
+        $target = $how === 'cancel' ? (string)$r['from_branch'] : ($how === 'move' ? $branch : '');
+        if ($how === 'move') {
+            $ok = $pdo->prepare("SELECT 1 FROM branches WHERE name = ?"); $ok->execute([$branch]);
+            if (!$ok->fetchColumn()) return false;
+        }
+        $pdo->beginTransaction();
+        if ($how === 'arrived') {
+            $pdo->prepare("INSERT IGNORE INTO transfer_receipts (movement_id, received_by, received_at) VALUES (?, ?, NOW())")->execute([$mid, $by]);
+        } elseif ($target !== '' && $target !== (string)$r['now_branch']) {
+            // the correction is a normal move on the car's journey, already "received" (nobody has to confirm it)
+            $pdo->prepare("UPDATE cars SET branch = ? WHERE id = ?")->execute([$target, (int)$r['car_id']]);
+            $pdo->prepare("INSERT INTO movements (car_id, from_branch, to_branch, moved_by, notes, event_type) VALUES (?, ?, ?, ?, ?, 'transfer')")
+                ->execute([(int)$r['car_id'], $r['now_branch'], $target, $by, $lang === 'ar' ? 'تصحيح: السيارة لم تصل إلى ' . push_branch_label($pdo, (string)$r['to_branch'], 'ar') : 'Correction: the car never reached ' . $r['to_branch']]);
+            $pdo->prepare("INSERT IGNORE INTO transfer_receipts (movement_id, received_by, received_at) VALUES (?, ?, NOW())")->execute([(int)$pdo->lastInsertId(), $by]);
+        }
+        $pdo->prepare("UPDATE transfer_issues SET status = ?, resolved_by = ?, resolved_at = NOW(), resolution = ? WHERE movement_id = ?")
+            ->execute([$status, $by, $target !== '' ? $target : null, $mid]);
+        $pdo->commit();
+        notify_event($pdo, 'transfer_resolved', ['car' => $r, 'how' => $status, 'branch' => $target,
+            'owners' => array_values(array_unique(array_filter([(string)$r['reported_by'], (string)$r['moved_by']]))), 'actor' => $by, 'now' => true]);
+        return true;
+    } catch (Throwable $e) {
+        if ($pdo->inTransaction()) $pdo->rollBack();
+        error_log('smart_resolve_issue: ' . $e->getMessage());
+        return false;
+    }
 }
 
 /* ════════════════════════ surprise stock check (جرد مفاجئ) ════════════════════════ */

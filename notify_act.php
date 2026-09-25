@@ -3,7 +3,8 @@
  * notify_act.php — the buttons inside a phone notification.
  *
  *   ?a=ack&t=…    «👍 تمام» on a message from management
- *   ?a=recv&t=…   «✅ استلمت» on "a car is on its way to your branch"
+ *   ?a=recv&t=…   «✅ تم الاستلام» on "a car is on its way to your branch"
+ *   ?a=miss&t=…   «❌ لم تصل» — the car never arrived: the admin is told
  *
  * t is a private random code that belongs to one person's copy of one
  * notification, so the button works straight from the lock screen — even if
@@ -33,6 +34,11 @@ try {
                 $pdo->prepare("UPDATE notify_inbox SET ack_at = COALESCE(ack_at, NOW()), read_at = COALESCE(read_at, NOW()), seen_at = COALESCE(seen_at, NOW()) WHERE id = ?")
                     ->execute([(int)$row['id']]);
                 $ok = true;
+            } elseif ($a === 'miss' && $row['event'] === 'transfer_incoming' && strpos((string)$row['ref'], 'mv:') === 0) {
+                foreach (explode(',', substr((string)$row['ref'], 3)) as $mid) smart_report_missing($pdo, (int)$mid, (string)$row['username'], '');
+                $pdo->prepare("UPDATE notify_inbox SET seen_at = COALESCE(seen_at, NOW()), read_at = COALESCE(read_at, NOW()) WHERE id = ?")->execute([(int)$row['id']]);
+                $ok = true;
+                $go = 'transfer_receive.php?lang=' . $lang;
             } elseif ($a === 'recv' && $row['event'] === 'transfer_incoming' && strpos((string)$row['ref'], 'mv:') === 0) {
                 smart_receive($pdo, explode(',', substr((string)$row['ref'], 3)), (string)$row['username']);
                 $pdo->prepare("UPDATE notify_inbox SET seen_at = COALESCE(seen_at, NOW()), read_at = COALESCE(read_at, NOW()) WHERE id = ?")->execute([(int)$row['id']]);

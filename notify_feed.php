@@ -93,6 +93,15 @@ try {
         feed_out(['ok' => true, 'n' => $n]);
     }
 
+    if ($action === 'missing') {
+        $st = $pdo->prepare("SELECT l.ref FROM notify_inbox i JOIN notify_log l ON l.id = i.log_id WHERE i.id = ? AND i.user_id = ? AND l.event = 'transfer_incoming'");
+        $st->execute([(int)($in['id'] ?? 0), $uid]);
+        $ref = (string)$st->fetchColumn();
+        $n = 0;
+        if (strpos($ref, 'mv:') === 0) foreach (explode(',', substr($ref, 3)) as $mid) $n += smart_report_missing($pdo, (int)$mid, (string)$_SESSION['username'], (string)($in['note'] ?? '')) ? 1 : 0;
+        feed_out(['ok' => true, 'n' => $n]);
+    }
+
     if ($action === 'read') {
         $pdo->prepare("UPDATE notify_inbox SET read_at = COALESCE(read_at, NOW()), seen_at = COALESCE(seen_at, NOW()) WHERE id = ? AND user_id = ?")
             ->execute([(int)($in['id'] ?? 0), $uid]);

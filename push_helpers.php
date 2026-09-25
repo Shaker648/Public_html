@@ -60,6 +60,8 @@ function notify_events(): array
         'duty_locked'      => ['إيقاف النظام عن موظف',               'System locked for someone',  '🔒', ['admin'], true, true, 'transfer'],
         'duty_done'        => ['أنجز المطلوب وينتظر فتح النظام',   'Confirmed everything, waiting to be unlocked', '✅', ['admin'], true, null, 'transfer'],
         'duty_unlocked'    => ['فتح النظام من الإدارة',                'Unlocked by the admin',      '🔓', [], true, true, 'transfer'],
+        'transfer_missing' => ['بلاغ: سيارة منقولة لم تصل',        'Report: transferred car did not arrive', '❗', ['admin'], true, true, 'transfer'],
+        'transfer_resolved'=> ['قرار الإدارة في بلاغ «لم تصل»',    'Decision on a "did not arrive" report', '🛠️', [], true, true, 'transfer'],
         'transfer_received'=> ['تأكيد استلام سيارة منقولة',       'Transferred car received',   '📥', ['admin'], true, true, 'transfer'],
         'transfer_unconfirmed' => ['لم يكن أحد في الفرع للاستلام (24 ساعة)', 'Nobody at the branch to receive (24 h)', '🏖️', ['admin'], true, null, 'transfer'],
         // surprise stock check (جرد مفاجئ)
@@ -336,6 +338,17 @@ function push_tables(PDO $pdo): void
         marked_by VARCHAR(100) NULL,
         marked_at DATETIME NULL,
         INDEX idx_check (check_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    $pdo->exec("CREATE TABLE IF NOT EXISTS transfer_issues (
+        movement_id INT PRIMARY KEY,
+        reported_by VARCHAR(100) NOT NULL,
+        reported_at DATETIME NOT NULL,
+        note VARCHAR(255) NULL,
+        status VARCHAR(20) NOT NULL DEFAULT 'open',
+        resolved_by VARCHAR(100) NULL,
+        resolved_at DATETIME NULL,
+        resolution VARCHAR(255) NULL,
+        INDEX idx_status (status)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
     $pdo->exec("CREATE TABLE IF NOT EXISTS transfer_receipts (
         movement_id INT PRIMARY KEY,
@@ -814,6 +827,20 @@ function notify_message(PDO $pdo, string $event, array $d, string $lang): array
                 $body[] = ($ar ? '👤 بواسطة ' : '👤 by ') . ($d['by'] ?? '');
             }
             break;
+        case 'transfer_missing':
+            $to = push_branch_label($pdo, (string)($d['to'] ?? ''), $lang);
+            $title = $ev[2] . ' ' . ($ar ? $by . ' أبلغ أن ' . $line . ' لم تصل إلى ' . $to : $by . ' reports ' . $line . ' did not arrive at ' . $to);
+            $body[] = trim(($col !== '' ? $col : '') . (!empty($car['chassis']) ? ' · 🔑 ' . $car['chassis'] : '') . (!empty($d['from']) ? ' · ' . ($ar ? 'من ' : 'from ') . push_branch_label($pdo, (string)$d['from'], $lang) : '') . (!empty($d['mover']) ? ' · ' . ($ar ? 'نقلها ' : 'moved by ') . $d['mover'] : ''), ' ·');
+            if (!empty($d['note'])) $body[] = '📝 ' . $d['note'];
+            $body[] = $ar ? '🛠️ مطلوب قرار الإدارة: وصلت / إلغاء النقل / نقلها لفرع آخر' : '🛠️ Needs a decision: arrived / cancel the transfer / move it elsewhere';
+            $url = 'transfer_receive.php?lang=' . $lang . '#issues';
+            break;
+        case 'transfer_resolved':
+            $how = ['arrived' => $ar ? 'تم تأكيد وصولها' : 'confirmed as arrived', 'cancelled' => $ar ? 'أُلغي النقل وأُعيدت إلى ' : 'transfer cancelled, back to ',
+                    'moved' => $ar ? 'سُجّلت في ' : 'recorded at '][$d['how'] ?? 'arrived'] ?? '';
+            $title = $ev[2] . ' ' . ($ar ? 'قرار الإدارة في ' : 'Decision on ') . $line . ': ' . $how . (in_array($d['how'] ?? '', ['cancelled', 'moved'], true) ? push_branch_label($pdo, (string)($d['branch'] ?? ''), $lang) : '');
+            $body[] = ($ar ? '✍️ بواسطة ' : '✍️ by ') . $by . (!empty($car['chassis']) ? ' · 🔑 ' . $car['chassis'] : '');
+            break;
         case 'transfer_unconfirmed':
             $title = $ev[2] . ' ' . ($ar ? 'لم يكن أحد في الفرع للاستلام: ' : 'Nobody at the branch to receive: ') . $line;
             $body[] = ($ar ? 'منقولة إلى ' : 'Moved to ') . push_branch_label($pdo, (string)($d['to'] ?? ''), $lang) . ' · ' . ($ar ? 'منذ ' . (int)$d['hours'] . ' ساعة' : (int)$d['hours'] . ' h ago') . (!empty($d['mover']) ? ' · ' . ($ar ? 'نقلها ' : 'moved by ') . $d['mover'] : '');
@@ -852,7 +879,7 @@ function notify_message(PDO $pdo, string $event, array $d, string $lang): array
         default:
             $title = $ev[2] . ' ' . ($ar ? $ev[0] : $ev[1]);
     }
-    $noBy = ['test', 'check_start', 'check_warn', 'check_locked', 'check_done', 'transfer_received', 'duty_start', 'duty_warn', 'duty_locked', 'duty_done', 'duty_unlocked', 'sale_celebrate', 'last_car', 'reserve_old', 'stock_aged', 'transfer_unconfirmed',
+    $noBy = ['test', 'transfer_missing', 'transfer_resolved', 'check_start', 'check_warn', 'check_locked', 'check_done', 'transfer_received', 'duty_start', 'duty_warn', 'duty_locked', 'duty_done', 'duty_unlocked', 'sale_celebrate', 'last_car', 'reserve_old', 'stock_aged', 'transfer_unconfirmed',
              'amana_long', 'bank_waiting', 'clockout_forgot', 'login_failed', 'price_reserved'];
     if ($by !== '' && !in_array($event, $noBy, true) && strpos($event, 'att_') !== 0) $body[] = ($ar ? '✍️ بواسطة ' : '✍️ by ') . $by;
     return [
@@ -976,7 +1003,8 @@ function notify_deliver(PDO $pdo, int $logId, string $event, array $msg, array $
         $acts = [];
         if ($t !== '') {
             if ($event === 'message' && $needAck)       $acts['ack']  = [$ar ? '👍 تم الاطلاع' : '👍 OK', 'notify_act.php?a=ack&t=' . $t];
-            if ($event === 'transfer_incoming')         $acts['recv'] = [$ar ? '✅ تم الاستلام' : '✅ Received', 'notify_act.php?a=recv&t=' . $t];
+            if ($event === 'transfer_incoming')       { $acts['recv'] = [$ar ? '✅ تم الاستلام' : '✅ Received', 'notify_act.php?a=recv&t=' . $t];
+                                                        $acts['miss'] = [$ar ? '❌ لم تصل' : '❌ Did not arrive', 'notify_act.php?a=miss&t=' . $t]; }
             if ($event === 'clockout_forgot')           $acts['open'] = [$ar ? '🔵 تسجيل الانصراف' : '🔵 Clock out', $msg['url']];
         }
         if ($acts) {
@@ -1037,7 +1065,9 @@ function notify_event(PDO $pdo, string $event, array $data = []): void
         }
 
         $rule = notify_rules($pdo)[$event];
-        if (!$rule['on']) return;
+        $always = !empty($data['always_admin']);      // the admin must always know (e.g. a car that did not arrive)
+        if (!$rule['on'] && !$always) return;
+        if (!$rule['on']) $rule = ['on' => true, 'roles' => [], 'plus' => [], 'minus' => [], 'owner' => $rule['owner']];
 
         // who should get it
         $users = $pdo->query("SELECT id, username, role FROM users WHERE active = 1")->fetchAll(PDO::FETCH_ASSOC);
@@ -1049,6 +1079,7 @@ function notify_event(PDO $pdo, string $event, array $data = []): void
                || ($rule['owner'] && in_array($u['username'], $owners, true));
             if (in_array($id, $rule['minus'], true)) $in = false;
             if (!$opt['self'] && $actor !== '' && $u['username'] === $actor) $in = false;
+            if ($always && $u['role'] === 'admin' && $u['username'] !== $actor) $in = true;
             if ($in) $ids[] = $id;
         }
         if (!$ids) return;
