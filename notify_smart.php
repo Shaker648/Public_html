@@ -228,10 +228,10 @@ function smart_duty_scan(PDO $pdo): array
             }
         }
 
-        /* 4 — a locked person confirmed everything */
+        /* 4 — a locked person confirmed every car and finished every stock check */
         foreach ($pdo->query("SELECT * FROM user_locks WHERE unlocked_at IS NULL AND done_at IS NULL")->fetchAll(PDO::FETCH_ASSOC) as $lk) {
             $uid = (int)$lk['user_id'];
-            if (smart_my_duties($pdo, $uid)) continue;
+            if (smart_my_duties($pdo, $uid) || smart_checks_for_user($pdo, $uid)) continue;
             $pdo->prepare("UPDATE user_locks SET done_at = NOW() WHERE id = ?")->execute([(int)$lk['id']]);
             if ($rules['auto_unlock']) { smart_unlock($pdo, $uid, 'system'); $log[] = 'auto_unlock ' . ($roles[$uid][0] ?? $uid); }
             else {
@@ -270,6 +270,130 @@ function smart_extend(PDO $pdo, int $uid, int $minutes): void
     $pdo->prepare("UPDATE transfer_duty d LEFT JOIN transfer_receipts r ON r.movement_id = d.movement_id
                    SET d.deadline = GREATEST(d.deadline, NOW()) + INTERVAL ? MINUTE, d.warned = 0, d.locked = 0
                    WHERE d.user_id = ? AND r.movement_id IS NULL")->execute([max(5, min(1440, $minutes)), $uid]);
+}
+
+/* ════════════════════════ surprise stock check (جرد مفاجئ) ════════════════════════ */
+function smart_time_label(int $ts, string $lang): string
+{
+    return date('h:i', $ts) . ($lang === 'ar' ? (date('A', $ts) === 'AM' ? ' ص' : ' م') : ' ' . date('A', $ts));
+}
+
+/** Names of the people a check is assigned to: [userId => username]. */
+function smart_check_users(PDO $pdo, int $checkId): array
+{
+    $st = $pdo->prepare("SELECT u.id, u.username FROM stock_check_users s JOIN users u ON u.id = s.user_id WHERE s.check_id = ?");
+    $st->execute([$checkId]);
+    $out = [];
+    foreach ($st->fetchAll(PDO::FETCH_ASSOC) as $r) $out[(int)$r['id']] = (string)$r['username'];
+    return $out;
+}
+
+/** Counts for a check: [total, marked, present, missing, extra]. */
+function smart_check_counts(PDO $pdo, int $checkId): array
+{
+    $st = $pdo->prepare("SELECT SUM(car_id > 0) AS t, SUM(car_id > 0 AND state IS NOT NULL) AS m, SUM(state = 'present') AS p,
+                                SUM(state = 'missing') AS x, SUM(state = 'extra') AS e FROM stock_check_items WHERE check_id = ?");
+    $st->execute([$checkId]);
+    $r = $st->fetch(PDO::FETCH_ASSOC) ?: [];
+    return [(int)($r['t'] ?? 0), (int)($r['m'] ?? 0), (int)($r['p'] ?? 0), (int)($r['x'] ?? 0), (int)($r['e'] ?? 0)];
+}
+
+/**
+ * Start a surprise check: the cars in the branch right now are the list;
+ * the people chosen get it at once (phone + in the system) with the deadline.
+ */
+function smart_check_create(PDO $pdo, string $branch, array $userIds, int $minutes, string $note, bool $lock, string $by): int
+{
+    push_tables($pdo);
+    $minutes = max(5, min(1440, $minutes));
+    $userIds = array_values(array_unique(array_filter(array_map('intval', $userIds))));
+    $st = $pdo->prepare("SELECT id, brand, model, trim_name, car_year, color, chassis FROM cars WHERE branch = ? AND status IN ('available', 'reserved') ORDER BY brand, model, chassis");
+    $st->execute([$branch]);
+    $cars = $st->fetchAll(PDO::FETCH_ASSOC);
+    $pdo->prepare("INSERT INTO stock_checks (branch, note, minutes, lock_on, created_by, created_at, deadline) VALUES (?, ?, ?, ?, ?, NOW(), NOW() + INTERVAL ? MINUTE)")
+        ->execute([$branch, mb_substr($note, 0, 250), $minutes, $lock ? 1 : 0, $by, $minutes]);
+    $id = (int)$pdo->lastInsertId();
+    $iu = $pdo->prepare("INSERT IGNORE INTO stock_check_users (check_id, user_id) VALUES (?, ?)");
+    foreach ($userIds as $u) $iu->execute([$id, $u]);
+    $lang = notify_options($pdo)['lang'];
+    $ii = $pdo->prepare("INSERT INTO stock_check_items (check_id, car_id, label, chassis) VALUES (?, ?, ?, ?)");
+    foreach ($cars as $c) {
+        $ii->execute([$id, (int)$c['id'], mb_substr(trim($c['brand'] . ' ' . $c['model'] . ' ' . $c['trim_name'] . ' ' . $c['car_year'] . ' · ' . push_color_label($pdo, (string)$c['color'], $lang)), 0, 200), $c['chassis']]);
+    }
+    $names = smart_check_users($pdo, $id);
+    notify_event($pdo, 'check_start', ['id' => $id, 'branch' => $branch, 'count' => count($cars), 'until' => smart_time_label(time() + $minutes * 60, $lang),
+        'users' => implode('، ', $names), 'note' => $note, 'lock' => $lock, 'owners' => array_values($names), 'actor' => $by, 'force' => true, 'now' => true]);
+    return $id;
+}
+
+/** Checks this person still has to finish (running, or out of time but not finished). */
+function smart_checks_for_user(PDO $pdo, int $uid): array
+{
+    try {
+        $st = $pdo->prepare("SELECT c.*, TIMESTAMPDIFF(SECOND, NOW(), c.deadline) AS secs FROM stock_checks c JOIN stock_check_users u ON u.check_id = c.id
+                             WHERE u.user_id = ? AND c.status IN ('active', 'expired') ORDER BY c.deadline");
+        $st->execute([$uid]);
+        return $st->fetchAll(PDO::FETCH_ASSOC);
+    } catch (Throwable $e) { return []; }
+}
+
+/** Finish a check (every car marked). Tells the admin the result. */
+function smart_check_finish(PDO $pdo, int $checkId, string $by): bool
+{
+    $st = $pdo->prepare("SELECT * FROM stock_checks WHERE id = ? AND status IN ('active', 'expired')");
+    $st->execute([$checkId]);
+    $c = $st->fetch(PDO::FETCH_ASSOC);
+    if (!$c) return false;
+    [$t, $m, $p, $x, $e] = smart_check_counts($pdo, $checkId);
+    if ($m < $t) return false;
+    $pdo->prepare("UPDATE stock_checks SET status = 'done', finished_at = NOW(), finished_by = ? WHERE id = ?")->execute([$by, $checkId]);
+    $ml = $pdo->prepare("SELECT label, chassis FROM stock_check_items WHERE check_id = ? AND state = 'missing'");
+    $ml->execute([$checkId]);
+    notify_event($pdo, 'check_done', ['id' => $checkId, 'branch' => $c['branch'], 'present' => $p, 'missing' => $x, 'extra' => $e, 'by' => $by,
+        'late' => $c['status'] === 'expired', 'missing_list' => array_map(fn($r) => $r['chassis'], $ml->fetchAll(PDO::FETCH_ASSOC)), 'actor' => $by, 'force' => true, 'now' => true]);
+    smart_duty_scan($pdo);   // someone locked only because of this check → the admin is told
+    return true;
+}
+
+/** Warn before the end; when time is up the people who did not finish are locked. */
+function smart_check_scan(PDO $pdo): array
+{
+    $log = [];
+    try {
+        push_tables($pdo);
+        $lang = notify_options($pdo)['lang'];
+        $warnMax = transfer_rules($pdo)['warn'];
+        $roles = [];
+        foreach ($pdo->query("SELECT id, role FROM users") as $u) $roles[(int)$u['id']] = $u['role'];
+        foreach ($pdo->query("SELECT *, UNIX_TIMESTAMP(deadline) AS dl, TIMESTAMPDIFF(SECOND, NOW(), deadline) AS secs FROM stock_checks WHERE status = 'active'")->fetchAll(PDO::FETCH_ASSOC) as $c) {
+            $id = (int)$c['id'];
+            $names = smart_check_users($pdo, $id);
+            [$t, $m] = smart_check_counts($pdo, $id);
+            $warnAt = min($warnMax, max(5, intdiv((int)$c['minutes'], 3))) * 60;
+            if (!(int)$c['warned'] && (int)$c['secs'] > 0 && (int)$c['secs'] <= $warnAt) {
+                $pdo->prepare("UPDATE stock_checks SET warned = 1 WHERE id = ?")->execute([$id]);
+                notify_event($pdo, 'check_warn', ['id' => $id, 'branch' => $c['branch'], 'count' => $t, 'done' => $m, 'mins' => max(1, (int)ceil((int)$c['secs'] / 60)),
+                    'users' => implode('، ', $names), 'owners' => array_values($names), 'actor' => '', 'force' => true, 'now' => true]);
+                $log[] = 'check_warn #' . $id;
+            }
+            if ((int)$c['secs'] <= 0) {
+                $pdo->prepare("UPDATE stock_checks SET status = 'expired' WHERE id = ? AND status = 'active'")->execute([$id]);
+                if ((int)$c['lock_on']) {
+                    $locked = [];
+                    foreach ($names as $uid => $un) {
+                        if (($roles[$uid] ?? '') === 'admin' || user_lock_active($pdo, $uid)) continue;   // never an admin
+                        $pdo->prepare("INSERT INTO user_locks (user_id, reason, locked_at) VALUES (?, ?, NOW())")
+                            ->execute([$uid, mb_substr(($lang === 'ar' ? 'جرد مفاجئ لم يكتمل — ' : 'Unfinished stock check — ') . push_branch_label($pdo, (string)$c['branch'], $lang), 0, 250)]);
+                        $locked[] = $un;
+                    }
+                    if ($locked) notify_event($pdo, 'check_locked', ['id' => $id, 'branch' => $c['branch'], 'count' => $t, 'done' => $m,
+                        'users' => implode('، ', $locked), 'owners' => $locked, 'actor' => '', 'force' => true, 'now' => true]);
+                }
+                $log[] = 'check_expired #' . $id;
+            }
+        }
+    } catch (Throwable $e) { error_log('smart_check_scan: ' . $e->getMessage()); }
+    return $log;
 }
 
 /* ════════════════════════ prices ════════════════════════ */
@@ -349,7 +473,7 @@ function smart_car_edit(PDO $pdo, array $car, array $changes): void
         $keys = $sold ? array_keys($changes) : array_values(array_intersect(array_keys($changes), ['chassis', 'brand', 'model', 'car_year']));
         if (!$keys) return;
         $lines = [];
-        if ($sold) $lines[] = $ar ? '⚠️ تعديل على عربية مباعة' : '⚠️ Edit on a sold car';
+        if ($sold) $lines[] = $ar ? '⚠️ تعديل على سيارة مباعة' : '⚠️ Edit on a sold car';
         foreach (array_slice($keys, 0, 4) as $k) {
             $lines[] = ($lbl[$k] ?? $k) . ': ' . mb_substr((string)($changes[$k][0] ?: '—'), 0, 30) . ($ar ? ' ← ' : ' → ') . mb_substr((string)($changes[$k][1] ?: '—'), 0, 30);
         }
@@ -369,6 +493,8 @@ function smart_run(PDO $pdo): array
         $s = notify_smart($pdo);
         $day = smart_daytime();
 
+        /* 📋 surprise stock checks: warnings, time up → lock */
+        $done = array_merge($done, smart_check_scan($pdo));
         /* 🚚 receiving transferred cars: countdowns, warnings, locks (any time of day) */
         $done = array_merge($done, smart_duty_scan($pdo));
 
@@ -395,7 +521,7 @@ function smart_run(PDO $pdo): array
             if ($old) {
                 $lang = notify_options($pdo)['lang'];
                 notify_event($pdo, 'stock_aged', ['count' => count($old), 'days' => $s['aged_days'], 'actor' => '', 'now' => true,
-                    'names' => array_map(fn($c) => '• ' . trim($c['brand'] . ' ' . $c['model'] . ' ' . push_color_label($pdo, (string)$c['color'], $lang)) . ' — ' . (int)$c['days'] . ($lang === 'ar' ? ' يوم' : ' d'), $old)]);
+                    'names' => array_map(fn($c) => '• ' . trim($c['brand'] . ' ' . $c['model'] . ' ' . push_color_label($pdo, (string)$c['color'], $lang)) . ' — ' . (int)$c['days'] . ($lang === 'ar' ? ' يوماً' : ' d'), $old)]);
                 $done[] = 'stock_aged ' . count($old);
             }
         }
@@ -440,7 +566,7 @@ function smart_run(PDO $pdo): array
                 foreach ($st->fetchAll(PDO::FETCH_ASSOC) as $r) {
                     if (notify_once($pdo, 'bank:' . $r['id'] . ':' . intdiv((int)$r['days'], $s['bank_days']))) {
                         $due[] = '• ' . $r['customer_name'] . ' — ' . (function_exists('inst_bank_name') ? inst_bank_name((string)$r['bank_key'], $lang) : $r['bank_key'])
-                               . ' (' . (int)$r['days'] . ($lang === 'ar' ? ' يوم)' : ' d)');
+                               . ' (' . (int)$r['days'] . ($lang === 'ar' ? ' يوماً)' : ' d)');
                     }
                 }
                 if ($due) {
@@ -453,9 +579,10 @@ function smart_run(PDO $pdo): array
         /* 🌙 still clocked in late at night — only to the employee */
         if (date('H:i') >= $s['clockout_at']) {
             try {
-                $rows = $pdo->query("SELECT a.id, u.username FROM attendance_logs a JOIN users u ON u.id = a.user_id
+                $rows = $pdo->query("SELECT a.id, a.user_id, u.username FROM attendance_logs a JOIN users u ON u.id = a.user_id
                                      WHERE a.clock_out IS NULL AND a.clock_in >= CURDATE() AND u.active = 1")->fetchAll(PDO::FETCH_ASSOC);
                 foreach ($rows as $r) {
+                    if (user_lock_active($pdo, (int)($r['user_id'] ?? 0))) continue;    // locked: cannot clock out anyway
                     if (!notify_once($pdo, 'co:' . $r['username'] . ':' . date('Ymd'))) continue;   // once a night per person
                     notify_event($pdo, 'clockout_forgot', ['owners' => [(string)$r['username']], 'actor' => '', 'force' => true, 'now' => true]);
                     $done[] = 'clockout_forgot ' . $r['username'];

@@ -24,11 +24,11 @@ push_tables($pdo);
 /* ─── confirm ─── */
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!hash_equals($csrf, (string)($_POST['csrf_token'] ?? ''))) {
-        $_SESSION['tr_flash'] = ['bad', $ar ? 'انتهت صلاحية الصفحة — حاول تاني' : 'The page expired — try again'];
+        $_SESSION['tr_flash'] = ['bad', $ar ? 'انتهت صلاحية الصفحة — حاول مرة أخرى' : 'The page expired — try again'];
     } else {
         $n = smart_receive($pdo, (array)($_POST['mids'] ?? []), $me);
-        $_SESSION['tr_flash'] = $n ? ['ok', $ar ? '✅ تم تأكيد استلام ' . $n . ($n === 1 ? ' عربية' : ' عربيات') . ' — اتبعت رسالة للي نقلها' : '✅ ' . $n . ' received — the sender was told']
-                                   : ['bad', $ar ? 'العربية دي اتأكد استلامها قبل كده' : 'Already confirmed'];
+        $_SESSION['tr_flash'] = $n ? ['ok', $ar ? '✅ تم تأكيد استلام ' . $n . ($n === 1 ? ' سيارة' : ' سيارات') . ' — وأُبلغ من قام بنقلها' : '✅ ' . $n . ' received — the sender was told']
+                                   : ['bad', $ar ? 'تم تأكيد استلام هذه السيارة من قبل' : 'Already confirmed'];
     }
     header('Location: transfer_receive.php?lang=' . $lang);
     exit;
@@ -66,7 +66,7 @@ $col = fn($c) => push_color_label($pdo, (string)$c, $lang);
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<title><?= $ar ? 'عربيات في الطريق' : 'Cars on the way' ?> — First 1 Car</title>
+<title><?= $ar ? 'سيارات في الطريق' : 'Cars on the way' ?> — First 1 Car</title>
 <?php include __DIR__ . '/pwa_head.php'; ?>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800;900&family=Tajawal:wght@400;500;700;800;900&display=swap" rel="stylesheet">
 <?php include __DIR__ . '/notify_style.php'; ?>
@@ -110,8 +110,8 @@ $col = fn($c) => push_color_label($pdo, (string)$c, $lang);
 <body>
 <div class="nf-wrap">
     <header class="nf-head">
-        <div><h1>🚚 <?= $ar ? 'عربيات في الطريق لفروعنا' : 'Cars on their way' ?></h1>
-            <p><?= $ar ? 'اضغط «استلمت» أول ما العربية توصل الفرع — اللي نقلها بيوصله إشعار' : 'Tap "Received" when the car reaches the branch — whoever sent it is told' ?></p></div>
+        <div><h1>🚚 <?= $ar ? 'سيارات في الطريق إلى الفروع' : 'Cars on their way' ?></h1>
+            <p><?= $ar ? 'اضغط «تم الاستلام» فور وصول السيارة إلى الفرع — ويصل إشعار لمن قام بنقلها' : 'Tap "Received" when the car reaches the branch — whoever sent it is told' ?></p></div>
         <div class="nf-nav">
             <a class="nf-btn" href="dashboard.php?lang=<?= $lang ?>">🏠 <?= $ar ? 'الرئيسية' : 'Dashboard' ?></a>
             <a class="nf-btn ghost" href="?lang=<?= $ar ? 'en' : 'ar' ?>"><?= $ar ? 'English' : 'العربية' ?></a>
@@ -123,8 +123,8 @@ $col = fn($c) => push_color_label($pdo, (string)$c, $lang);
     <?php if (!$groups): ?>
     <section class="nf-card tr-empty">
         <div class="big">✅</div>
-        <b><?= $ar ? 'مفيش عربيات مستنية تأكيد استلام' : 'Nothing waiting to be received' ?></b>
-        <span class="nf-note"><?= $ar ? 'كل العربيات المنقولة وصلت واتأكدت' : 'Every transferred car has been confirmed' ?></span>
+        <b><?= $ar ? 'لا توجد سيارات بانتظار تأكيد الاستلام' : 'Nothing waiting to be received' ?></b>
+        <span class="nf-note"><?= $ar ? 'تم تأكيد وصول جميع السيارات المنقولة' : 'Every transferred car has been confirmed' ?></span>
     </section>
     <?php endif; ?>
 
@@ -136,7 +136,7 @@ $col = fn($c) => push_color_label($pdo, (string)$c, $lang);
             <?php if (count($cars) > 1): ?>
             <form method="post"><input type="hidden" name="csrf_token" value="<?= $csrf ?>">
                 <?php foreach ($cars as $c): ?><input type="hidden" name="mids[]" value="<?= (int)$c['mid'] ?>"><?php endforeach; ?>
-                <button type="submit" class="tr-all">✅ <?= $ar ? 'استلمت الكل (' . count($cars) . ')' : 'Received all (' . count($cars) . ')' ?></button></form>
+                <button type="submit" class="tr-all">✅ <?= $ar ? 'تأكيد استلام الكل (' . count($cars) . ')' : 'Received all (' . count($cars) . ')' ?></button></form>
             <?php endif; ?>
         </div>
         <div class="tr-list">
@@ -145,11 +145,11 @@ $col = fn($c) => push_color_label($pdo, (string)$c, $lang);
                 <div class="nm">🚗 <?= htmlspecialchars(trim($c['brand'] . ' ' . $c['model'] . ' ' . $c['trim_name'])) ?></div>
                 <div class="mt"><span><?= htmlspecialchars($col($c['color'])) ?></span><span><?= htmlspecialchars((string)$c['car_year']) ?></span><span class="ch"><?= htmlspecialchars((string)$c['chassis']) ?></span></div>
                 <div class="tr-road"><span><?= htmlspecialchars($br($c['from_branch'])) ?></span><span class="ln"></span><span><?= htmlspecialchars($br($to)) ?></span></div>
-                <?php if (isset($myDl[(int)$c['mid']])): ?><div class="tr-cd" data-secs="<?= $myDl[(int)$c['mid']] ?>">⏱️ <?= $ar ? 'فاضلك' : 'Left' ?> <b>—</b> <?= $ar ? 'تأكد الاستلام' : 'to confirm' ?></div><?php endif; ?>
+                <?php if (isset($myDl[(int)$c['mid']])): ?><div class="tr-cd" data-secs="<?= $myDl[(int)$c['mid']] ?>">⏱️ <?= $ar ? 'متبقٍّ' : 'Left' ?> <b>—</b> <?= $ar ? 'لتأكيد الاستلام' : 'to confirm' ?></div><?php endif; ?>
                 <div class="ft">
                     <small class="<?= $late ? 'late' : '' ?>"><?= $late ? '⏳ ' : '🕐 ' ?><?= htmlspecialchars($ago((int)$c['hours'] * 3600 + 60)) ?> · <?= $ar ? 'نقلها' : 'by' ?> <?= htmlspecialchars((string)$c['moved_by']) ?></small>
                     <form method="post"><input type="hidden" name="csrf_token" value="<?= $csrf ?>"><input type="hidden" name="mids[]" value="<?= (int)$c['mid'] ?>">
-                        <button type="submit" class="tr-ok">✅ <?= $ar ? 'استلمت' : 'Received' ?></button></form>
+                        <button type="submit" class="tr-ok">✅ <?= $ar ? 'تم الاستلام' : 'Received' ?></button></form>
                 </div>
             </div>
             <?php endforeach; ?>
@@ -159,7 +159,7 @@ $col = fn($c) => push_color_label($pdo, (string)$c, $lang);
 
     <?php if ($recent): ?>
     <section class="nf-card tr-rec">
-        <h2>📥 <?= $ar ? 'آخر عربيات اتأكد استلامها' : 'Recently received' ?></h2>
+        <h2>📥 <?= $ar ? 'آخر السيارات المؤكَّد استلامها' : 'Recently received' ?></h2>
         <div class="nf-feed">
             <?php foreach ($recent as $r): ?>
             <div class="nf-item">

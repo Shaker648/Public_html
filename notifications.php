@@ -111,7 +111,7 @@ $ago = function ($s) use ($lang): string {
             <p class="nf-note"><?= $T['whatNote'] ?></p>
             <?php if (!$mine): ?><div class="nf-empty"><?= $T['none'] ?></div><?php endif; ?>
             <div class="nf-chips">
-                <?php foreach ($mine as $ev): ?><span><?= $events[$ev][2] ?> <?= htmlspecialchars($lang === 'ar' ? $events[$ev][0] : $events[$ev][1]) ?><?= !empty($mineOwn[$ev]) ? ' <small style="opacity:.7">(' . ($lang === 'ar' ? 'لما يخصك' : 'when it is about you') . ')</small>' : '' ?></span><?php endforeach; ?>
+                <?php foreach ($mine as $ev): ?><span><?= $events[$ev][2] ?> <?= htmlspecialchars($lang === 'ar' ? $events[$ev][0] : $events[$ev][1]) ?><?= !empty($mineOwn[$ev]) ? ' <small style="opacity:.7">(' . ($lang === 'ar' ? 'عندما يخصك' : 'when it is about you') . ')</small>' : '' ?></span><?php endforeach; ?>
             </div>
         </section>
     </div>

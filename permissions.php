@@ -355,6 +355,12 @@ function perm_catalog(): array
                     'den' => 'Choose who gets each event (sale, transfer, reservation…), see every linked phone and the delivery log',
                     'd' => [1, 0, 0],
                 ],
+                'page.stock_check' => [
+                    'ar' => 'الجرد المفاجئ', 'en' => 'Surprise stock check',
+                    'dar' => 'إرسال جرد مفاجئ لفرع: تحديد المكلَّف والمدة، ومتابعة النتيجة وفتح النظام لمن توقف عنه',
+                    'den' => 'Send a surprise stock check to a branch: pick who does it and the time, follow the result and unlock',
+                    'd' => [1, 0, 0],
+                ],
                 'page.notifications' => [
                     'ar' => 'إشعاراتي', 'en' => 'My notifications',
                     'dar' => 'تفعيل الإشعارات على موبايل الشخص نفسه ورؤية ما وصله',
