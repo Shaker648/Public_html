@@ -66,6 +66,7 @@ function notify_events(): array
         'transfer_unconfirmed' => ['لم يكن أحد في الفرع للاستلام (24 ساعة)', 'Nobody at the branch to receive (24 h)', '🏖️', ['admin'], true, null, 'transfer'],
         // surprise stock check (جرد مفاجئ)
         'check_start'      => ['بدء جرد مفاجئ',                 'Surprise stock check started', '📋', ['admin'], true, true, 'check'],
+        'check_item'       => ['تأكيد كل سيارة أثناء الجرد',    'Each car confirmed during a check', '🔎', ['admin'], true, null, 'check'],
         'check_warn'       => ['اقتراب انتهاء وقت الجرد',        'Stock check time almost up', '⚠️', ['admin'], true, true, 'check'],
         'check_locked'     => ['إيقاف النظام لعدم إتمام الجرد',  'Locked: stock check not done', '🔒', ['admin'], true, true, 'check'],
         'check_done'       => ['نتيجة الجرد',                    'Stock check result',         '✅', ['admin'], true, null, 'check'],
@@ -800,6 +801,15 @@ function notify_message(PDO $pdo, string $event, array $d, string $lang): array
                 $url = 'transfer_receive.php?lang=' . $lang;
             }
             break;
+        case 'check_item':
+            $bn = push_branch_label($pdo, (string)($d['branch'] ?? ''), $lang);
+            $miss = ($d['state'] ?? '') === 'missing';
+            $title = ($miss ? '❌ ' : '✅ ') . ($ar ? 'جرد فرع ' . $bn . ': ' . (int)$d['done'] . ' من أصل ' . (int)$d['total'] : $bn . ' check: ' . (int)$d['done'] . ' of ' . (int)$d['total']);
+            $body[] = ($miss ? ($ar ? '❌ غير موجودة: ' : '❌ Missing: ') : ($ar ? '✅ موجودة: ' : '✅ Present: ')) . ($d['label'] ?? '') . (!empty($d['chassis']) ? ' · 🔑 ' . $d['chassis'] : '');
+            if ($miss && !empty($d['note'])) $body[] = '📝 ' . $d['note'];
+            if (!empty($d['missing'])) $body[] = ($ar ? '❗ غير موجودة حتى الآن: ' : '❗ Missing so far: ') . (int)$d['missing'];
+            $url = 'stock_check.php?lang=' . $lang . '&id=' . (int)($d['id'] ?? 0);
+            break;
         case 'check_start':
         case 'check_warn':
         case 'check_locked':
@@ -986,7 +996,7 @@ function notify_deliver(PDO $pdo, int $logId, string $event, array $msg, array $
 
     // same kind, not seen yet, in the last 15 minutes → one grouped notification
     $group = [];
-    if (!in_array($event, ['message', 'test', 'transfer_incoming'], true)) {
+    if (!in_array($event, ['message', 'test', 'transfer_incoming', 'check_item'], true)) {
         $in2 = implode(',', $withDev);
         $gs = $pdo->prepare("SELECT i.user_id, l.title FROM notify_inbox i JOIN notify_log l ON l.id = i.log_id
                              WHERE i.user_id IN ($in2) AND l.event = ? AND i.seen_at IS NULL AND l.created_at >= NOW() - INTERVAL 15 MINUTE
@@ -1089,7 +1099,7 @@ function notify_event(PDO $pdo, string $event, array $data = []): void
 
         if (empty($data['force']) && push_in_quiet_hours($opt)) return;   // kept in history, no sound at night
 
-        notify_deliver($pdo, $logId, $event, $msg, $ids, $opt['lang'], $event . '-' . ($data['car']['id'] ?? $logId), false, !empty($data['now']));
+        notify_deliver($pdo, $logId, $event, $msg, $ids, $opt['lang'], (string)($data['tag'] ?? ($event . '-' . ($data['car']['id'] ?? $logId))), false, !empty($data['now']));
     } catch (Throwable $e) {
         error_log('notify_event(' . $event . ') failed: ' . $e->getMessage());
     }

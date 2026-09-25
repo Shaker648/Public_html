@@ -59,6 +59,13 @@ try {
                              WHERE i.user_id = ? AND i.seen_at IS NULL AND l.event NOT IN ('message', 'test') ORDER BY l.id DESC LIMIT 6");
         $st->execute([$uid]);
         $events = $st->fetchAll(PDO::FETCH_ASSOC);
+        // a stock check sends one update per car — show only the latest one for each check
+        $seenChk = [];
+        $events = array_values(array_filter($events, function ($e) use (&$seenChk) {
+            if ($e['event'] !== 'check_item') return true;
+            if (isset($seenChk[$e['url']])) return false;
+            return $seenChk[$e['url']] = true;
+        }));
         $st = $pdo->prepare("SELECT COUNT(*) FROM notify_inbox i JOIN notify_log l ON l.id = i.log_id
                              WHERE i.user_id = ? AND i.seen_at IS NULL AND l.event NOT IN ('message', 'test')");
         $st->execute([$uid]);
