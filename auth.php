@@ -61,11 +61,12 @@ if (time() - (int)($_SESSION['seen_t'] ?? 0) >= 60) {
 // Step 4: Load the permission engine — every protected page gets can() / perm_require().
 require_once __DIR__ . '/permissions.php';
 
-// Step 5: locked for not confirming transferred cars in time → only the lock screen
-// (plus clocking in/out and signing out) until the admin unlocks. Never an admin.
+// Step 5: locked (transferred cars not confirmed in time, or a surprise stock check not
+// finished) → only the lock screen, the stock check and signing out until the admin
+// unlocks. No clocking in or out while locked. Never an admin.
 if ($currentUser['role'] !== 'admin') {
     $__page = basename($_SERVER['SCRIPT_NAME'] ?? '');
-    if (!in_array($__page, ['transfer_lock.php', 'logout.php', 'attendance.php', 'push_subscribe.php', 'notify_feed.php'], true)) {
+    if (!in_array($__page, ['transfer_lock.php', 'stock_check.php', 'logout.php', 'push_subscribe.php', 'notify_feed.php'], true)) {
         try {
             $__lk = $pdo->prepare("SELECT 1 FROM user_locks WHERE user_id = ? AND unlocked_at IS NULL LIMIT 1");
             $__lk->execute([$currentUser['id']]);

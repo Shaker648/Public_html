@@ -680,6 +680,7 @@ function arDate($dt, $lang) {
             background:linear-gradient(120deg,rgba(220,38,38,.35),rgba(147,51,234,.25)); border:1px solid rgba(248,113,113,.55); box-shadow:0 0 0 0 rgba(239,68,68,.5); animation:dtPulse 2s infinite; }
         @keyframes dtPulse { 70% { box-shadow:0 0 0 12px rgba(239,68,68,0); } 100% { box-shadow:0 0 0 0 rgba(239,68,68,0); } }
         .duty-bar .dt-ic { font-size:24px; }
+        .duty-bar.chk { background:linear-gradient(120deg,rgba(220,38,38,.45),rgba(234,88,12,.3)); }
         .duty-bar .dt-tx { flex:1; min-width:0; font-size:14.5px; font-weight:900; line-height:1.5; }
         .duty-bar small { display:block; font-size:12.5px; font-weight:700; color:#fecaca; }
         .duty-bar small b { font-family:Inter,sans-serif; font-variant-numeric:tabular-nums; color:#fff; font-size:14px; }
@@ -1128,11 +1129,20 @@ function arDate($dt, $lang) {
     if ($myDuty): $dSecs = max(0, (int)$myDuty[0]['secs']); $dLock = transfer_rules($pdo)['lock'] && ($_SESSION['role'] ?? '') !== 'admin'; ?>
     <a class="duty-bar" href="transfer_receive.php?lang=<?= $lang ?>" id="dutyBar" data-secs="<?= $dSecs ?>">
         <span class="dt-ic">⏱️</span>
-        <span class="dt-tx"><?= $lang === 'ar' ? 'لازم تأكد استلام ' . count($myDuty) . (count($myDuty) === 1 ? ' عربية' : ' عربيات') . ' وصلت فرعك' : 'Confirm ' . count($myDuty) . ' car(s) that reached your branch' ?>
-            <small><?= $dLock ? ($lang === 'ar' ? 'فاضل ' : 'Time left ') : ($lang === 'ar' ? 'الوقت المتبقي ' : 'Time left ') ?><b id="dutyT">—</b><?= $dLock ? ($lang === 'ar' ? ' وإلا النظام يتقفل عليك' : ' before your system locks') : '' ?></small></span>
-        <span class="dt-go">✅ <?= $lang === 'ar' ? 'أكّد دلوقتي' : 'Confirm now' ?></span>
+        <span class="dt-tx"><?= $lang === 'ar' ? 'مطلوب منك تأكيد استلام ' . count($myDuty) . (count($myDuty) === 1 ? ' سيارة' : ' سيارات') . ' وصلت إلى فرعك' : 'Confirm ' . count($myDuty) . ' car(s) that reached your branch' ?>
+            <small><?= $dLock ? ($lang === 'ar' ? 'الوقت المتبقي ' : 'Time left ') : ($lang === 'ar' ? 'الوقت المتبقي ' : 'Time left ') ?><b id="dutyT">—</b><?= $dLock ? ($lang === 'ar' ? ' — بعدها يتوقف النظام' : ' before your system locks') : '' ?></small></span>
+        <span class="dt-go">✅ <?= $lang === 'ar' ? 'تأكيد الآن' : 'Confirm now' ?></span>
     </a>
     <?php endif; ?>
+    <?php $myChk = function_exists('smart_checks_for_user') ? smart_checks_for_user($pdo, (int)$_SESSION['user_id']) : [];
+    foreach ($myChk as $ck): ?>
+    <a class="duty-bar chk" href="stock_check.php?lang=<?= $lang ?>&id=<?= (int)$ck['id'] ?>" data-secs="<?= max(0, (int)$ck['secs']) ?>">
+        <span class="dt-ic">📋</span>
+        <span class="dt-tx"><?= $lang === 'ar' ? 'جرد مفاجئ مطلوب منك: فرع ' . htmlspecialchars(push_branch_label($pdo, (string)$ck['branch'], 'ar')) : 'Surprise stock check for you: ' . htmlspecialchars(push_branch_label($pdo, (string)$ck['branch'], 'en')) ?>
+            <small><?= $lang === 'ar' ? 'الوقت المتبقي ' : 'Time left ' ?><b class="dt-t">—</b><?= (int)$ck['lock_on'] && ($_SESSION['role'] ?? '') !== 'admin' ? ($lang === 'ar' ? ' — بعدها يتوقف النظام' : ' — then the system locks') : '' ?></small></span>
+        <span class="dt-go">📋 <?= $lang === 'ar' ? 'ابدأ الجرد' : 'Start' ?></span>
+    </a>
+    <?php endforeach; ?>
 
     <!-- Quote — one thin line, so it stops eating the top of the page -->
     <div class="quote-line" id="quoteBanner">
@@ -1150,12 +1160,12 @@ function arDate($dt, $lang) {
     <?php if (can('dash.activity')): ?>
     <!-- ⚡ happening now + 🟢 who is online (filled by the live refresh) -->
     <div class="live-act" id="liveAct" hidden>
-        <button type="button" class="la-on" id="laOn"><span class="dot"></span><b id="laOnN">0</b> <span class="lbl"><?= $lang === 'ar' ? 'أونلاين' : 'online' ?></span><span class="la-av" id="laAv"></span></button>
+        <button type="button" class="la-on" id="laOn"><span class="dot"></span><b id="laOnN">0</b> <span class="lbl"><?= $lang === 'ar' ? 'متصل' : 'online' ?></span><span class="la-av" id="laAv"></span></button>
         <button type="button" class="la-feed" id="laFeed"><span class="bolt">⚡</span><span class="la-tick" id="laTick"></span><span class="la-new" id="laNew" hidden></span><span class="la-more"><?= $lang === 'ar' ? 'الكل ‹' : 'All ›' ?></span></button>
     </div>
     <div class="la-ov" id="laOv"><div class="la-dr" role="dialog" aria-modal="true">
-        <header><b>⚡ <?= $lang === 'ar' ? 'اللي بيحصل دلوقتي' : 'Happening now' ?></b><button type="button" id="laX" aria-label="close">✕</button></header>
-        <div class="la-sec">🟢 <?= $lang === 'ar' ? 'فاتحين النظام دلوقتي' : 'Using the system now' ?></div>
+        <header><b>⚡ <?= $lang === 'ar' ? 'ما يحدث الآن' : 'Happening now' ?></b><button type="button" id="laX" aria-label="close">✕</button></header>
+        <div class="la-sec">🟢 <?= $lang === 'ar' ? 'متصلون بالنظام الآن' : 'Using the system now' ?></div>
         <div class="la-ppl" id="laPpl"></div>
         <div class="la-sec">🕘 <?= $lang === 'ar' ? 'آخر النشاط' : 'Latest activity' ?></div>
         <div class="la-list" id="laList"></div>
@@ -1376,7 +1386,7 @@ function arDate($dt, $lang) {
                     </div>
                     <?php endif; ?>
                     <?php if ($daysIn !== null): ?>
-                    <span class="cs-age <?= $ageCls ?>" title="<?= $lang === 'ar' ? 'في المخزون منذ' : 'In stock for' ?>">🕒 <?= $daysIn === 0 ? ($lang === 'ar' ? 'النهارده' : 'today') : ($lang === 'ar' ? 'منذ ' . $daysIn . ' يوم' : $daysIn . ' days') ?></span>
+                    <span class="cs-age <?= $ageCls ?>" title="<?= $lang === 'ar' ? 'في المخزون منذ' : 'In stock for' ?>">🕒 <?= $daysIn === 0 ? ($lang === 'ar' ? 'اليوم' : 'today') : ($lang === 'ar' ? 'منذ ' . ($daysIn === 1 ? 'يوم واحد' : ($daysIn === 2 ? 'يومين' : $daysIn . ($daysIn <= 10 ? ' أيام' : ' يوماً'))) : $daysIn . ' days') ?></span>
                     <?php endif; ?>
                 </div>
                 <?php endif; ?>
@@ -1609,7 +1619,7 @@ function arDate($dt, $lang) {
 
     // ── Admin editor (only wired if the button exists) ──
     const QE_SAVED = <?= json_encode($lang === 'ar' ? '✓ اتحفظ!' : '✓ Saved!') ?>;
-    const QE_ERR   = <?= json_encode($lang === 'ar' ? '⚠️ حصل خطأ، حاول تاني' : '⚠️ Something went wrong') ?>;
+    const QE_ERR   = <?= json_encode($lang === 'ar' ? '⚠️ حدث خطأ، حاول مرة أخرى' : '⚠️ Something went wrong') ?>;
 
     function openQuoteEditor() {
         const o = document.getElementById('qeOverlay');
@@ -1843,10 +1853,10 @@ function arDate($dt, $lang) {
 
     /* ── ⏱️ countdown to confirm transferred cars ── */
     (function () {
-        const bar = document.getElementById('dutyBar'); if (!bar) return;
-        const t0 = Date.now(), total = +bar.dataset.secs, out = document.getElementById('dutyT');
-        const tick = () => { const s = Math.max(0, total - Math.floor((Date.now() - t0) / 1000));
-            out.textContent = Math.floor(s / 3600) + ':' + String(Math.floor(s % 3600 / 60)).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0'); };
+        const bars = [...document.querySelectorAll('.duty-bar')]; if (!bars.length) return;
+        const t0 = Date.now();
+        const tick = () => bars.forEach(bar => { const s = Math.max(0, +bar.dataset.secs - Math.floor((Date.now() - t0) / 1000)), out = bar.querySelector('#dutyT, .dt-t');
+            if (out) out.textContent = Math.floor(s / 3600) + ':' + String(Math.floor(s % 3600 / 60)).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0'); });
         tick(); setInterval(tick, 1000);
     })();
 
@@ -1862,7 +1872,7 @@ function arDate($dt, $lang) {
         let seen = 0; try { seen = +localStorage.getItem('f1cActSeen:' + ME) || 0; } catch (e) {}
         let items = [], ti = 0, timer = 0;
         function rotate() {
-            if (!items.length) { tick.textContent = AR ? 'لسه مفيش نشاط النهارده' : 'No activity yet'; return; }
+            if (!items.length) { tick.textContent = AR ? 'لا يوجد نشاط اليوم بعد' : 'No activity yet'; return; }
             const it = items[ti % items.length]; ti++;
             tick.classList.add('out');
             setTimeout(() => { tick.innerHTML = esc(it.t) + '<small>' + esc(ago(it.a)) + '</small>'; tick.classList.remove('out'); }, 300);
@@ -1877,7 +1887,7 @@ function arDate($dt, $lang) {
                 document.getElementById('laList').innerHTML = act.length ? act.map(it =>
                     '<a class="la-it' + (it.id > seen ? ' nw' : '') + '" href="' + esc(it.u || '#') + '"><div><div class="t">' + esc(it.t) + '</div><div class="m">' +
                     esc(ago(it.a)) + (it.by ? ' · ' + (AR ? 'بواسطة ' : 'by ') + esc(it.by) : '') + '</div></div></a>').join('')
-                    : '<div class="la-empty">' + (AR ? 'لسه مفيش نشاط' : 'Nothing yet') + '</div>';
+                    : '<div class="la-empty">' + (AR ? 'لا يوجد نشاط بعد' : 'Nothing yet') + '</div>';
                 const fresh = act.filter(it => it.id > seen).length, nb = document.getElementById('laNew');
                 nb.hidden = !fresh; nb.textContent = '+' + fresh;
                 if (!timer) { rotate(); timer = setInterval(() => { if (!document.hidden) rotate(); }, 4500); }
@@ -2399,7 +2409,7 @@ priceLine + '\n' +
         </div>
         <p class="qe-hint">
             <?= $lang === 'ar'
-                ? 'اكتب كل عبارة في سطر منفصل، وهتتبدّل تلقائياً على اللوحة. لو مسحت كل الكلام وحفظت، هترجع العبارات الأصلية لوحدها.'
+                ? 'اكتب كل عبارة في سطر منفصل، وستتبدّل تلقائياً على اللوحة. وإذا حذفت كل النص وحفظت، تعود العبارات الأصلية تلقائياً.'
                 : 'Write one quote per line — they rotate automatically on the banner. Clear everything and save to restore the original quotes.' ?>
         </p>
         <textarea class="qe-textarea" id="qeText" placeholder="<?= $lang === 'ar' ? 'عبارة في كل سطر...' : 'One quote per line...' ?>"><?= htmlspecialchars($customQuotesRaw) ?></textarea>

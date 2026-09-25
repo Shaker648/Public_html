@@ -33,10 +33,10 @@ function notify_events(): array
         'car_transferred'  => ['نقل سيارة بين الفروع',        'Car transferred',            '🔄', ['admin'], true, null, 'live'],
         'car_reserved'     => ['حجز سيارة',                   'Car reserved',               '🔒', ['admin'], true, null, 'live'],
         'reserve_cancelled'=> ['إلغاء حجز',                   'Reservation cancelled',      '↩️', ['admin'], true, null, 'live'],
-        'price_reserved'   => ['تغيّر سعر عربية محجوزة',       'Price changed on a reserved car', '🏷️', [], true, true, 'live'],
+        'price_reserved'   => ['تغيّر سعر سيارة محجوزة',       'Price changed on a reserved car', '🏷️', [], true, true, 'live'],
         'car_sold'         => ['بيع سيارة',                   'Car sold',                   '💰', ['admin'], true, null, 'live'],
-        'sale_celebrate'   => ['احتفال بالبيع (بدون اسم البائع)', 'Sale celebration (no seller name)', '🎉', ['admin', 'manager', 'sales'], true, null, 'live'],
-        'last_car'         => ['آخر عربية من موديل / لون',     'Last car of a model / colour', '⚠️', ['admin', 'manager'], true, null, 'live'],
+        'sale_celebrate'   => ['احتفال بالبيع (دون اسم البائع)', 'Sale celebration (no seller name)', '🎉', ['admin', 'manager', 'sales'], true, null, 'live'],
+        'last_car'         => ['آخر سيارة من موديل / لون',     'Last car of a model / colour', '⚠️', ['admin', 'manager'], true, null, 'live'],
         'amana_out'        => ['خروج سيارة أمانة',            'Car out on consignment',     '🔶', ['admin'], true, null, 'live'],
         'amana_closed'     => ['إغلاق أمانة كبيع',            'Consignment closed as sale', '✅', ['admin'], true, null, 'live'],
         'amana_returned'   => ['رجوع سيارة من الأمانة',        'Consignment returned',       '🏠', ['admin'], true, null, 'live'],
@@ -49,22 +49,27 @@ function notify_events(): array
         'att_out'          => ['تسجيل انصراف',                 'Clock out',                  '🔵', ['admin'], true, null, 'live'],
         // automatic reminders (notify_cron.php)
         'reserve_old'      => ['حجز قديم',                     'Old reservation',            '⏰', ['admin'], true, true, 'remind'],
-        'stock_aged'       => ['عربيات بقالها كتير في المخزون (أسبوعياً)', 'Cars in stock too long (weekly)', '🐢', ['admin', 'manager'], true, null, 'remind'],
-        'amana_long'       => ['أمانة بره من مدة طويلة',        'Consignment out too long',   '🔶', ['admin'], true, true, 'remind'],
-        'bank_waiting'     => ['بنك ما ردّش على طلب تقسيط',     'Bank has not replied',       '⌛', ['admin', 'manager'], true, null, 'remind'],
-        'clockout_forgot'  => ['نسي يسجّل انصراف (للموظف نفسه)', 'Forgot to clock out (to the employee)', '🌙', [], true, true, 'remind'],
+        'stock_aged'       => ['سيارات مضى عليها وقت طويل في المخزون (أسبوعياً)', 'Cars in stock too long (weekly)', '🐢', ['admin', 'manager'], true, null, 'remind'],
+        'amana_long'       => ['سيارة أمانة خارج المعرض لمدة طويلة',        'Consignment out too long',   '🔶', ['admin'], true, true, 'remind'],
+        'bank_waiting'     => ['تأخر رد البنك على طلب تقسيط',     'Bank has not replied',       '⌛', ['admin', 'manager'], true, null, 'remind'],
+        'clockout_forgot'  => ['تذكير بتسجيل الانصراف (للموظف نفسه)', 'Forgot to clock out (to the employee)', '🌙', [], true, true, 'remind'],
         // receiving transferred cars
-        'transfer_incoming'=> ['عربية جاية لفرعك (زر «استلمت»)', 'Car on its way to your branch', '🚚', [], true, true, 'transfer'],
-        'duty_start'       => ['بدأ وقت تأكيد الاستلام',          'Time to confirm has started', '⏱️', ['admin'], true, true, 'transfer'],
-        'duty_warn'        => ['قرّب النظام يتقفل عليه',          'About to be locked',         '⚠️', ['admin'], true, true, 'transfer'],
-        'duty_locked'      => ['النظام اتقفل عليه',               'System locked for someone',  '🔒', ['admin'], true, true, 'transfer'],
-        'duty_done'        => ['أكّد كل العربيات ومستني تفتحله',   'Confirmed everything, waiting to be unlocked', '✅', ['admin'], true, null, 'transfer'],
-        'duty_unlocked'    => ['الأدمن فتح النظام',                'Unlocked by the admin',      '🔓', [], true, true, 'transfer'],
-        'transfer_received'=> ['تأكيد استلام عربية منقولة',       'Transferred car received',   '📥', ['admin'], true, true, 'transfer'],
-        'transfer_unconfirmed' => ['محدش كان في الفرع يستلم (24 ساعة)', 'Nobody at the branch to receive (24 h)', '🏖️', ['admin'], true, null, 'transfer'],
+        'transfer_incoming'=> ['سيارة في الطريق إلى فرعك (زر «تم الاستلام»)', 'Car on its way to your branch', '🚚', [], true, true, 'transfer'],
+        'duty_start'       => ['بدء مهلة تأكيد الاستلام',          'Time to confirm has started', '⏱️', ['admin'], true, true, 'transfer'],
+        'duty_warn'        => ['اقتراب إيقاف النظام',          'About to be locked',         '⚠️', ['admin'], true, true, 'transfer'],
+        'duty_locked'      => ['إيقاف النظام عن موظف',               'System locked for someone',  '🔒', ['admin'], true, true, 'transfer'],
+        'duty_done'        => ['أنجز المطلوب وينتظر فتح النظام',   'Confirmed everything, waiting to be unlocked', '✅', ['admin'], true, null, 'transfer'],
+        'duty_unlocked'    => ['فتح النظام من الإدارة',                'Unlocked by the admin',      '🔓', [], true, true, 'transfer'],
+        'transfer_received'=> ['تأكيد استلام سيارة منقولة',       'Transferred car received',   '📥', ['admin'], true, true, 'transfer'],
+        'transfer_unconfirmed' => ['لم يكن أحد في الفرع للاستلام (24 ساعة)', 'Nobody at the branch to receive (24 h)', '🏖️', ['admin'], true, null, 'transfer'],
+        // surprise stock check (جرد مفاجئ)
+        'check_start'      => ['بدء جرد مفاجئ',                 'Surprise stock check started', '📋', ['admin'], true, true, 'check'],
+        'check_warn'       => ['اقتراب انتهاء وقت الجرد',        'Stock check time almost up', '⚠️', ['admin'], true, true, 'check'],
+        'check_locked'     => ['إيقاف النظام لعدم إتمام الجرد',  'Locked: stock check not done', '🔒', ['admin'], true, true, 'check'],
+        'check_done'       => ['نتيجة الجرد',                    'Stock check result',         '✅', ['admin'], true, null, 'check'],
         // security
         'login_failed'     => ['محاولات دخول خاطئة',           'Failed sign-in attempts',    '🔐', ['admin'], true, null, 'security'],
-        'sensitive_change' => ['تغيير حساس (شاسيه / عربية مباعة / تخفيض سعر)', 'Sensitive change (chassis / sold car / price cut)', '🚨', ['admin'], true, null, 'security'],
+        'sensitive_change' => ['تغيير حساس (شاسيه / سيارة مباعة / تخفيض سعر)', 'Sensitive change (chassis / sold car / price cut)', '🚨', ['admin'], true, null, 'security'],
     ];
 }
 
@@ -298,6 +303,39 @@ function push_tables(PDO $pdo): void
         unlocked_at DATETIME NULL,
         unlocked_by VARCHAR(100) NULL,
         INDEX idx_user (user_id, unlocked_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    $pdo->exec("CREATE TABLE IF NOT EXISTS stock_checks (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        branch VARCHAR(100) NOT NULL,
+        note VARCHAR(255) NULL,
+        minutes INT NOT NULL,
+        lock_on TINYINT NOT NULL DEFAULT 1,
+        created_by VARCHAR(100) NULL,
+        created_at DATETIME NOT NULL,
+        deadline DATETIME NOT NULL,
+        warned TINYINT NOT NULL DEFAULT 0,
+        status VARCHAR(20) NOT NULL DEFAULT 'active',
+        finished_at DATETIME NULL,
+        finished_by VARCHAR(100) NULL,
+        INDEX idx_status (status)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    $pdo->exec("CREATE TABLE IF NOT EXISTS stock_check_users (
+        check_id INT NOT NULL,
+        user_id INT NOT NULL,
+        PRIMARY KEY (check_id, user_id),
+        INDEX idx_user (user_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    $pdo->exec("CREATE TABLE IF NOT EXISTS stock_check_items (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        check_id INT NOT NULL,
+        car_id INT NOT NULL DEFAULT 0,
+        label VARCHAR(200) NOT NULL,
+        chassis VARCHAR(100) NULL,
+        state VARCHAR(10) NULL,
+        note VARCHAR(255) NULL,
+        marked_by VARCHAR(100) NULL,
+        marked_at DATETIME NULL,
+        INDEX idx_check (check_id)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
     $pdo->exec("CREATE TABLE IF NOT EXISTS transfer_receipts (
         movement_id INT PRIMARY KEY,
@@ -540,6 +578,24 @@ function push_color_label(PDO $pdo, string $en, string $lang): string
     return $lang === 'ar' ? ($map[mb_strtolower($en)] ?? $en) : $en;
 }
 
+/** A number with the right Arabic word: [one, two, 3–10, 11+]  e.g. 5 سيارات / 12 سيارة. */
+function push_ar_n(int $n, array $w): string
+{
+    if ($n === 1) return $w[0] . ' واحدة';
+    if ($n === 2) return $w[1];
+    return $n . ' ' . ($n >= 3 && $n <= 10 ? $w[2] : $w[3]);
+}
+function push_ar_cars(int $n): string { return $n === 1 ? 'سيارة واحدة' : push_ar_n($n, ['سيارة', 'سيارتان', 'سيارات', 'سيارة']); }
+function push_ar_mins(int $n): string { return $n === 1 ? 'دقيقة واحدة' : push_ar_n($n, ['دقيقة', 'دقيقتان', 'دقائق', 'دقيقة']); }
+
+/** "5 أيام" / "20 يوماً" — the right Arabic word after a number of days. */
+function push_ar_days(int $n): string
+{
+    if ($n === 1) return 'يوم واحد';
+    if ($n === 2) return 'يومين';
+    return $n . ($n >= 3 && $n <= 10 ? ' أيام' : ' يوماً');
+}
+
 /** Title / body / link for an event, in the chosen language. */
 function notify_message(PDO $pdo, string $event, array $d, string $lang): array
 {
@@ -645,39 +701,39 @@ function notify_message(PDO $pdo, string $event, array $d, string $lang): array
             $to = push_branch_label($pdo, (string)($d['to'] ?? ''), $lang);
             $from = push_branch_label($pdo, (string)($d['from'] ?? ''), $lang);
             if ($n > 1) {
-                $title = $ev[2] . ' ' . ($ar ? $n . ' عربيات جايين لفرع ' . $to : $n . ' cars on their way to ' . $to);
+                $title = $ev[2] . ' ' . ($ar ? push_ar_cars($n) . ' في الطريق إلى فرع ' . $to : $n . ' cars on their way to ' . $to);
                 $body[] = implode(' · ', array_slice((array)($d['names'] ?? []), 0, 4));
             } else {
-                $title = $ev[2] . ' ' . ($ar ? 'عربية جاية لفرعك: ' : 'Car on its way to you: ') . $line;
+                $title = $ev[2] . ' ' . ($ar ? 'سيارة في الطريق إلى فرعك: ' : 'Car on its way to you: ') . $line;
                 $body[] = ($from !== '' ? ($ar ? 'من ' : 'from ') . $from . ' · ' : '') . ($col !== '' ? $col : '') . (!empty($car['chassis']) ? ' · 🔑 ' . $car['chassis'] : '');
             }
-            $body[] = $ar ? '👇 اضغط «استلمت» أول ما توصل' : '👇 Tap "Received" as soon as it arrives';
+            $body[] = $ar ? '👇 اضغط «تم الاستلام» فور وصولها' : '👇 Tap "Received" as soon as it arrives';
             $url = 'transfer_receive.php?lang=' . $lang;
             break;
         case 'transfer_received':
             $n  = (int)($d['count'] ?? 1);
             $to = push_branch_label($pdo, (string)($d['to'] ?? ''), $lang);
-            $title = $ev[2] . ' ' . $by . ($ar ? ' استلم ' : ' received ') . ($n > 1 ? $n . ($ar ? ' عربيات' : ' cars') : $line) . ($to !== '' ? ($ar ? ' في ' : ' at ') . $to : '');
+            $title = $ev[2] . ' ' . $by . ($ar ? ' استلم ' : ' received ') . ($n > 1 ? $n . ($ar ? ' سيارات' : ' cars') : $line) . ($to !== '' ? ($ar ? ' في ' : ' at ') . $to : '');
             if ($n > 1) $body[] = implode(' · ', array_slice((array)($d['names'] ?? []), 0, 4));
             elseif ($col !== '' || !empty($car['chassis'])) $body[] = trim($col . (!empty($car['chassis']) ? ' · 🔑 ' . $car['chassis'] : ''), ' ·');
             break;
         case 'price_reserved':
-            $title = $ev[2] . ' ' . ($ar ? 'سعر العربية اللي حجزتها اتغيّر: ' : 'The car you reserved changed price: ') . trim(($d['brand'] ?? '') . ' ' . ($d['model'] ?? '') . ' ' . ($d['trim'] ?? '') . ' ' . ($d['year'] ?? ''));
+            $title = $ev[2] . ' ' . ($ar ? 'تغيّر سعر السيارة التي حجزتها: ' : 'The car you reserved changed price: ') . trim(($d['brand'] ?? '') . ' ' . ($d['model'] ?? '') . ' ' . ($d['trim'] ?? '') . ' ' . ($d['year'] ?? ''));
             if (($d['old'] ?? '') !== '' && ($d['new'] ?? '') !== '') $body[] = ($ar ? 'الرسمي: ' : 'Official: ') . number_format((float)$d['old']) . $arrow . number_format((float)$d['new']);
-            $body[] = $ar ? '📞 بلّغ العميل قبل ما يعرف من حد تاني' : '📞 Tell the customer before they hear it elsewhere';
+            $body[] = $ar ? '📞 أبلغ العميل قبل أن يعلم من غيرك' : '📞 Tell the customer before they hear it elsewhere';
             $url = 'prices.php?lang=' . $lang . '&search=' . urlencode((string)($d['model'] ?? ''));
             break;
         case 'sale_celebrate':
-            $title = $ev[2] . ' ' . ($ar ? 'مبروك يا فريق! اتباعت ' : 'Well done, team! Sold: ') . $line;
+            $title = $ev[2] . ' ' . ($ar ? 'مبروك للفريق! تم بيع ' : 'Well done, team! Sold: ') . $line;
             $body[] = trim($col . ($br !== '' ? ' · 📍 ' . $br : ''), ' ·');
             break;
         case 'last_car':
             $title = ($d['kind'] ?? '') === 'model'
-                ? $ev[2] . ' ' . trim(($car['brand'] ?? '') . ' ' . ($car['model'] ?? '')) . ($ar ? ' خلصت من المخزون' : ' is out of stock')
-                : $ev[2] . ' ' . ($ar ? 'آخر ' . trim(($car['brand'] ?? '') . ' ' . ($car['model'] ?? '')) . ' ' . $col . ' اتباعت' : 'The last ' . $col . ' ' . trim(($car['brand'] ?? '') . ' ' . ($car['model'] ?? '')) . ' is gone');
+                ? $ev[2] . ' ' . trim(($car['brand'] ?? '') . ' ' . ($car['model'] ?? '')) . ($ar ? ' نفدت من المخزون' : ' is out of stock')
+                : $ev[2] . ' ' . ($ar ? 'آخر ' . trim(($car['brand'] ?? '') . ' ' . ($car['model'] ?? '')) . ' ' . $col . ' بيعت' : 'The last ' . $col . ' ' . trim(($car['brand'] ?? '') . ' ' . ($car['model'] ?? '')) . ' is gone');
             $body[] = ($d['kind'] ?? '') === 'model'
-                ? ($ar ? 'مفيش ولا عربية من الموديل ده في المخزون دلوقتي' : 'No car of this model left in stock')
-                : ($ar ? 'مفيش غيرها باللون ده — فاضل ' . (int)($d['left'] ?? 0) . ' بألوان تانية' : 'None left in this colour — ' . (int)($d['left'] ?? 0) . ' in other colours');
+                ? ($ar ? 'لا توجد أي سيارة من هذا الموديل في المخزون الآن' : 'No car of this model left in stock')
+                : ($ar ? 'لا توجد غيرها بهذا اللون — متبقٍّ ' . (int)($d['left'] ?? 0) . ' بألوان أخرى' : 'None left in this colour — ' . (int)($d['left'] ?? 0) . ' in other colours');
             $url = 'prices.php?lang=' . $lang . '&search=' . urlencode((string)($car['model'] ?? ''));
             break;
         case 'bank_decision':
@@ -688,12 +744,12 @@ function notify_message(PDO $pdo, string $event, array $d, string $lang): array
             $url = 'installments.php?lang=' . $lang;
             break;
         case 'reserve_old':
-            $title = $ev[2] . ' ' . ($ar ? 'حجز ' . $line . ' بقاله ' . (int)$d['days'] . ' يوم' : $line . ' reserved for ' . (int)$d['days'] . ' days');
+            $title = $ev[2] . ' ' . ($ar ? 'حجز ' . $line . ' منذ ' . push_ar_days((int)$d['days']) : $line . ' reserved for ' . (int)$d['days'] . ' days');
             $body[] = ($ar ? 'حجزها ' : 'Reserved by ') . ($d['owner'] ?? '') . ($col !== '' ? ' · ' . $col : '') . ($br !== '' ? ' · 📍 ' . $br : '');
-            $body[] = $ar ? 'كمّل البيع أو الغي الحجز' : 'Finish the sale or release it';
+            $body[] = $ar ? 'أكمل البيع أو ألغِ الحجز' : 'Finish the sale or release it';
             break;
         case 'stock_aged':
-            $title = $ev[2] . ' ' . ($ar ? (int)$d['count'] . ' عربية بقالها أكتر من ' . (int)$d['days'] . ' يوم في المخزون' : (int)$d['count'] . ' cars in stock for over ' . (int)$d['days'] . ' days');
+            $title = $ev[2] . ' ' . ($ar ? push_ar_cars((int)$d['count']) . ' في المخزون منذ أكثر من ' . push_ar_days((int)$d['days']) : (int)$d['count'] . ' cars in stock for over ' . (int)$d['days'] . ' days');
             $body[] = implode("\n", array_slice((array)($d['names'] ?? []), 0, 4));
             $url = 'dashboard.php?lang=' . $lang . '&sort=old';
             break;
@@ -705,55 +761,82 @@ function notify_message(PDO $pdo, string $event, array $d, string $lang): array
             $n  = (int)($d['count'] ?? 0);
             $bn = push_branch_label($pdo, (string)($d['branch'] ?? ''), $lang);
             $who = (string)($d['user'] ?? '');
-            $cars = $ar ? $n . ($n === 1 ? ' عربية' : ($n === 2 ? ' عربيتين' : ' عربيات')) : $n . ' car' . ($n === 1 ? '' : 's');
+            $cars = $ar ? push_ar_cars($n) : $n . ' car' . ($n === 1 ? '' : 's');
             if ($event === 'duty_start') {
-                $title = $ev[2] . ' ' . ($ar ? 'تأكيد استلام ' . $cars . ' في ' . $bn . ' — لحد ' . $d['until'] : 'Confirm ' . $cars . ' at ' . $bn . ' by ' . $d['until']);
+                $title = $ev[2] . ' ' . ($ar ? 'تأكيد استلام ' . $cars . ' في ' . $bn . ' — قبل الساعة ' . $d['until'] : 'Confirm ' . $cars . ' at ' . $bn . ' by ' . $d['until']);
                 $body[] = ($ar ? '👤 المسؤول: ' : '👤 Responsible: ') . $who;
                 if (!empty($d['names'])) $body[] = implode(' · ', array_slice((array)$d['names'], 0, 3));
-                if (!empty($d['lock'])) $body[] = $ar ? '⚠️ لو ما اتأكدش في الوقت النظام هيتقفل' : '⚠️ If not confirmed in time the system locks';
+                if (!empty($d['lock'])) $body[] = $ar ? '⚠️ إذا لم يتم التأكيد في الوقت المحدد يتوقف النظام' : '⚠️ If not confirmed in time the system locks';
                 $url = 'transfer_receive.php?lang=' . $lang;
             } elseif ($event === 'duty_warn') {
-                $title = $ev[2] . ' ' . ($ar ? 'فاضل ' . (int)$d['mins'] . ' دقيقة ويتقفل النظام على ' . $who : (int)$d['mins'] . ' min until ' . $who . ' is locked');
-                $body[] = ($ar ? 'لازم يأكد استلام ' : 'Needs to confirm ') . $cars . ($ar ? ' في ' : ' at ') . $bn . ($ar ? ' قبل ' : ' before ') . $d['until'];
+                $title = $ev[2] . ' ' . ($ar ? 'متبقٍّ ' . push_ar_mins((int)$d['mins']) . ' على إيقاف النظام عن ' . $who : (int)$d['mins'] . ' min until ' . $who . ' is locked');
+                $body[] = ($ar ? 'المطلوب تأكيد استلام ' : 'Needs to confirm ') . $cars . ($ar ? ' في ' : ' at ') . $bn . ($ar ? ' قبل ' : ' before ') . $d['until'];
                 $url = 'transfer_receive.php?lang=' . $lang;
             } elseif ($event === 'duty_locked') {
-                $title = $ev[2] . ' ' . ($ar ? 'النظام اتقفل على ' : 'System locked for ') . $who;
-                $body[] = ($ar ? 'ما أكّدش استلام ' : 'Did not confirm ') . $cars . ($ar ? ' في ' : ' at ') . $bn . ($ar ? ' في الوقت' : ' in time');
-                $body[] = $ar ? '🔓 الأدمن بس يقدر يفتحه' : '🔓 Only the admin can unlock it';
+                $title = $ev[2] . ' ' . ($ar ? 'تم إيقاف النظام عن ' : 'System locked for ') . $who;
+                $body[] = ($ar ? 'لم يؤكد استلام ' : 'Did not confirm ') . $cars . ($ar ? ' في ' : ' at ') . $bn . ($ar ? ' في الوقت المحدد' : ' in time');
+                $body[] = $ar ? '🔓 لا يفتحه إلا الإدارة' : '🔓 Only the admin can unlock it';
                 $url = 'transfer_lock.php?lang=' . $lang;
             } elseif ($event === 'duty_done') {
-                $title = $ev[2] . ' ' . $who . ($ar ? ' أكّد استلام كل العربيات' : ' confirmed every car');
-                $body[] = $ar ? 'النظام لسه مقفول عليه — افتحله من صفحة التحكم' : 'Still locked — unlock from the control page';
+                $title = $ev[2] . ' ' . $who . ($ar ? ' أنجز كل المطلوب منه' : ' finished everything asked');
+                $body[] = $ar ? 'النظام ما زال متوقفاً عنه — يمكنك فتحه من صفحة التحكم' : 'Still locked — unlock from the control page';
                 $url = 'notifications_admin.php?lang=' . $lang . '#tr';
             } else {
-                $title = $ev[2] . ' ' . ($ar ? 'النظام اتفتح تاني' : 'Your system is unlocked');
-                $body[] = ($ar ? 'فتحه ' : 'Unlocked by ') . ($d['by'] ?? '') . (!empty($d['left']) ? ($ar ? ' — أكّد استلام العربيات قبل ' : ' — confirm the cars before ') . $d['until'] : '');
+                $title = $ev[2] . ' ' . ($ar ? 'تم فتح النظام' : 'Your system is unlocked');
+                $body[] = ($ar ? 'فتحه ' : 'Unlocked by ') . ($d['by'] ?? '') . (!empty($d['left']) ? ($ar ? ' — أكّد استلام السيارات قبل الساعة ' : ' — confirm the cars before ') . $d['until'] : '');
                 $url = 'transfer_receive.php?lang=' . $lang;
             }
             break;
+        case 'check_start':
+        case 'check_warn':
+        case 'check_locked':
+        case 'check_done':
+            $bn = push_branch_label($pdo, (string)($d['branch'] ?? ''), $lang);
+            $n  = (int)($d['count'] ?? 0);
+            $url = 'stock_check.php?lang=' . $lang . (!empty($d['id']) ? '&id=' . (int)$d['id'] : '');
+            if ($event === 'check_start') {
+                $title = $ev[2] . ' ' . ($ar ? 'جرد مفاجئ: فرع ' . $bn : 'Surprise stock check: ' . $bn);
+                $body[] = $ar ? 'المطلوب تأكيد وجود ' . push_ar_cars($n) . ' في الفرع قبل الساعة ' . $d['until'] : 'Confirm ' . $n . ' cars at the branch before ' . $d['until'];
+                $body[] = ($ar ? '👤 المكلَّف: ' : '👤 Assigned: ') . ($d['users'] ?? '');
+                if (!empty($d['note'])) $body[] = '📝 ' . $d['note'];
+                if (!empty($d['lock'])) $body[] = $ar ? '⚠️ إذا لم يكتمل الجرد في الوقت يتوقف النظام' : '⚠️ If not finished in time the system locks';
+            } elseif ($event === 'check_warn') {
+                $title = $ev[2] . ' ' . ($ar ? 'متبقٍّ ' . push_ar_mins((int)$d['mins']) . ' على انتهاء جرد فرع ' . $bn : (int)$d['mins'] . ' min left for the ' . $bn . ' stock check');
+                $body[] = ($ar ? 'تم تأكيد ' : 'Checked ') . (int)$d['done'] . ($ar ? ' من أصل ' : ' of ') . $n . ($ar ? '' : ' cars') . ' · ' . ($d['users'] ?? '');
+            } elseif ($event === 'check_locked') {
+                $title = $ev[2] . ' ' . ($ar ? 'تم إيقاف النظام عن ' : 'System locked for ') . ($d['users'] ?? '');
+                $body[] = $ar ? 'لم يكتمل جرد فرع ' . $bn . ' في الوقت المحدد (تمت مراجعة ' . (int)$d['done'] . ' من أصل ' . $n . ')' : 'The ' . $bn . ' stock check was not finished in time (' . (int)$d['done'] . ' of ' . $n . ')';
+            } else {
+                $miss = (int)($d['missing'] ?? 0);
+                $title = ($miss ? '❗ ' : $ev[2] . ' ') . ($ar ? 'نتيجة جرد فرع ' . $bn . ': ' . ($miss ? push_ar_cars($miss) . ' غير موجودة' : 'كل السيارات موجودة') : $bn . ' stock check: ' . ($miss ? $miss . ' missing' : 'everything present'));
+                $body[] = ($ar ? 'موجودة ' : 'Present ') . (int)$d['present'] . ($ar ? ' · غير موجودة ' : ' · missing ') . $miss . ($ar ? ' · زائدة ' : ' · extra ') . (int)($d['extra'] ?? 0) . (!empty($d['late']) ? ($ar ? ' · بعد انتهاء الوقت' : ' · after the deadline') : '');
+                if (!empty($d['missing_list'])) $body[] = '❌ ' . implode('، ', array_slice((array)$d['missing_list'], 0, 4));
+                $body[] = ($ar ? '👤 بواسطة ' : '👤 by ') . ($d['by'] ?? '');
+            }
+            break;
         case 'transfer_unconfirmed':
-            $title = $ev[2] . ' ' . ($ar ? 'محدش كان في الفرع يستلم: ' : 'Nobody at the branch to receive: ') . $line;
-            $body[] = ($ar ? 'منقولة إلى ' : 'Moved to ') . push_branch_label($pdo, (string)($d['to'] ?? ''), $lang) . ' · ' . ($ar ? 'من ' . (int)$d['hours'] . ' ساعة' : (int)$d['hours'] . ' h ago') . (!empty($d['mover']) ? ' · ' . ($ar ? 'نقلها ' : 'moved by ') . $d['mover'] : '');
+            $title = $ev[2] . ' ' . ($ar ? 'لم يكن أحد في الفرع للاستلام: ' : 'Nobody at the branch to receive: ') . $line;
+            $body[] = ($ar ? 'منقولة إلى ' : 'Moved to ') . push_branch_label($pdo, (string)($d['to'] ?? ''), $lang) . ' · ' . ($ar ? 'منذ ' . (int)$d['hours'] . ' ساعة' : (int)$d['hours'] . ' h ago') . (!empty($d['mover']) ? ' · ' . ($ar ? 'نقلها ' : 'moved by ') . $d['mover'] : '');
             $url = 'transfer_receive.php?lang=' . $lang . '&all=1';
             break;
         case 'amana_long':
-            $title = $ev[2] . ' ' . ($ar ? 'أمانة بقالها ' . (int)$d['days'] . ' يوم بره: ' : 'Out on consignment for ' . (int)$d['days'] . ' days: ') . $line;
+            $title = $ev[2] . ' ' . ($ar ? 'أمانة خارج المعرض منذ ' . push_ar_days((int)$d['days']) . ': ' : 'Out on consignment for ' . (int)$d['days'] . ' days: ') . $line;
             $body[] = trim((!empty($d['dealer']) ? '🤝 ' . $d['dealer'] : '') . (!empty($d['salesman']) ? ' · 🧑‍💼 ' . $d['salesman'] : ''), ' ·');
-            $body[] = $ar ? 'اقفلها كبيع أو رجّعها' : 'Close it as a sale or bring it back';
+            $body[] = $ar ? 'أغلقها كبيع أو أعِدها' : 'Close it as a sale or bring it back';
             break;
         case 'bank_waiting':
-            $title = $ev[2] . ' ' . ($ar ? (int)$d['count'] . ' طلب تقسيط مستني رد البنك من أكتر من ' . (int)$d['days'] . ' أيام' : (int)$d['count'] . ' installment requests waiting over ' . (int)$d['days'] . ' days');
+            $title = $ev[2] . ' ' . ($ar ? (int)$d['count'] . ' طلب تقسيط بانتظار رد البنك منذ أكثر من ' . push_ar_days((int)$d['days']) : (int)$d['count'] . ' installment requests waiting over ' . (int)$d['days'] . ' days');
             $body[] = implode("\n", array_slice((array)($d['names'] ?? []), 0, 4));
             $url = 'installments.php?lang=' . $lang;
             break;
         case 'clockout_forgot':
-            $title = $ev[2] . ' ' . ($ar ? 'إنت لسه مسجّل حضور' : "You're still clocked in");
-            $body[] = $ar ? 'لو خلصت شغلك سجّل انصرافك دلوقتي 👋' : 'If you have finished, clock out now 👋';
+            $title = $ev[2] . ' ' . ($ar ? 'ما زلت مسجّلاً حضورك' : "You're still clocked in");
+            $body[] = $ar ? 'إذا انتهى عملك فسجّل انصرافك الآن 👋' : 'If you have finished, clock out now 👋';
             $url = 'attendance.php?lang=' . $lang;
             break;
         case 'login_failed':
-            $title = $ev[2] . ' ' . ($ar ? (int)$d['count'] . ' محاولات دخول غلط على حساب ' : (int)$d['count'] . ' wrong passwords for ') . ($d['username'] ?? '');
-            $body[] = ($ar ? 'الحساب اتقفل مؤقتاً' : 'The account is locked for now') . (!empty($d['ip']) ? ' · 🌐 ' . $d['ip'] : '');
+            $title = $ev[2] . ' ' . ($ar ? (int)$d['count'] . ' محاولات دخول خاطئة على حساب ' : (int)$d['count'] . ' wrong passwords for ') . ($d['username'] ?? '');
+            $body[] = ($ar ? 'تم إيقاف الحساب مؤقتاً' : 'The account is locked for now') . (!empty($d['ip']) ? ' · 🌐 ' . $d['ip'] : '');
             $url = 'users.php?lang=' . $lang;
             break;
         case 'sensitive_change':
@@ -769,7 +852,7 @@ function notify_message(PDO $pdo, string $event, array $d, string $lang): array
         default:
             $title = $ev[2] . ' ' . ($ar ? $ev[0] : $ev[1]);
     }
-    $noBy = ['test', 'transfer_received', 'duty_start', 'duty_warn', 'duty_locked', 'duty_done', 'duty_unlocked', 'sale_celebrate', 'last_car', 'reserve_old', 'stock_aged', 'transfer_unconfirmed',
+    $noBy = ['test', 'check_start', 'check_warn', 'check_locked', 'check_done', 'transfer_received', 'duty_start', 'duty_warn', 'duty_locked', 'duty_done', 'duty_unlocked', 'sale_celebrate', 'last_car', 'reserve_old', 'stock_aged', 'transfer_unconfirmed',
              'amana_long', 'bank_waiting', 'clockout_forgot', 'login_failed', 'price_reserved'];
     if ($by !== '' && !in_array($event, $noBy, true) && strpos($event, 'att_') !== 0) $body[] = ($ar ? '✍️ بواسطة ' : '✍️ by ') . $by;
     return [
@@ -892,9 +975,9 @@ function notify_deliver(PDO $pdo, int $logId, string $event, array $msg, array $
         $t = $toks[$uid] ?? '';
         $acts = [];
         if ($t !== '') {
-            if ($event === 'message' && $needAck)       $acts['ack']  = [$ar ? '👍 تمام' : '👍 OK', 'notify_act.php?a=ack&t=' . $t];
-            if ($event === 'transfer_incoming')         $acts['recv'] = [$ar ? '✅ استلمت' : '✅ Received', 'notify_act.php?a=recv&t=' . $t];
-            if ($event === 'clockout_forgot')           $acts['open'] = [$ar ? '🔵 سجّل انصراف' : '🔵 Clock out', $msg['url']];
+            if ($event === 'message' && $needAck)       $acts['ack']  = [$ar ? '👍 تم الاطلاع' : '👍 OK', 'notify_act.php?a=ack&t=' . $t];
+            if ($event === 'transfer_incoming')         $acts['recv'] = [$ar ? '✅ تم الاستلام' : '✅ Received', 'notify_act.php?a=recv&t=' . $t];
+            if ($event === 'clockout_forgot')           $acts['open'] = [$ar ? '🔵 تسجيل الانصراف' : '🔵 Clock out', $msg['url']];
         }
         if ($acts) {
             $p['actions'] = array_map(fn($k, $a) => ['action' => $k, 'title' => $a[0]], array_keys($acts), $acts);
@@ -904,7 +987,7 @@ function notify_deliver(PDO $pdo, int $logId, string $event, array $msg, array $
         if ($n >= 2 && $ev) {
             $p['title'] = $ev[2] . ' ' . ($ar ? $ev[0] : $ev[1]) . ' (' . $n . ')';
             $p['body']  = implode("\n", array_map(fn($x) => '• ' . trim(preg_replace('/^\S+\s+/u', '', $x, 1)), array_slice($group[$uid], 0, 3)))
-                        . ($n > 3 ? "\n" . ($ar ? '… و' . ($n - 3) . ' كمان' : '… and ' . ($n - 3) . ' more') : '');
+                        . ($n > 3 ? "\n" . ($ar ? '… و' . ($n - 3) . ' أخرى' : '… and ' . ($n - 3) . ' more') : '');
             $p['tag']   = 'grp-' . $event;
             $p['url']   = 'notifications.php?lang=' . $lang;
         }

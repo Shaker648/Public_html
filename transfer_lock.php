@@ -1,10 +1,11 @@
 <?php
 /*
- * transfer_lock.php — the screen someone sees when their system is locked
- * because transferred cars were not confirmed («استلمت») in time.
+ * transfer_lock.php — the screen someone sees when their system is locked:
+ * transferred cars not confirmed («استلمت») in time, or a surprise stock check
+ * not finished in time.
  *
- * They can confirm the cars right here, clock in / out and sign out — nothing
- * else — until the admin unlocks them (or it unlocks by itself once everything
+ * They can confirm the cars / finish the check and sign out — nothing else,
+ * not even clocking in or out — until the admin unlocks them (or it unlocks by itself once everything
  * is confirmed, if the admin turned that on). The page checks every few
  * seconds and opens the system the moment it is unlocked.
  */
@@ -37,6 +38,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && hash_equals($csrf, (string)($_POST[
 }
 
 $left = smart_my_duties($pdo, $uid);
+$checks = smart_checks_for_user($pdo, $uid);
 $rules = transfer_rules($pdo);
 $br  = fn($n) => push_branch_label($pdo, (string)$n, $lang);
 $col = fn($c) => push_color_label($pdo, (string)$c, $lang);
@@ -46,7 +48,7 @@ $col = fn($c) => push_color_label($pdo, (string)$c, $lang);
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<title><?= $ar ? 'النظام مقفول' : 'System locked' ?> — First 1 Car</title>
+<title><?= $ar ? 'النظام متوقف' : 'System locked' ?> — First 1 Car</title>
 <?php include __DIR__ . '/pwa_head.php'; ?>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800;900&family=Tajawal:wght@400;500;700;800;900&display=swap" rel="stylesheet">
 <?php include __DIR__ . '/notify_style.php'; ?>
@@ -74,39 +76,55 @@ body{min-height:100vh;background:radial-gradient(120% 70% at 50% 0%,#3b0a0a 0%,#
 @keyframes lkDots{0%{content:''}25%{content:'.'}50%{content:'..'}75%{content:'...'}}
 .lk-foot{display:flex;gap:10px;justify-content:center;margin-top:24px;flex-wrap:wrap}
 .lk-foot a{display:inline-flex;align-items:center;gap:6px;height:42px;padding:0 16px;border-radius:12px;border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.05);color:#e2e8f0;text-decoration:none;font-weight:800;font-size:14px}
+.lk-bas{margin:0 0 16px;padding:10px 14px;border-radius:14px;background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.4);color:#fecaca;font-size:13.5px;font-weight:800}
+.lk-chk{display:flex;align-items:center;gap:12px;padding:14px;margin-bottom:12px;border-radius:18px;text-decoration:none;color:#fff;text-align:start;
+  background:linear-gradient(120deg,rgba(220,38,38,.25),rgba(147,51,234,.2));border:1px solid rgba(248,113,113,.5)}
+.lk-chk .ic{font-size:28px}.lk-chk .tx{flex:1}.lk-chk b{display:block;font-size:15.5px}.lk-chk small{color:#fecaca;font-weight:700}
+.lk-chk .go{padding:9px 14px;border-radius:12px;background:linear-gradient(90deg,#16a34a,#22c55e);font-weight:900;font-size:13.5px;white-space:nowrap}
+.lk-h3{text-align:start;font-size:15px;font-weight:900;margin:16px 0 10px}
 .lk-why{margin-top:18px;font-size:12.5px;color:#94a3b8;font-weight:700;line-height:1.7}
 </style>
 </head>
 <body>
 <div class="lk">
-    <?php if ($left): ?>
+    <?php if ($left || $checks): ?>
     <div class="lk-ic">🔒</div>
-    <h1><?= $ar ? 'النظام مقفول مؤقتاً' : 'Your system is locked' ?></h1>
-    <p class="s"><?= $ar ? 'العربيات دي وصلت فرعك ومتأكدش استلامها في الوقت.<br>أكّد استلامها — وبعدها الأدمن يفتحلك النظام.' : 'These cars reached your branch and were not confirmed in time.<br>Confirm them — then the admin unlocks your system.' ?></p>
+    <h1><?= $ar ? 'تم إيقاف النظام مؤقتاً' : 'Your system is locked' ?></h1>
+    <p class="s"><?= $ar ? 'لم يتم إنجاز المطلوب منك في الوقت المحدد.<br>أكمل المطلوب أدناه، ثم ينتظر فتح النظام من الإدارة.' : 'What was asked of you was not done in time.<br>Finish it below — then the admin unlocks your system.' ?></p>
+    <div class="lk-bas">🚫 <?= $ar ? 'لا يمكنك تسجيل الحضور أو الانصراف (البصمة) حتى تفتح الإدارة النظام' : 'You cannot clock in or out until the admin unlocks the system' ?></div>
+    <?php foreach ($checks as $ck): ?>
+    <a class="lk-chk" href="stock_check.php?lang=<?= $lang ?>&id=<?= (int)$ck['id'] ?>">
+        <span class="ic">📋</span>
+        <span class="tx"><b><?= $ar ? 'جرد مفاجئ: فرع ' : 'Surprise stock check: ' ?><?= htmlspecialchars($br($ck['branch'])) ?></b>
+            <small><?php [$kt, $km] = smart_check_counts($pdo, (int)$ck['id']); echo $ar ? 'تمت مراجعة ' . $km . ' من أصل ' . $kt : $km . ' of ' . $kt . ' cars checked'; ?></small></span>
+        <span class="go"><?= $ar ? 'إكمال الجرد ←' : 'Finish →' ?></span>
+    </a>
+    <?php endforeach; ?>
+    <?php if ($left): ?><h3 class="lk-h3">🚚 <?= $ar ? 'سيارات بانتظار تأكيد الاستلام' : 'Cars waiting for "Received"' ?></h3><?php endif; ?>
     <div class="lk-list">
         <?php foreach ($left as $c): ?>
         <div class="lk-car">
             <div class="i"><b>🚗 <?= htmlspecialchars(trim($c['brand'] . ' ' . $c['model'] . ' ' . $c['trim_name'])) ?></b>
                 <small><?= htmlspecialchars($col($c['color'])) ?> · <span class="ch"><?= htmlspecialchars((string)$c['chassis']) ?></span> · <?= htmlspecialchars($br($c['from_branch'])) ?> ← <?= htmlspecialchars($br($c['to_branch'])) ?></small></div>
             <form method="post"><input type="hidden" name="csrf_token" value="<?= $csrf ?>"><input type="hidden" name="mids[]" value="<?= (int)$c['mid'] ?>">
-                <button class="lk-ok" type="submit">✅ <?= $ar ? 'استلمت' : 'Received' ?></button></form>
+                <button class="lk-ok" type="submit">✅ <?= $ar ? 'تم الاستلام' : 'Received' ?></button></form>
         </div>
         <?php endforeach; ?>
     </div>
     <?php if (count($left) > 1): ?>
     <form method="post"><input type="hidden" name="csrf_token" value="<?= $csrf ?>">
         <?php foreach ($left as $c): ?><input type="hidden" name="mids[]" value="<?= (int)$c['mid'] ?>"><?php endforeach; ?>
-        <button class="lk-all" type="submit">✅ <?= $ar ? 'استلمت الكل (' . count($left) . ')' : 'Received all (' . count($left) . ')' ?></button></form>
+        <button class="lk-all" type="submit">✅ <?= $ar ? 'تأكيد استلام الكل (' . count($left) . ')' : 'Received all (' . count($left) . ')' ?></button></form>
     <?php endif; ?>
     <?php else: ?>
     <div class="lk-ic ok">⏳</div>
-    <h1><?= $ar ? 'تمام — أكّدت كل العربيات ✅' : 'Done — every car confirmed ✅' ?></h1>
-    <div class="lk-wait"><?= $ar ? 'اتبعت للأدمن إنك خلصت. أول ما يفتحلك النظام الصفحة دي هتفتح لوحدها' : 'The admin has been told. This page opens by itself as soon as you are unlocked' ?><span class="dots"></span></div>
+    <h1><?= $ar ? 'أحسنت — تم إنجاز كل المطلوب ✅' : 'Done — everything is finished ✅' ?></h1>
+    <div class="lk-wait"><?= $ar ? 'تم إبلاغ الإدارة. ستُفتح هذه الصفحة تلقائياً فور فتح النظام لك' : 'The admin has been told. This page opens by itself as soon as you are unlocked' ?><span class="dots"></span></div>
+    <div class="lk-bas">🚫 <?= $ar ? 'البصمة (الحضور والانصراف) متوقفة حتى تفتح الإدارة النظام' : 'Clocking in and out is stopped until the admin unlocks the system' ?></div>
     <?php endif; ?>
-    <div class="lk-why">🔔 <?= $ar ? 'كان عندك ' . rtrim(rtrim(number_format($rules['hours'], 1), '0'), '.') . ' ساعة من وقت ما بصمت في الفرع علشان تأكد الاستلام' : 'You had ' . rtrim(rtrim(number_format($rules['hours'], 1), '0'), '.') . ' h from clocking in at the branch to confirm' ?></div>
+    <?php if ($left): ?><div class="lk-why">🔔 <?= $ar ? 'كانت المهلة ' . rtrim(rtrim(number_format($rules['hours'], 1), '0'), '.') . ' ساعة من وقت تسجيل حضورك في الفرع لتأكيد الاستلام' : 'You had ' . rtrim(rtrim(number_format($rules['hours'], 1), '0'), '.') . ' h from clocking in at the branch to confirm' ?></div><?php endif; ?>
     <div class="lk-foot">
-        <a href="attendance.php?lang=<?= $lang ?>">🕐 <?= $ar ? 'البصمة' : 'Clock in / out' ?></a>
-        <a href="logout.php">🚪 <?= $ar ? 'تسجيل خروج' : 'Sign out' ?></a>
+        <a href="logout.php">🚪 <?= $ar ? 'تسجيل الخروج' : 'Sign out' ?></a>
     </div>
 </div>
 <script>

@@ -818,7 +818,7 @@ html.f1w-lock, html.f1w-lock body { overflow: hidden; }
     <div id="f1c-chat-inputbar">
         <div class="f1c-field" id="f1cField">
             <span class="f1c-listen" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
-            <input id="f1c-chat-input" type="text" enterkeyhint="send" autocomplete="off" placeholder="<?= $__isAr ? 'اسأل عن أي عربية، سعر، أو رقم شاسيه…' : 'Ask about any car, price or chassis…' ?>" />
+            <input id="f1c-chat-input" type="text" enterkeyhint="send" autocomplete="off" placeholder="<?= $__isAr ? 'اسأل عن أي سيارة أو سعر أو رقم شاسيه…' : 'Ask about any car, price or chassis…' ?>" />
             <button type="button" class="f1c-mic" id="f1cMic" title="<?= $__isAr ? 'اسأل بصوتك' : 'Ask by voice' ?>" aria-label="<?= $__isAr ? 'اسأل بصوتك' : 'Ask by voice' ?>">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
             </button>
@@ -840,14 +840,14 @@ const F1CChat = {
     lastAct: Date.now(),
 
     T: <?= json_encode($__isAr ? [
-        'morning' => 'صباح الخير', 'evening' => 'مساء الخير', 'night' => 'سهرانين',
+        'morning' => 'صباح الخير', 'evening' => 'مساء الخير', 'night' => 'مساء الخير',
         'hero' => 'أنا مساعدك الذكي — اسألني عن المخزون، الأسعار، الشاسيه، أو حضورك.',
-        'thinking' => ['بدوّر في المخزون…', 'بجمع البيانات…', 'ثانية واحدة…', 'بفكّر…'],
-        'listening' => 'بسمعك… اتكلم',
-        'noVoice' => 'المتصفح ده مش بيدعم الكلام — جرّب Chrome 🎤',
-        'err' => 'حصل خطأ، حاول تاني.', 'net' => 'مشكلة في الاتصال 📡',
-        'sugg' => ['في تيجو 7 أسود؟', 'بكام الامجراند؟', 'قارن تيجو 7 وتيجو 8', 'كل حاجة عن جوليون', 'الأكثر رواجاً', 'ساعاتي الأسبوع ده'],
-        'suggAdmin' => ['مين في الشغل؟', 'مين ما جاش النهارده؟'],
+        'thinking' => ['أبحث في المخزون…', 'أجمع البيانات…', 'لحظة واحدة…', 'أفكّر…'],
+        'listening' => 'أستمع إليك… تحدّث',
+        'noVoice' => 'هذا المتصفح لا يدعم الإدخال الصوتي — جرّب Chrome 🎤',
+        'err' => 'حدث خطأ، حاول مرة أخرى.', 'net' => 'مشكلة في الاتصال 📡',
+        'sugg' => ['هل يوجد تيجو 7 أسود؟', 'كم سعر الامجراند؟', 'قارن تيجو 7 وتيجو 8', 'كل شيء عن جوليون', 'الأكثر رواجاً', 'ساعاتي هذا الأسبوع'],
+        'suggAdmin' => ['من في العمل؟', 'من لم يحضر اليوم؟'],
     ] : [
         'morning' => 'Good morning', 'evening' => 'Good evening', 'night' => 'Working late',
         'hero' => "I'm your smart assistant — ask me about stock, prices, chassis numbers or your attendance.",
@@ -904,19 +904,19 @@ const F1CChat = {
 
     /* ══ MASCOT BRAIN v6: calmer, and steps aside for notifications ══ */
     MSGS: <?= json_encode($__isAr ? [
-        'أهلاً! 🤖 أنا مساعد فيرست 1 كار — اسألني عن أي عربية ✨',
-        'استخدمتني النهارده؟ 😄 جرّبني!',
+        'أهلاً! 🤖 أنا مساعد فيرست 1 كار — اسألني عن أي سيارة ✨',
+        'هل استخدمتني اليوم؟ 😄 جرّبني!',
         'فيرست 1 كار الأفضل! 🏆🚗',
-        'اكتبلي: "في تيجو 7 أسود؟" وشوف السحر 🔮',
-        'عندي كل الأسعار محدّثة لحظة بلحظة 💰',
-        'ابعتلي رقم شاسيه وأجيبلك العربية في ثانية 🔍',
-        'قول "كل حاجة عن جوليون" وهعملك ملف كامل 🧠',
-        'قارنلك بين موديلين؟ قول "قارن تيجو 7 وتيجو 8" ⚖️',
-        'تقدر تسألني بصوتك كمان 🎤',
-        'عايز تعرف ساعاتك الأسبوع ده؟ اسألني ⏱️',
-        'شفت القادم في الطريق؟ اسألني عن الشحنات 🚚',
-        'مفيش عربية تخبى عني 👀',
-        'يلا نبيع عربيات! 💪',
+        'اكتب: "هل يوجد تيجو 7 أسود؟" وشاهد النتيجة 🔮',
+        'لديّ كل الأسعار محدّثة لحظة بلحظة 💰',
+        'أرسل رقم شاسيه وأجد لك السيارة في ثانية 🔍',
+        'اكتب "كل شيء عن جوليون" وسأعدّ لك ملفاً كاملاً 🧠',
+        'تريد مقارنة موديلين؟ اكتب "قارن تيجو 7 وتيجو 8" ⚖️',
+        'يمكنك أن تسألني بصوتك أيضاً 🎤',
+        'تريد معرفة ساعات عملك هذا الأسبوع؟ اسألني ⏱️',
+        'هل رأيت القادم في الطريق؟ اسألني عن الشحنات 🚚',
+        'لا توجد سيارة تختبئ مني 👀',
+        'هيا نبيع السيارات! 💪',
     ] : [
         "Hey! 🤖 I'm the First 1 Car assistant — ask me about any car ✨",
         'Did you use me yet today? 😄 Try me!',
@@ -933,16 +933,16 @@ const F1CChat = {
         "Let's sell some cars! 💪",
     ], JSON_UNESCAPED_UNICODE) ?>,
     SLEEP_MSGS: <?= json_encode($__isAr
-        ? ['Zzz... 😴', 'ثواني بشحن... 🔋😴', 'غفوة سريعة... 💤']
+        ? ['Zzz... 😴', 'لحظات لإعادة الشحن... 🔋😴', 'غفوة سريعة... 💤']
         : ['Zzz... 😴', 'Quick recharge... 🔋😴', 'Power nap... 💤'], JSON_UNESCAPED_UNICODE) ?>,
     WAKE_MSGS: <?= json_encode($__isAr
-        ? ['صحيت! 😄 محتاج حاجة؟', 'رجعت بطاقة 100% 🔋⚡', 'كنت بحلم بتيجو 7 🚗💭']
+        ? ['استيقظت! 😄 هل تحتاج شيئاً؟', 'عدت بطاقة 100% 🔋⚡', 'كنت أحلم بتيجو 7 🚗💭']
         : ["I'm up! 😄 Need anything?", 'Back at 100% battery 🔋⚡', 'I was dreaming of a Tiggo 7 🚗💭'], JSON_UNESCAPED_UNICODE) ?>,
     PARTY_MSGS: <?= json_encode($__isAr
-        ? ['فيرست 1 كار الأفضل! 🎆🏆', 'يلا نكسّر الدنيا مبيعات! 🎇💪', 'أحلى فريق وأحلى عربيات 🎉🚗']
+        ? ['فيرست 1 كار الأفضل! 🎆🏆', 'هيا نحقق أعلى المبيعات! 🎇💪', 'أفضل فريق وأجمل سيارات 🎉🚗']
         : ['First 1 Car is the best! 🎆🏆', "Let's crush it today! 🎇💪", 'Best team, best cars 🎉🚗'], JSON_UNESCAPED_UNICODE) ?>,
-    MORNING: <?= json_encode($__isAr ? 'صباح الفل! ☀️ يلا يوم مبيعات جامد' : 'Good morning! ☀️ Big sales day ahead', JSON_UNESCAPED_UNICODE) ?>,
-    NIGHT:   <?= json_encode($__isAr ? 'سهرانين؟ 🌙 أنا معاك' : 'Working late? 🌙 I\'m with you', JSON_UNESCAPED_UNICODE) ?>,
+    MORNING: <?= json_encode($__isAr ? 'صباح الخير! ☀️ نتمنى يوم مبيعات ممتازاً' : 'Good morning! ☀️ Big sales day ahead', JSON_UNESCAPED_UNICODE) ?>,
+    NIGHT:   <?= json_encode($__isAr ? 'تعمل حتى وقت متأخر؟ 🌙 أنا معك' : 'Working late? 🌙 I\'m with you', JSON_UNESCAPED_UNICODE) ?>,
 
     pos: { x: 0, y: 0 },
     _lastMsg: -1,
@@ -974,7 +974,7 @@ const F1CChat = {
     },
 
     HELLO: <?= json_encode($__isAr
-        ? ['morning' => 'صباح الفل يا {name}! ☀️ يلا يوم جامد', 'day' => 'أهلاً يا {name}! 👋 أنا جاهز — اسألني عن أي عربية', 'night' => 'سهرانين يا {name}؟ 🌙 أنا معاك']
+        ? ['morning' => 'صباح الخير يا {name}! ☀️ نتمنى لك يوماً موفقاً', 'day' => 'أهلاً يا {name}! 👋 أنا جاهز — اسألني عن أي سيارة', 'night' => 'مساء الخير يا {name} 🌙 أنا معك']
         : ['morning' => 'Good morning, {name}! ☀️ Big day ahead', 'day' => "Hey {name}! 👋 I'm ready — ask me about any car", 'night' => "Working late, {name}? 🌙 I'm with you"], JSON_UNESCAPED_UNICODE) ?>,
 
     mood(cls, ms) {
@@ -1083,7 +1083,7 @@ const F1CChat = {
         if (!box) return;
         const h = d.getHours();
         box.innerHTML = '<div class="bh"><b></b><button type="button" aria-label="close">✕</button></div>';
-        box.querySelector('b').textContent = (this.lang === 'ar' ? (h < 12 ? 'صباح الخير يا ' : 'أهلاً يا ') + this.me + '! ده اللي مستنيك 👇' : (h < 12 ? 'Good morning, ' : 'Hi, ') + this.me + '! Here is what needs you 👇');
+        box.querySelector('b').textContent = (this.lang === 'ar' ? (h < 12 ? 'صباح الخير يا ' : 'أهلاً يا ') + this.me + '! هذا ما ينتظرك اليوم 👇' : (h < 12 ? 'Good morning, ' : 'Hi, ') + this.me + '! Here is what needs you 👇');
         r.items.forEach((it, i) => {
             const a = document.createElement('a'); a.href = it.u || '#'; a.style.animationDelay = (0.15 + i * 0.12) + 's';
             a.append(Object.assign(document.createElement('i'), { textContent: it.i }), Object.assign(document.createElement('span'), { textContent: it.t }));
@@ -1163,7 +1163,7 @@ const F1CChat = {
         const far  = dir * Math.max(60, vw - 118);
         const car  = el.querySelector('.f1c-car');
         const hype = this.randMsg(isAr
-            ? ['وروووم! 🚗💨 فيرست 1 كار!', 'اتحولت لعربية! 🚗', 'أسرع معرض في المدينة 🏁']
+            ? ['وروووم! 🚗💨 فيرست 1 كار!', 'تحوّلت إلى سيارة! 🚗', 'أسرع معرض في المدينة 🏁']
             : ['Vroom! 🚗💨 First 1 Car!', 'Transformed! 🚗', 'Fastest dealer in town 🏁']);
         el.classList.add('f1c-party');
         setTimeout(() => {
@@ -1534,7 +1534,7 @@ document.getElementById('f1cExp')?.addEventListener('click', () => document.getE
 document.addEventListener('keydown', e => { if (e.key === 'Escape' && F1CChat.opened) F1CChat.toggle(); });
 /* ═════════════ "WHAT'S NEW" WELCOME — once per person, per update ═════════════ */
 const F1CWelcome = {
-    VERSION: 'v7',
+    VERSION: 'v8',
     key() { return 'f1cWelcome:' + this.VERSION + ':' + (F1CChat.me || ''); },
     shouldShow() {
         if (!F1CChat.me || new URLSearchParams(location.search).get('msg')) return false;   // opening a message from the phone → straight to it
@@ -1542,26 +1542,28 @@ const F1CWelcome = {
     },
     FEATS: <?php
         $__feats = $__isAr ? [
-            ['⏰', 'تذكيرات ذكية', 'الحجز القديم، الأمانة، رد البنك، الانصراف — النظام بيفكّرك لوحده', '#22c55e'],
-            ['🚚', '«استلمت» للعربيات المنقولة', 'عربية جاية لفرعك؟ يوصلك إشعار واضغط «استلمت» من الإشعار نفسه', '#38bdf8'],
-            ['👍', 'رسائل الإدارة بـ«تمام»', 'اقرأ الرسالة واضغط تمام — والإدارة تعرف إنك شفتها', '#f59e0b'],
-            ['🔴', 'عدد الإشعارات على أيقونة التطبيق', 'رقم أحمر على الأيقونة زي واتساب — وتجميع الإشعارات المتكررة', '#ef4444'],
-            ['🤖', 'المساعد بيلخصلك يومك', 'كل يوم أول ما تفتح: اللي مستنيك في لمحة', '#a855f7'],
+            ['🚚', '«تم الاستلام» للسيارات المنقولة', 'عند وصول سيارة إلى فرعك يصلك إشعار، وعليك تأكيد استلامها خلال المهلة من وقت تسجيل حضورك', '#38bdf8'],
+            ['📋', 'الجرد المفاجئ', 'قد يُطلب منك في أي وقت تأكيد وجود كل سيارة في الفرع خلال مدة محددة', '#f97316'],
+            ['🔒', 'الالتزام بالمواعيد', 'عدم الإنجاز في الوقت المحدد يوقف النظام والبصمة حتى تفتحهما الإدارة — وستصلك تنبيهات قبل ذلك', '#ef4444'],
+            ['⏰', 'تذكيرات ذكية', 'الحجز القديم والأمانة ورد البنك والانصراف — يذكّرك النظام تلقائياً', '#22c55e'],
+            ['👍', 'رسائل الإدارة', 'اقرأ الرسالة وأكّد اطلاعك عليها — وتعرف الإدارة من قرأها', '#f59e0b'],
+            ['🤖', 'ملخص يومي من المساعد', 'كل يوم عند فتح النظام: ما ينتظرك في لمحة واحدة', '#a855f7'],
         ] : [
+            ['🚚', '"Received" for transferred cars', 'A car reaches your branch: you get a notification and confirm it within the time allowed after clocking in', '#38bdf8'],
+            ['📋', 'Surprise stock check', 'At any time you may be asked to confirm every car at the branch within a set time', '#f97316'],
+            ['🔒', 'On time, every time', 'Not done in time stops the system and clocking in/out until management unlocks it — you are warned first', '#ef4444'],
             ['⏰', 'Smart reminders', 'Old reservations, consignments, bank replies, clocking out — the system reminds you', '#22c55e'],
-            ['🚚', '"Received" for transfers', 'A car coming to your branch? Tap "Received" right on the notification', '#38bdf8'],
-            ['👍', 'Messages with "OK"', 'Read it and tap OK — management knows you saw it', '#f59e0b'],
-            ['🔴', 'Unread count on the app icon', 'A red number like WhatsApp — and repeated alerts grouped into one', '#ef4444'],
-            ['🤖', 'Your assistant sums up your day', 'Every day when you open: what needs you, at a glance', '#a855f7'],
+            ['👍', 'Messages from management', 'Read it and confirm — management knows who read it', '#f59e0b'],
+            ['🤖', 'A daily summary', 'Every day when you open: what needs you, at a glance', '#a855f7'],
         ];
         if (function_exists('can') && can('dash.activity')) {
-            $__feats[] = $__isAr ? ['⚡', 'اللي بيحصل دلوقتي', 'مين أونلاين وآخر نشاط في النظام — على الرئيسية', '#2dd4bf']
+            $__feats[] = $__isAr ? ['⚡', 'ما يحدث الآن', 'من المتصل الآن وآخر نشاط في النظام — على الرئيسية', '#2dd4bf']
                                  : ['⚡', 'Happening now', "Who's online and the latest activity — on the dashboard", '#2dd4bf'];
         }
         echo json_encode($__feats, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG);
     ?>,
     T: <?= json_encode($__isAr
-        ? ['hi' => 'أهلاً يا', 'title' => 'First 1 Car بقى أذكى 🧠', 'sub' => 'إشعارات بتفكّرك قبل ما تنسى — وده الجديد', 'go' => 'يلا نبدأ', 'skip' => 'تخطي']
+        ? ['hi' => 'أهلاً', 'title' => 'First 1 Car أصبح أذكى 🧠', 'sub' => 'إليك الجديد في النظام', 'go' => 'لنبدأ', 'skip' => 'تخطي']
         : ['hi' => 'Welcome,', 'title' => 'First 1 Car just got smarter 🧠', 'sub' => "Notifications that remind you before you forget — here's what's new", 'go' => "Let's go", 'skip' => 'Skip'], JSON_UNESCAPED_UNICODE) ?>,
 
     show(done) {

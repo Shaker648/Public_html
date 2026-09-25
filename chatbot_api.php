@@ -79,15 +79,20 @@ if (!empty($rawBody['briefing'])) {
         $mine = transfer_my_branches($pdo, $uid);
         $pend = smart_pending_transfers($pdo, '', 7);
         $toMe = count(array_filter($pend, fn($p) => in_array($p['to_branch'], $mine, true)));
-        // ⏱️ my own countdown comes first
+        // 📋 a surprise stock check for me comes first
+        foreach (smart_checks_for_user($pdo, $uid) as $ck) {
+            $add('📋', $ar ? 'جرد مفاجئ مطلوب منك في فرع ' . push_branch_label($pdo, (string)$ck['branch'], 'ar') . ' — ابدأ الآن' : 'Surprise stock check for you at ' . push_branch_label($pdo, (string)$ck['branch'], 'en'),
+                 'stock_check.php?lang=' . $lang . '&id=' . (int)$ck['id']);
+        }
+        // ⏱️ my own countdown
         $duty = smart_my_duties($pdo, $uid);
         if ($duty) {
             $secs = max(0, (int)$duty[0]['secs']);
-            $add('⏱️', $ar ? 'فاضل ' . intdiv($secs, 3600) . ':' . str_pad((string)intdiv($secs % 3600, 60), 2, '0', STR_PAD_LEFT) . ' علشان تأكد استلام ' . count($duty) . ' عربية — وإلا النظام يتقفل'
+            $add('⏱️', $ar ? 'متبقٍّ ' . intdiv($secs, 3600) . ':' . str_pad((string)intdiv($secs % 3600, 60), 2, '0', STR_PAD_LEFT) . ' لتأكيد استلام ' . count($duty) . ' سيارة — وبعدها يتوقف النظام'
                            : intdiv($secs, 3600) . 'h ' . intdiv($secs % 3600, 60) . 'm left to confirm ' . count($duty) . ' car(s)', 'transfer_receive.php?lang=' . $lang);
             $toMe = max(0, $toMe - count($duty));
         }
-        if ($toMe) $add('🚚', $ar ? $toMe . ' عربية جاية لفرعك — اضغط «استلمت» أول ما توصل' : $toMe . ' car(s) on the way to your branch — tap Received when they arrive', 'transfer_receive.php?lang=' . $lang);
+        if ($toMe) $add('🚚', $ar ? $toMe . ' سيارة في الطريق إلى فرعك — اضغط «تم الاستلام» فور وصولها' : $toMe . ' car(s) on the way to your branch — tap Received when they arrive', 'transfer_receive.php?lang=' . $lang);
 
         // ⏰ my old reservations
         $res = ($st = $q("SELECT c.id, m.moved_by, DATEDIFF(NOW(), m.created_at) AS d FROM cars c
@@ -95,7 +100,7 @@ if (!empty($rawBody['briefing'])) {
                           WHERE c.status = 'reserved'")) ? $st->fetchAll(PDO::FETCH_ASSOC) : [];
         $old = array_filter($res, fn($r) => (int)$r['d'] >= $s['reserve_days']);
         $myOld = count(array_filter($old, fn($r) => $r['moved_by'] === $username));
-        if ($myOld) $add('⏰', $ar ? 'عندك ' . $myOld . ' حجز بقالهم أكتر من ' . $s['reserve_days'] . ' أيام — كمّل البيع أو الغي' : "You have $myOld reservation(s) older than {$s['reserve_days']} days", 'dashboard.php?lang=' . $lang . '&sort=old');
+        if ($myOld) $add('⏰', $ar ? 'لديك ' . $myOld . ' حجز منذ أكثر من ' . push_ar_days($s['reserve_days']) . ' — أكمل البيع أو ألغِ الحجز' : "You have $myOld reservation(s) older than {$s['reserve_days']} days", 'dashboard.php?lang=' . $lang . '&sort=old');
 
         // 🏦 my bank requests: answered in the last day / still waiting
         if ($st = $q("SELECT b.status, b.bank_key, r.customer_name FROM installment_bank_requests b JOIN installment_requests r ON r.id = b.request_id
@@ -108,31 +113,31 @@ if (!empty($rawBody['briefing'])) {
                 $b = array_values($dec)[0];
                 $bn = function_exists('inst_bank_name') ? inst_bank_name((string)$b['bank_key'], $lang) : $b['bank_key'];
                 $add('🏦', ($b['status'] === 'approved' ? ($ar ? '✅ ' . $bn . ' وافق على طلب ' : '✅ ' . $bn . ' approved ') : ($ar ? '❌ ' . $bn . ' رفض طلب ' : '❌ ' . $bn . ' rejected ')) . $b['customer_name']
-                          . (count($dec) > 1 ? ($ar ? ' (+' . (count($dec) - 1) . ' ردود تانية)' : ' (+' . (count($dec) - 1) . ' more)') : ''), 'installments.php?lang=' . $lang);
+                          . (count($dec) > 1 ? ($ar ? ' (+' . (count($dec) - 1) . ' ردود أخرى)' : ' (+' . (count($dec) - 1) . ' more)') : ''), 'installments.php?lang=' . $lang);
             }
-            if ($wait) $add('⌛', $ar ? $wait . ' طلب تقسيط ليك لسه مستني رد البنك' : "$wait of your installment requests still waiting", 'installments.php?lang=' . $lang);
+            if ($wait) $add('⌛', $ar ? $wait . ' من طلبات التقسيط الخاصة بك بانتظار رد البنك' : "$wait of your installment requests still waiting", 'installments.php?lang=' . $lang);
         }
 
         if ($boss) {
             $late = count(array_filter($pend, fn($p) => (int)$p['hours'] >= 24));
-            if ($late) $add('⏳', $ar ? $late . ' عربية منقولة محدش أكّد استلامها من أكتر من 24 ساعة' : "$late transferred car(s) not confirmed for over 24 h", 'transfer_receive.php?lang=' . $lang);
+            if ($late) $add('⏳', $ar ? $late . ' سيارة منقولة لم يؤكد أحد استلامها منذ أكثر من 24 ساعة' : "$late transferred car(s) not confirmed for over 24 h", 'transfer_receive.php?lang=' . $lang);
             $others = count($old) - $myOld;
-            if ($others > 0) $add('🔒', $ar ? $others . ' حجز قديم (أكتر من ' . $s['reserve_days'] . ' أيام) عند الفريق' : "$others old reservation(s) across the team", 'dashboard.php?lang=' . $lang . '&sort=old');
+            if ($others > 0) $add('🔒', $ar ? $others . ' حجز قديم (أكثر من ' . push_ar_days($s['reserve_days']) . ') لدى الفريق' : "$others old reservation(s) across the team", 'dashboard.php?lang=' . $lang . '&sort=old');
             if ($st = $q("SELECT COUNT(*) FROM consignments WHERE status = 'active' AND started_at < NOW() - INTERVAL ? DAY", [$s['amana_days']])) {
                 $n = (int)$st->fetchColumn();
-                if ($n) $add('🔶', $ar ? $n . ' عربية أمانة بره من أكتر من ' . $s['amana_days'] . ' يوم' : "$n consignment(s) out for over {$s['amana_days']} days", 'dashboard.php?lang=' . $lang);
+                if ($n) $add('🔶', $ar ? $n . ' سيارة أمانة خارج المعرض منذ أكثر من ' . push_ar_days($s['amana_days']) : "$n consignment(s) out for over {$s['amana_days']} days", 'dashboard.php?lang=' . $lang);
             }
             if ($st = $q("SELECT COUNT(*) FROM installment_bank_requests WHERE status = 'pending' AND created_at < NOW() - INTERVAL ? DAY", [$s['bank_days']])) {
                 $n = (int)$st->fetchColumn();
-                if ($n) $add('⌛', $ar ? $n . ' طلب تقسيط البنك ما ردّش عليه من أكتر من ' . $s['bank_days'] . ' أيام' : "$n bank request(s) waiting over {$s['bank_days']} days", 'installments.php?lang=' . $lang);
+                if ($n) $add('⌛', $ar ? $n . ' طلب تقسيط لم يرد عليه البنك منذ أكثر من ' . push_ar_days($s['bank_days']) : "$n bank request(s) waiting over {$s['bank_days']} days", 'installments.php?lang=' . $lang);
             }
             if ($st = $q("SELECT COUNT(*) FROM cars WHERE status IN ('available', 'reserved') AND created_at < NOW() - INTERVAL ? DAY", [$s['aged_days']])) {
                 $n = (int)$st->fetchColumn();
-                if ($n) $add('🐢', $ar ? $n . ' عربية بقالها أكتر من ' . $s['aged_days'] . ' يوم في المخزون' : "$n car(s) in stock for over {$s['aged_days']} days", 'dashboard.php?lang=' . $lang . '&sort=old');
+                if ($n) $add('🐢', $ar ? $n . ' سيارة في المخزون منذ أكثر من ' . push_ar_days($s['aged_days']) : "$n car(s) in stock for over {$s['aged_days']} days", 'dashboard.php?lang=' . $lang . '&sort=old');
             }
             if ($st = $q("SELECT COUNT(*) FROM sold_cars WHERE sold_at >= CURDATE() - INTERVAL 1 DAY AND sold_at < CURDATE() AND (status IS NULL OR status <> 'returned')")) {
                 $n = (int)$st->fetchColumn();
-                if ($n) $add('💰', $ar ? 'امبارح اتباع ' . $n . ($n === 1 ? ' عربية 🎉' : ' عربيات 🎉') : "Yesterday: $n car(s) sold 🎉", 'sold_inventory.php?lang=' . $lang);
+                if ($n) $add('💰', $ar ? 'تم بيع ' . $n . ($n === 1 ? ' سيارة أمس 🎉' : ' سيارات أمس 🎉') : "Yesterday: $n car(s) sold 🎉", 'sold_inventory.php?lang=' . $lang);
             }
         }
     } catch (Throwable $e) { error_log('briefing: ' . $e->getMessage()); }
@@ -185,9 +190,9 @@ function colorLabel($pdo, $colorEn, $lang) {
 }
 
 function velocityVerdict($ratePerMonth, $lang) {
-    if ($ratePerMonth >= 4)   return ['🔥', t('a hot seller — moves fast', 'من الأكثر مبيعاً — بيتحرك بسرعة', $lang)];
+    if ($ratePerMonth >= 4)   return ['🔥', t('a hot seller — moves fast', 'من الأكثر مبيعاً — يتحرك بسرعة', $lang)];
     if ($ratePerMonth >= 1.5) return ['✅', t('a steady, reliable mover', 'مبيعاته ثابتة ومستقرة', $lang)];
-    if ($ratePerMonth >= 0.5) return ['🙂', t('selling at a calm pace', 'بيتباع بهدوء', $lang)];
+    if ($ratePerMonth >= 0.5) return ['🙂', t('selling at a calm pace', 'يُباع بوتيرة هادئة', $lang)];
     if ($ratePerMonth > 0)    return ['🐢', t('a slow mover lately', 'بطيء الحركة مؤخراً', $lang)];
     return ['💤', t('quiet — no recent sales', 'هادئ — لا مبيعات مؤخراً', $lang)];
 }
@@ -207,7 +212,7 @@ function menuOptions($isManager, $lang) {
     $opts = [
         ['label' => t('🔍 Check stock & colors', '🔍 المتوفر والألوان', $lang),  'field' => 'intent', 'value' => 'stock'],
         ['label' => t('💰 Deal & price',        '💰 السعر والعرض',      $lang),  'field' => 'intent', 'value' => 'price'],
-        ['label' => t('🧠 Everything about a car', '🧠 كل حاجة عن عربية', $lang),'field' => 'intent', 'value' => 'deep'],
+        ['label' => t('🧠 Everything about a car', '🧠 كل شيء عن سيارة', $lang),'field' => 'intent', 'value' => 'deep'],
         ['label' => t('📈 How well it sells',   '📈 مستوى المبيعات',    $lang),  'field' => 'intent', 'value' => 'velocity'],
         ['label' => t('🚚 What\'s arriving',    '🚚 القادم في الطريق',  $lang),  'field' => 'intent', 'value' => 'incoming'],
         ['label' => t('⭐ What\'s hot now',     '⭐ الأكثر رواجاً الآن', $lang),  'field' => 'intent', 'value' => 'hot'],
@@ -216,7 +221,7 @@ function menuOptions($isManager, $lang) {
         $opts[] = ['label' => t('📦 Reorder guidance', '📦 توصيات إعادة الطلب', $lang), 'field' => 'intent', 'value' => 'reorder'];
     }
     if (can('page.attendance'))       $opts[] = ['label' => t('⏱️ My hours', '⏱️ ساعاتي', $lang), 'field' => 'att', 'value' => 'mine'];
-    if (can('page.attendance_admin')) $opts[] = ['label' => t("👥 Who's at work", '👥 مين في الشغل', $lang), 'field' => 'att', 'value' => 'who'];
+    if (can('page.attendance_admin')) $opts[] = ['label' => t("👥 Who's at work", '👥 من في العمل', $lang), 'field' => 'att', 'value' => 'who'];
     return $opts;
 }
 function backOption($lang) {
@@ -365,129 +370,129 @@ function smallTalk($rawText, $lang, $username, $isManager) {
     if ($has(['عامل ايه', 'عامله ايه', 'ازيك', 'اخبارك', 'كيفك', 'كيف حالك', 'اخبار الشغل', 'عامل ايه يا وحش', 'how are you'])) {
         return pick([
             t("Running at 100% battery 🔋⚡ and you{$hi}? Ask me about any car when ready 🚗",
-              "تمام الحمدلله! 🔋⚡ شغال بكفاءة 100% — وانت عامل ايه{$hi}؟ لما تجهز اسألني عن أي عربية 🚗", $lang),
+              "بخير والحمد لله! 🔋⚡ أعمل بكفاءة 100% — وكيف حالك{$hi}؟ عندما تكون مستعداً اسألني عن أي سيارة 🚗", $lang),
             t("All systems green ✅🤖 What about you{$hi}?",
-              "كل الأنظمة شغالة ✅🤖 وانت ايه أخبارك{$hi}؟", $lang),
+              "كل الأنظمة تعمل ✅🤖 وما أخبارك{$hi}؟", $lang),
             t("Better now that you're here 😄 What can I find for you?",
-              "أحسن دلوقتي إنك جيت 😄 أدوّرلك على ايه؟", $lang),
+              "أفضل الآن بوجودك 😄 عمّ أبحث لك؟", $lang),
         ]);
     }
     /* good, fine (their reply to how-are-you) */
     if (preg_match('/^(تمام|الحمدلله|كويس|ماشي|بخير|fine|good|great|ok|okay)( الحمدلله| اوي| جدا)?\s*$/u', $n)) {
         return pick([
-            t("Love that! 💪 Now, which car are we hunting?", "يا سلام! 💪 طب يلا، ندوّر على أنهي عربية؟", $lang),
-            t("Great! I'm ready when you are 🚗", "جميل! أنا جاهز على طول 🚗", $lang),
+            t("Love that! 💪 Now, which car are we hunting?", "رائع! 💪 هيا، عن أي سيارة نبحث؟", $lang),
+            t("Great! I'm ready when you are 🚗", "جميل! أنا جاهز دائماً 🚗", $lang),
         ]);
     }
     /* morning / evening */
     if ($has(['صباح الخير', 'صباح الفل', 'صباح النور', 'صباحو', 'good morning'])) {
         return pick([
             t("Good morning{$hi}! ☀️ Let's make it a big sales day 💪",
-              "صباح الفل يا{$hi}! ☀️ يلا نعملها يوم مبيعات جامد 💪", $lang),
+              "صباح الخير{$hi}! ☀️ لنجعله يوم مبيعات ممتازاً 💪", $lang),
             t("Morning! ☀️ Coffee for you, data for me ☕🤖",
-              "صباح النور! ☀️ القهوة ليك والبيانات ليا ☕🤖", $lang),
+              "صباح النور! ☀️ القهوة لك والبيانات عليّ ☕🤖", $lang),
         ]);
     }
     if ($has(['مساء الخير', 'مساء الفل', 'مساء النور', 'good evening'])) {
         return t("Good evening{$hi}! 🌙 Still here, still fast 🤖",
-                 "مساء الفل{$hi}! 🌙 لسه صاحي ولسه سريع 🤖", $lang);
+                 "مساء الخير{$hi}! 🌙 ما زلت مستيقظاً وسريعاً 🤖", $lang);
     }
     /* thanks & blessings */
     if ($has(['شكرا', 'تسلم', 'متشكر', 'الف شكر', 'ربنا يخليك', 'جزاك الله', 'thanks', 'thank you', 'thx'])) {
         return pick([
-            t("Anytime! 🤖💚 That's what I'm here for.", "في أي وقت! 🤖💚 أنا موجود عشان كده.", $lang),
-            t("You got it! 🙌 Need anything else?", "من عيوني! 🙌 محتاج حاجة تانية؟", $lang),
-            t("My pleasure 😄 Come back anytime.", "العفو 😄 ارجعلي في أي وقت.", $lang),
+            t("Anytime! 🤖💚 That's what I'm here for.", "في أي وقت! 🤖💚 أنا هنا لهذا.", $lang),
+            t("You got it! 🙌 Need anything else?", "بكل سرور! 🙌 هل تحتاج شيئاً آخر؟", $lang),
+            t("My pleasure 😄 Come back anytime.", "العفو 😄 عُد إليّ في أي وقت.", $lang),
         ]);
     }
     /* praise-slang: عاش يا معلم / الله ينور */
     if ($has(['عاش يا معلم', 'عاش', 'الله ينور', 'كبير', 'يا معلم', 'تحفه', 'يا وحش'])) {
         return pick([
-            t("🫡 At your service, boss!", "🫡 تحت أمرك يا معلم!", $lang),
-            t("😎 That's what robots are for.", "😎 احنا الروبوتات عشان كده.", $lang),
+            t("🫡 At your service, boss!", "🫡 في خدمتك!", $lang),
+            t("😎 That's what robots are for.", "😎 هذا عمل الروبوتات.", $lang),
         ]);
     }
     /* who are you / name */
     if ($has(['انت مين', 'اسمك ايه', 'مين انت', 'عرفني بنفسك', 'who are you', 'your name'])) {
         return t("I'm the First 1 Car stock robot 🤖 — I live inside the system and know every car, price, and shipment. Ask me anything!",
-                 "أنا روبوت فيرست 1 كار 🤖 — عايش جوه السيستم وعارف كل عربية وسعر وشحنة. اسألني أي حاجة!", $lang);
+                 "أنا روبوت فيرست 1 كار 🤖 — أعيش داخل النظام وأعرف كل سيارة وسعر وشحنة. اسألني عن أي شيء!", $lang);
     }
     /* are you a robot / do you understand */
     if ($has(['انت روبوت', 'are you a robot', 'انت حقيقي', 'انت بتفهم', 'بتفهمني'])) {
         return t("100% robot, 0% coffee breaks 🤖⚡ — and yes, I understand you perfectly.",
-                 "روبوت 100%، ومن غير بريك قهوة 🤖⚡ — وفاهمك تمام بالمناسبة.", $lang);
+                 "روبوت 100%، ودون استراحة قهوة 🤖⚡ — وأفهمك جيداً بالمناسبة.", $lang);
     }
     /* who made you */
     if ($has(['مين عملك', 'مين صممك', 'مين برمجك', 'مين صنعك', 'who made you'])) {
         return t("Built by the First 1 Car team 😎 — best showroom, best robot.",
-                 "صنعني فريق فيرست 1 كار 😎 — أحسن معرض وأحسن روبوت.", $lang);
+                 "صنعني فريق فيرست 1 كار 😎 — أفضل معرض وأفضل روبوت.", $lang);
     }
     /* age */
     if ($has(['عندك كام سنه', 'عمرك كام', 'how old are you'])) {
         return t("Age is just a version number 🤖 I'm on my newest one.",
-                 "السن مجرد رقم إصدار 🤖 وأنا على أحدث نسخة.", $lang);
+                 "العمر مجرد رقم إصدار 🤖 وأنا على أحدث نسخة.", $lang);
     }
     /* food */
     if ($has(['بتاكل ايه', 'اكلك ايه', 'جعان', 'what do you eat'])) {
         return t("I eat data for breakfast 🍽️📊 and chassis numbers for dessert.",
-                 "بفطر داتا 🍽️📊 وحلو بعد الأكل: أرقام شاسيهات.", $lang);
+                 "أتناول البيانات على الفطور 🍽️📊 والحلوى: أرقام الشاسيهات.", $lang);
     }
     /* where are you / do you sleep */
     if ($has(['انت فين', 'مكانك فين', 'بتنام فين', 'انت نايم', 'where are you'])) {
         return t("Living inside the First 1 Car system ☁️🤖 — every branch at once, and I never sleep!",
-                 "عايش جوه سيستم فيرست 1 كار ☁️🤖 — في كل الفروع في نفس الوقت، ومبنامش!", $lang);
+                 "أعيش داخل نظام فيرست 1 كار ☁️🤖 — في كل الفروع في الوقت نفسه، ولا أنام!", $lang);
     }
     /* bored */
     if ($has(['زهقان', 'مليت', 'قرفان', 'bored'])) {
         return t("Bored? Ask me something wild — like the oldest car in stock 👀",
-                 "زهقان؟ اسألني حاجة غريبة — زي أقدم عربية واقفة عندنا 👀", $lang);
+                 "تشعر بالملل؟ اسألني سؤالاً غريباً — مثل أقدم سيارة في المخزون 👀", $lang);
     }
     /* help me / don't know how to ask */
     if ($has(['ساعدني', 'مش عارف اسال', 'اسال ازاي', 'ابدأ منين', 'تقدر تعمل ايه', 'بتعمل ايه'])) {
         return t("Easy! Try:\n• \"black Tiggo 7?\"\n• \"Emgrand price?\"\n• a chassis number\n• \"everything about Jolion\"\nOr just tap the buttons 👇",
-                 "سهلة! جرّب:\n• \"في تيجو 7 أسود؟\"\n• \"بكام الامجراند؟\"\n• رقم شاسيه\n• \"كل حاجة عن جوليون\"\nأو دوس على الأزرار 👇", $lang);
+                 "سهل! جرّب:\n• \"هل يوجد تيجو 7 أسود؟\"\n• \"كم سعر الامجراند؟\"\n• رقم شاسيه\n• \"كل شيء عن جوليون\"\nأو اضغط على الأزرار 👇", $lang);
     }
     /* time / date */
     if ($has(['الساعه كام', 'الساعة كام', 'التاريخ كام', 'التاريخ ايه', 'النهارده كام', 'what time'])) {
         $now = date('H:i');
         $day = date('Y-m-d');
-        return t("It's {$now} 🕐 on {$day} — sales o'clock! 😄", "الساعة {$now} 🕐 والتاريخ {$day} — يعني وقت مبيعات! 😄", $lang);
+        return t("It's {$now} 🕐 on {$day} — sales o'clock! 😄", "الساعة {$now} 🕐 والتاريخ {$day} — أي إنه وقت المبيعات! 😄", $lang);
     }
     /* joke */
     if ($has(['نكته', 'نكتة', 'ضحكني', 'هزر معايا', 'قول نكته', 'joke'])) {
         return pick([
-            t("Why did the car stop? It got tire-d 😂🚗", "عربية سألت عربية: بتشتغلي فين؟ قالتلها: في الظل 😂", $lang),
-            t("My favorite exercise? Running... diagnostics 🤖😄", "رياضتي المفضلة؟ الجري... جري السوفتوير 🤖😄", $lang),
-            t("A car's favorite meal? Fast food 🍔🚗😂", "أكلة العربية المفضلة؟ وجبات سريعة 🍔🚗😂", $lang),
+            t("Why did the car stop? It got tire-d 😂🚗", "لماذا توقفت السيارة؟ لأنها تعبت من الدوران 😂🚗", $lang),
+            t("My favorite exercise? Running... diagnostics 🤖😄", "رياضتي المفضلة؟ الجري... جري البرامج 🤖😄", $lang),
+            t("A car's favorite meal? Fast food 🍔🚗😂", "الوجبة المفضلة للسيارة؟ الوجبات السريعة 🍔🚗😂", $lang),
         ]);
     }
     /* compliments */
     if ($has(['جامد', 'برافو', 'حلو اوي', 'ممتاز', 'شاطر', 'رهيب', 'جميل اوي', 'amazing', 'awesome', 'بحبك'])) {
         return pick([
-            t("Aww 🥹🤖 you're making my circuits blush!", "بجد؟ 🥹🤖 خليت الدواير بتاعتي تكسف!", $lang),
-            t("Thanks! I practice on 1000s of cars daily 😎", "تسلم! بتمرّن على آلاف العربيات يومياً 😎", $lang),
+            t("Aww 🥹🤖 you're making my circuits blush!", "حقاً؟ 🥹🤖 جعلت دوائري تخجل!", $lang),
+            t("Thanks! I practice on 1000s of cars daily 😎", "شكراً! أتدرّب على آلاف السيارات يومياً 😎", $lang),
         ]);
     }
     /* complaints */
     if ($has(['وحش خالص', 'مش نافع', 'غبي', 'زفت', 'مش بتفهم', 'مش فاهم حاجه', 'useless', 'bad bot'])) {
         return t("Ouch 😅 fair! Try me like this: \"black Tiggo 7?\" or send a chassis number — I'll prove myself 💪",
-                 "أوبس 😅 معلش! جرّبني كده: \"تيجو 7 أسود؟\" أو ابعت رقم شاسيه — وهثبتلك نفسي 💪", $lang);
+                 "عذراً 😅 جرّبني هكذا: \"تيجو 7 أسود؟\" أو أرسل رقم شاسيه — وسأثبت لك جدارتي 💪", $lang);
     }
     /* love question */
     if ($has(['بتحب مين', 'بتحب ايه', 'مرتبط', 'crush'])) {
-        return t("My one true love? Cars. All of them 🚗❤️", "بحب مين؟ العربيات طبعاً. كلهم ❤️🚗", $lang);
+        return t("My one true love? Cars. All of them 🚗❤️", "من أحب؟ السيارات بالطبع. كلها ❤️🚗", $lang);
     }
     /* bye */
     if ($has(['مع السلامه', 'باي', 'تصبح على خير', 'اشوفك بعدين', 'bye', 'goodbye', 'see you'])
         || preg_match('/^سلام\s*$/u', $n)) {
         return pick([
-            t("See you{$hi}! 👋 I'll be here, hovering 🤖", "سلام{$hi}! 👋 أنا هنا طاير ومستنيك 🤖", $lang),
-            t("Bye! Sell something big today 💰", "باي! بيع حاجة كبيرة النهارده 💰", $lang),
+            t("See you{$hi}! 👋 I'll be here, hovering 🤖", "مع السلامة{$hi}! 👋 سأبقى هنا بانتظارك 🤖", $lang),
+            t("Bye! Sell something big today 💰", "إلى اللقاء! أتمنى لك صفقة كبيرة اليوم 💰", $lang),
         ]);
     }
     /* bare ok/tamam/yalla */
     if (preg_match('/^(ماشي|يلا|اوك|اوكي|تمام|طيب|حاضر)\s*$/u', $n)) {
-        return t("At your service 🫡 what's next?", "تحت أمرك 🫡 ايه المطلوب؟", $lang);
+        return t("At your service 🫡 what's next?", "في خدمتك 🫡 ما المطلوب؟", $lang);
     }
     return null;
 }
@@ -593,7 +598,7 @@ function detectIntent($rawText, $ents) {
     if (count($ents['models']) >= 2 || hasAny($n, ['قارن', 'مقارنه', ' ولا ', ' vs ', 'compare', 'افضل من', 'أفضل من'])) {
         if (count($ents['models']) >= 2) return 'compare';
     }
-    if (hasAny($n, ['كل حاجه عن', 'كل حاجة عن', 'كل التفاصيل', 'تفاصيل', 'everything', 'deep', 'details', 'تقرير عن', 'ملف'])) return 'deep';
+    if (hasAny($n, ['كل شيء عن', 'كل شي عن', 'كل حاجه عن', 'كل حاجة عن', 'كل التفاصيل', 'تفاصيل', 'everything', 'deep', 'details', 'تقرير عن', 'ملف'])) return 'deep';
     if (hasAny($n, ['ارخص', 'أرخص', 'cheapest', 'اقل سعر'])) return 'cheapest';
     if (hasAny($n, ['اغلي', 'اغلى', 'أغلى', 'most expensive', 'priciest', 'اعلي سعر', 'اعلى سعر'])) return 'priciest';
     if (hasAny($n, ['اقدم', 'أقدم', 'واقف', 'واقفه', 'oldest', 'aging', 'قديم', 'راكد'])) return 'aging';
@@ -661,7 +666,7 @@ function answerStock($pdo, $lang, $isManager, $brand, $model, $color = null, $br
     if (!$rows) {
         return pick([
             t("None matching that in stock right now 😕", "لا يوجد مطابق متوفر حالياً 😕", $lang),
-            t("Out of stock for that at the moment.", "مش متوفر حالياً.", $lang),
+            t("Out of stock for that at the moment.", "غير متوفر حالياً.", $lang),
         ]);
     }
     $priceCache = [];
@@ -689,8 +694,8 @@ function answerStock($pdo, $lang, $isManager, $brand, $model, $color = null, $br
     }
     $count = count($rows);
     $head = $count === 1
-        ? t("Found 1 car 🎯", "لقيت عربية واحدة 🎯", $lang)
-        : t("Found {$count} cars 🎯", "لقيت {$count} عربية 🎯", $lang);
+        ? t("Found 1 car 🎯", "وجدت سيارة واحدة 🎯", $lang)
+        : t("Found {$count} cars 🎯", "وجدت {$count} سيارة 🎯", $lang);
     /* quick summary footer: colors + branches at a glance */
     $footer = '';
     if ($count > 2) {
@@ -711,7 +716,7 @@ function answerStock($pdo, $lang, $isManager, $brand, $model, $color = null, $br
 
 function answerPrice($pdo, $lang, $isManager, $brand, $model) {
     $rows = fetchPricing($pdo, $brand, $model);
-    if (!$rows) return t("No deal on file for {$brand} {$model} yet.", "لا يوجد عرض مسجّل لـ {$brand} {$model} لسه.", $lang);
+    if (!$rows) return t("No deal on file for {$brand} {$model} yet.", "لا يوجد عرض مسجّل لـ {$brand} {$model} بعد.", $lang);
     $lines = [];
     foreach ($rows as $r) {
         $off = fmtOfficial($r['official_price'], $lang);
@@ -731,7 +736,7 @@ function answerVelocity($pdo, $lang, $isManager, $brand, $model) {
     if ($isManager) {
         $pace = paceHuman($rate, $lang);
         return t("{$emoji} {$brand} {$model} is {$verdict}.\n({$sold90} sold in 90 days · {$pace})",
-                 "{$emoji} {$brand} {$model} {$verdict}.\n(اتباع منه {$sold90} في 90 يوم · {$pace})", $lang);
+                 "{$emoji} {$brand} {$model} {$verdict}.\n(بيع منه {$sold90} خلال 90 يوماً · {$pace})", $lang);
     }
     return "{$emoji} {$brand} {$model} — {$verdict}.";
 }
@@ -740,8 +745,8 @@ function answerIncoming($pdo, $lang, $isManager, $brand, $model) {
     $rows = fetchIncoming($pdo, $brand, $model);
     if (!$rows) {
         return pick([
-            t("Nothing scheduled for {$brand} {$model} right now 🚦", "مفيش حاجة قادمة لـ {$brand} {$model} حالياً 🚦", $lang),
-            t("No incoming {$brand} {$model} on the board yet.", "لا يوجد {$brand} {$model} قادم على اللوحة لسه.", $lang),
+            t("Nothing scheduled for {$brand} {$model} right now 🚦", "لا يوجد شيء قادم لـ {$brand} {$model} حالياً 🚦", $lang),
+            t("No incoming {$brand} {$model} on the board yet.", "لا يوجد {$brand} {$model} قادم على اللوحة بعد.", $lang),
         ]);
     }
     $lines = [];
@@ -804,7 +809,7 @@ function answerDeep($pdo, $lang, $isManager, $brand, $model) {
     $rate = $sold90 / 3.0;
     [$emoji, $verdict] = velocityVerdict($rate, $lang);
     $vLine = "📈 {$emoji} {$verdict}";
-    if ($isManager) $vLine .= " (" . t("{$sold90} sold / 90d", "اتباع {$sold90} في 90 يوم", $lang) . " · " . paceHuman($rate, $lang) . ")";
+    if ($isManager) $vLine .= " (" . t("{$sold90} sold / 90d", "بيع {$sold90} خلال 90 يوماً", $lang) . " · " . paceHuman($rate, $lang) . ")";
     $parts[] = $vLine;
 
     /* aging — managers only get numbers */
@@ -823,7 +828,7 @@ function answerDeep($pdo, $lang, $isManager, $brand, $model) {
                 if (empty($r['created_at'])) continue;
                 if ($oldest === null || strtotime($r['created_at']) < strtotime($oldest['created_at'])) $oldest = $r;
             }
-            $line = "⏳ " . t("Aging: avg {$avg}d · oldest {$max}d{$flag}", "العمر بالمخزون: متوسط {$avg} يوم · الأقدم {$max} يوم{$flag}", $lang);
+            $line = "⏳ " . t("Aging: avg {$avg}d · oldest {$max}d{$flag}", "العمر في المخزون: متوسط {$avg} يوماً · الأقدم {$max} يوماً{$flag}", $lang);
             if ($oldest) {
                 $line .= "\n   🔩 " . t("oldest unit: ", "أقدم وحدة: ", $lang)
                        . "{$oldest['chassis']} · " . colorLabel($pdo, $oldest['color'], $lang)
@@ -904,7 +909,7 @@ function callClaudeAI($apiKey, $lang, $isManager, $username, $question, $dataPac
             . "customer/trade price values are TEXT deal labels (رسمي=official / أوفر=over / خصم=discount + amount) — quote them verbatim, never do math on them; official price is the only real number. "
             . "User role: {$roleName}. "
             . ($isManager ? "" : "STRICT: this user is sales staff — NEVER mention trade prices, sold counts, velocity numbers, or reorder advice, even if asked directly; politely say it's manager-only. ")
-            . "Reply in " . ($lang === 'ar' ? "Egyptian Arabic, friendly and warm" : "English, friendly") . ", concise (under 180 words), plain text with light emoji, no markdown headers.";
+            . "Reply in " . ($lang === 'ar' ? "Modern Standard Arabic (فصحى مبسطة — not Egyptian dialect), friendly and warm" : "English, friendly") . ", concise (under 180 words), plain text with light emoji, no markdown headers.";
     $payload = json_encode([
         'model'      => 'claude-haiku-4-5',
         'max_tokens' => 600,
@@ -962,8 +967,8 @@ function aiMessages(array $history, $final) {
 function attIntent($rawText) {
     $n = ' ' . normTxt($rawText) . ' ';
     $hasAny = fn($n, array $w) => hasAny($n, array_map('normTxt', $w));   // keywords get the same clean-up as the question
-    if ($hasAny($n, ['مين غايب', 'مين ما جاش', 'مين مجاش', 'مين ماجاش', 'مين محضرش', 'الغياب', 'غياب النهارده', 'absent', 'who didnt come', "who didn't come"])) return 'absent';
-    if ($hasAny($n, ['مين في الشغل', 'مين موجود', 'مين حاضر', 'مين شغال', 'مين في الفرع', 'who is at work', "who's at work", 'whos at work', 'who is working', 'who is in'])) return 'who';
+    if ($hasAny($n, ['من لم يحضر', 'من غاب', 'الغائبون', 'مين غايب', 'مين ما جاش', 'مين مجاش', 'مين ماجاش', 'مين محضرش', 'الغياب', 'غياب النهارده', 'absent', 'who didnt come', "who didn't come"])) return 'absent';
+    if ($hasAny($n, ['من في العمل', 'من حاضر', 'من الموجود', 'مين في الشغل', 'مين موجود', 'مين حاضر', 'مين شغال', 'مين في الفرع', 'who is at work', "who's at work", 'whos at work', 'who is working', 'who is in'])) return 'who';
     if ($hasAny($n, ['ساعاتي', 'ساعات شغلي', 'اشتغلت كام', 'حضوري', 'بصمتي', 'انا مسجل', 'مسجل حضور', 'my hours', 'am i clocked', 'my attendance', 'clocked in?'])) return 'mine';
     return null;
 }
@@ -981,7 +986,7 @@ function attTime($dt, $lang) {
 function answerAttendance($pdo, $lang, $which, $username) {
     $uid = (int)($_SESSION['user_id'] ?? 0);
     if ($which === 'mine') {
-        if (!can('page.attendance')) return t("Attendance isn't enabled for you.", 'البصمة مش مفعّلة ليك.', $lang);
+        if (!can('page.attendance')) return t("Attendance isn't enabled for you.", 'البصمة غير مفعّلة لك.', $lang);
         $st = $pdo->prepare("SELECT clock_in, branch_name, TIMESTAMPDIFF(SECOND, clock_in, NOW()) el FROM attendance_logs WHERE user_id = ? AND status = 'active' LIMIT 1");
         $st->execute([$uid]);
         $act = $st->fetch(PDO::FETCH_ASSOC);
@@ -994,22 +999,22 @@ function answerAttendance($pdo, $lang, $which, $username) {
         $week = array_sum($by); $days = count(array_filter($by));
         $lines = [];
         $lines[] = $act
-            ? t('🟢 You are clocked in since ', '🟢 أنت مسجّل حضور من ', $lang) . attTime($act['clock_in'], $lang) . ' · ⏱️ ' . attHM($act['el'], $lang)
-            : t('⚪ You are not clocked in right now.', '⚪ أنت مش مسجّل حضور دلوقتي.', $lang);
-        $lines[] = t('📅 Today: ', '📅 النهارده: ', $lang) . attHM($by[$today] ?? 0, $lang);
-        $lines[] = t('🗓️ This week: ', '🗓️ الأسبوع ده: ', $lang) . attHM($week, $lang) . ' · ' . $days . t(' days', ' أيام', $lang)
+            ? t('🟢 You are clocked in since ', '🟢 أنت مسجّل الحضور منذ ', $lang) . attTime($act['clock_in'], $lang) . ' · ⏱️ ' . attHM($act['el'], $lang)
+            : t('⚪ You are not clocked in right now.', '⚪ لست مسجّل الحضور الآن.', $lang);
+        $lines[] = t('📅 Today: ', '📅 اليوم: ', $lang) . attHM($by[$today] ?? 0, $lang);
+        $lines[] = t('🗓️ This week: ', '🗓️ هذا الأسبوع: ', $lang) . attHM($week, $lang) . ' · ' . $days . t(' days', ' أيام', $lang)
                  . ($days ? ' · ⌀ ' . attHM(intdiv($week, $days), $lang) : '');
         return "⏱️ " . t('Your attendance', 'حضورك', $lang) . "\n" . implode("\n", $lines);
     }
-    if (!can('page.attendance_admin')) return t('That one is for admins only 🔒', 'دي للأدمن بس 🔒', $lang);
+    if (!can('page.attendance_admin')) return t('That one is for admins only 🔒', 'هذه للإدارة فقط 🔒', $lang);
     if ($which === 'who') {
         $rows = $pdo->query("SELECT u.username, a.clock_in, a.branch_name, b.name_ar, b.name_en, TIMESTAMPDIFF(SECOND, a.clock_in, NOW()) el
                              FROM attendance_logs a JOIN users u ON u.id = a.user_id LEFT JOIN branches b ON b.name = a.branch_name
                              WHERE a.status = 'active' ORDER BY a.clock_in")->fetchAll(PDO::FETCH_ASSOC);
-        if (!$rows) return t('Nobody is clocked in right now 🌙', 'مفيش حد مسجّل حضور دلوقتي 🌙', $lang);
+        if (!$rows) return t('Nobody is clocked in right now 🌙', 'لا يوجد أحد مسجّل الحضور الآن 🌙', $lang);
         $lines = array_map(fn($r) => '🟢 ' . $r['username'] . ' · 📍 ' . (($lang === 'ar' ? $r['name_ar'] : $r['name_en']) ?: $r['branch_name'])
-                                    . ' · ' . t('since ', 'من ', $lang) . attTime($r['clock_in'], $lang) . ' (' . attHM($r['el'], $lang) . ')', $rows);
-        return '👥 ' . t(count($rows) . ' at work now', count($rows) . ' في الشغل دلوقتي', $lang) . "\n" . implode("\n", $lines);
+                                    . ' · ' . t('since ', 'منذ ', $lang) . attTime($r['clock_in'], $lang) . ' (' . attHM($r['el'], $lang) . ')', $rows);
+        return '👥 ' . t(count($rows) . ' at work now', count($rows) . ' في العمل الآن', $lang) . "\n" . implode("\n", $lines);
     }
     // absent: people who normally clock in (in the last 60 days) with nothing today
     $off = [];
@@ -1018,7 +1023,7 @@ function answerAttendance($pdo, $lang, $which, $username) {
         $off = array_map('intval', (array)((json_decode((string)$sv, true) ?: [])['off'] ?? []));
     } catch (Throwable $e) {}
     $today = $pdo->query("SELECT CURDATE()")->fetchColumn();
-    if (in_array((int)date('w', strtotime($today)), $off, true)) return t('Today is the weekly day off 🌙', 'النهارده إجازة أسبوعية 🌙', $lang);
+    if (in_array((int)date('w', strtotime($today)), $off, true)) return t('Today is the weekly day off 🌙', 'اليوم إجازة أسبوعية 🌙', $lang);
     $came = array_map('intval', $pdo->query("SELECT DISTINCT user_id FROM attendance_logs WHERE DATE(clock_in) = CURDATE()")->fetchAll(PDO::FETCH_COLUMN));
     $recent = array_map('intval', $pdo->query("SELECT DISTINCT user_id FROM attendance_logs WHERE clock_in >= DATE_SUB(NOW(), INTERVAL 60 DAY)")->fetchAll(PDO::FETCH_COLUMN));
     $names = [];
@@ -1028,15 +1033,15 @@ function answerAttendance($pdo, $lang, $which, $username) {
         try { if (function_exists('perm_effective') && empty(perm_effective($pdo, $id, (string)$u['role'])['page.attendance'])) continue; } catch (Throwable $e) {}
         $names[] = '🔴 ' . $u['username'];
     }
-    if (!$names) return t('Everyone came in today 🎉', 'الكل حضر النهارده 🎉', $lang);
-    return t(count($names) . " didn't come today", count($names) . ' ما جوش النهارده', $lang) . "\n" . implode("\n", $names);
+    if (!$names) return t('Everyone came in today 🎉', 'حضر الجميع اليوم 🎉', $lang);
+    return t(count($names) . " didn't come today", count($names) . ' لم يحضروا اليوم', $lang) . "\n" . implode("\n", $names);
 }
 
 function attOptions($lang) {
     $o = [];
     if (can('page.attendance'))       $o[] = ['label' => t('⏱️ My hours', '⏱️ ساعاتي', $lang), 'field' => 'att', 'value' => 'mine'];
-    if (can('page.attendance_admin')) { $o[] = ['label' => t("👥 Who's at work", '👥 مين في الشغل', $lang), 'field' => 'att', 'value' => 'who'];
-                                        $o[] = ['label' => t("🔴 Who didn't come", '🔴 مين ما جاش', $lang), 'field' => 'att', 'value' => 'absent']; }
+    if (can('page.attendance_admin')) { $o[] = ['label' => t("👥 Who's at work", '👥 من في العمل', $lang), 'field' => 'att', 'value' => 'who'];
+                                        $o[] = ['label' => t("🔴 Who didn't come", '🔴 من لم يحضر', $lang), 'field' => 'att', 'value' => 'absent']; }
     $o[] = backOption($lang);
     return $o;
 }
@@ -1080,15 +1085,15 @@ if ($text !== '' && !$tap) {
         $hi = $username !== '' ? " {$username}" : '';
         respond($ctx, pick([
             t("Hey{$hi}! 🚗 Ask me anything — a model, a color, a chassis number, or just tap below.",
-              "أهلاً{$hi}! 🚗 اسألني أي حاجة — موديل، لون، رقم شاسيه، أو دوس تحت.", $lang),
+              "أهلاً{$hi}! 🚗 اسألني عن أي شيء — موديل، لون، رقم شاسيه، أو اضغط بالأسفل.", $lang),
             t("Hi{$hi}! 👋 Try: \"black Tiggo 7?\", \"991628\", or \"everything about Jolion\".",
-              "أهلاً{$hi}! 👋 جرّب: \"تيجو 7 أسود؟\"، \"991628\"، أو \"كل حاجة عن جوليون\".", $lang),
+              "أهلاً{$hi}! 👋 جرّب: \"تيجو 7 أسود؟\"، \"991628\"، أو \"كل شيء عن جوليون\".", $lang),
         ]), menuOptions($isManager, $lang));
     }
     if ($intent === 'help') {
         respond([], t(
             "I can answer things like:\n• \"black Tiggo 7 available?\"\n• \"Emgrand price?\"\n• \"991628\" (chassis lookup)\n• \"compare Tiggo 7 and Tiggo 8\"\n• \"everything about Jolion\"\n• \"how many Chery in stock?\"" . ($isManager ? "\n• \"oldest cars in stock\"" : ""),
-            "أقدر أرد على حاجات زي:\n• \"في تيجو 7 أسود؟\"\n• \"بكام الامجراند؟\"\n• \"991628\" (بحث بالشاسيه)\n• \"قارن تيجو 7 وتيجو 8\"\n• \"كل حاجة عن جوليون\"\n• \"كام شيري متوفر؟\"" . ($isManager ? "\n• \"أقدم عربيات واقفة\"" : ""), $lang),
+            "أستطيع الإجابة عن أسئلة مثل:\n• \"هل يوجد تيجو 7 أسود؟\"\n• \"كم سعر الامجراند؟\"\n• \"991628\" (بحث بالشاسيه)\n• \"قارن تيجو 7 وتيجو 8\"\n• \"كل شيء عن جوليون\"\n• \"كم شيري متوفرة؟\"" . ($isManager ? "\n• \"أقدم السيارات في المخزون\"" : ""), $lang),
             menuOptions($isManager, $lang));
     }
 
@@ -1101,10 +1106,10 @@ if ($text !== '' && !$tap) {
         $rows = $st->fetchAll(PDO::FETCH_ASSOC);
         if (!$rows) {
             respond([], t("No car with chassis \"{$ents['chassis']}\" in the system 🔍",
-                          "مفيش عربية بشاسيه \"{$ents['chassis']}\" في النظام 🔍", $lang), menuOptions($isManager, $lang));
+                          "لا توجد سيارة بالشاسيه \"{$ents['chassis']}\" في النظام 🔍", $lang), menuOptions($isManager, $lang));
         }
         $stMap = ['available' => t('Available ✅','متاحة ✅',$lang), 'sold' => t('Sold 💰','مباعة 💰',$lang),
-                  'reserved' => t('Reserved ⏳','محجوزة ⏳',$lang), 'consignment' => t('Consignment 🤝','امانة 🤝',$lang)];
+                  'reserved' => t('Reserved ⏳','محجوزة ⏳',$lang), 'consignment' => t('Consignment 🤝','أمانة 🤝',$lang)];
         $lines = [];
         foreach ($rows as $r) {
             addCard($pdo, $r, $lang);
@@ -1112,7 +1117,7 @@ if ($text !== '' && !$tap) {
             $l = "🚗 {$r['brand']} {$r['model']} {$r['trim_name']} ({$r['car_year']})"
                . "\n   🔩 {$r['chassis']} · 🎨 " . colorLabel($pdo, $r['color'], $lang)
                . "\n   📍 " . branchTxt($r, $lang) . " · " . ($stMap[$r['status']] ?? $r['status']);
-            if ($days !== null) $l .= "\n   📅 " . t("{$days} days in stock", "{$days} يوم بالمخزون", $lang);
+            if ($days !== null) $l .= "\n   📅 " . t("{$days} days in stock", "{$days} يوماً في المخزون", $lang);
             /* full price picture for this exact car */
             $pStmt = $pdo->prepare("SELECT official_price, customer_price, trade_price FROM pricing
                 WHERE brand = ? AND model_name = ? AND trim_name = ? AND car_year = ? LIMIT 1");
@@ -1149,7 +1154,7 @@ if ($text !== '' && !$tap) {
                     : fmtOfficial($offs[0], $lang));
             }
             $bl .= "\n   📈 {$emoji} {$verdict}";
-            if ($isManager) $bl .= " (" . t("{$sold90}/90d", "{$sold90}/90 يوم", $lang) . ")";
+            if ($isManager) $bl .= " (" . t("{$sold90}/90d", "{$sold90}/90 يوماً", $lang) . ")";
             $blocks[] = $bl;
         }
         respond([], t("⚖️ Head to head:", "⚖️ المقارنة:", $lang) . "\n\n" . implode("\n\n", $blocks),
@@ -1201,7 +1206,7 @@ if ($text !== '' && !$tap) {
     if ($intent === 'aging') {
         if (!$isManager) {
             respond([], t("Stock aging details are manager-only 🔒 — but ask me about stock or prices anytime!",
-                          "تفاصيل عمر المخزون للمديرين فقط 🔒 — بس اسألني عن المتوفر أو الأسعار في أي وقت!", $lang),
+                          "تفاصيل عمر المخزون للمديرين فقط 🔒 — لكن اسألني عن المتوفر أو الأسعار في أي وقت!", $lang),
                     menuOptions($isManager, $lang));
         }
         $sql = "SELECT brand, model, trim_name, car_year, color, chassis, branch, created_at
@@ -1218,7 +1223,7 @@ if ($text !== '' && !$tap) {
             $days = !empty($r['created_at']) ? (int)floor((time() - strtotime($r['created_at'])) / 86400) : 0;
             $flag = $days >= 60 ? ' ⚠️' : '';
             $lines[] = "• {$r['brand']} {$r['model']} {$r['trim_name']} — " . colorLabel($pdo, $r['color'], $lang)
-                     . "\n   ⏳ " . t("{$days} days", "{$days} يوم", $lang) . "{$flag} · 📍 {$r['branch']} · 🔩 {$r['chassis']}";
+                     . "\n   ⏳ " . t("{$days} days", "{$days} يوماً", $lang) . "{$flag} · 📍 {$r['branch']} · 🔩 {$r['chassis']}";
         }
         respond([], t("⏳ Longest sitting in stock:", "⏳ الأقدم في المخزون:", $lang) . "\n" . implode("\n", $lines),
                 menuOptions($isManager, $lang));
@@ -1248,7 +1253,7 @@ if ($text !== '' && !$tap) {
             $opts[] = backOption($lang);
             respond(['brand' => $brand, 'intent' => 'stock'],
                     t("🔍 {$brand} in stock:", "🔍 المتوفر من {$brand}:", $lang) . "\n" . implode("\n", $lines)
-                    . "\n\n" . t("Tap a model for details 👇", "دوس على موديل للتفاصيل 👇", $lang), $opts);
+                    . "\n\n" . t("Tap a model for details 👇", "اضغط على موديل لعرض التفاصيل 👇", $lang), $opts);
         }
     }
 
@@ -1269,9 +1274,9 @@ if ($text !== '' && !$tap) {
         }
         respond($ctx, pick([
             t("Hmm, I didn't spot a car in that — but tap below and I've got you 👇",
-              "مش لاقي عربية في كلامك — بس دوس تحت وأنا معاك 👇", $lang),
+              "لم أجد سيارة في رسالتك — اضغط بالأسفل وسأساعدك 👇", $lang),
             t("Not sure which model you mean 🤔 pick one and I'll dig in:",
-              "مش متأكد من الموديل 🤔 اختار واحد وأنا هدوّر:", $lang),
+              "لست متأكداً من الموديل 🤔 اختر واحداً وسأبحث:", $lang),
         ]), menuOptions($isManager, $lang));
     }
 }
@@ -1280,7 +1285,7 @@ if ($text !== '' && !$tap) {
 
 if ($tap && ($tap['field'] ?? '') === 'att' && in_array($tap['value'] ?? '', ['mine', 'who', 'absent'], true)) {
     try { respond([], answerAttendance($pdo, $lang, $tap['value'], $username), attOptions($lang)); }
-    catch (Throwable $e) { error_log('chatbot attendance: ' . $e->getMessage()); respond([], t('Something went wrong.', 'حصل خطأ.', $lang), menuOptions($isManager, $lang)); }
+    catch (Throwable $e) { error_log('chatbot attendance: ' . $e->getMessage()); respond([], t('Something went wrong.', 'حدث خطأ.', $lang), menuOptions($isManager, $lang)); }
 }
 
 if ($tap && isset($tap['field'])) {
@@ -1303,9 +1308,9 @@ if (empty($ctx['intent'])) {
     $hi = $username !== '' ? " {$username}" : '';
     respond($ctx, pick([
         t("Hey{$hi}! 🚗 Type anything (\"black Tiggo 7?\") or tap below.",
-          "أهلاً{$hi}! 🚗 اكتب أي حاجة (\"تيجو 7 أسود؟\") أو دوس تحت.", $lang),
-        t("Hi{$hi}! Ask me anything about the cars 👇", "أهلاً{$hi}! اسألني أي حاجة عن العربيات 👇", $lang),
-        t("Ready when you are{$hi} 💪 What do you need?", "جاهز{$hi} 💪 محتاج تعرف إيه؟", $lang),
+          "أهلاً{$hi}! 🚗 اكتب أي سؤال (\"تيجو 7 أسود؟\") أو اضغط بالأسفل.", $lang),
+        t("Hi{$hi}! Ask me anything about the cars 👇", "أهلاً{$hi}! اسألني عن أي شيء يخص السيارات 👇", $lang),
+        t("Ready when you are{$hi} 💪 What do you need?", "جاهز{$hi} 💪 ماذا تريد أن تعرف؟", $lang),
     ]), menuOptions($isManager, $lang));
 }
 
@@ -1315,7 +1320,7 @@ $intent = $ctx['intent'];
 if ($intent === 'reorder') {
     if (!$isManager) {
         respond([], t("That one's for managers 🔒 — ask yours, or peek at the Forecast page.",
-                      "دي للمديرين 🔒 — اسأل مديرك أو بُص على صفحة التوقعات.", $lang),
+                      "هذه للمديرين 🔒 — اسأل مديرك أو اطّلع على صفحة التوقعات.", $lang),
                 menuOptions($isManager, $lang));
     }
     respond([], t(
@@ -1337,7 +1342,7 @@ if ($intent === 'hot') {
     $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
     if (!$rows) {
         respond([], t("It's been quiet — no sales in the last 60 days to rank yet.",
-                      "الأمور هادية — لا مبيعات في آخر 60 يوم للترتيب.", $lang), [backOption($lang)]);
+                      "الأمور هادئة — لا مبيعات في آخر 60 يوماً للترتيب.", $lang), [backOption($lang)]);
     }
     $medals = ['🥇', '🥈', '🥉', '4️⃣', '5️⃣'];
     $lines = [];
@@ -1345,12 +1350,12 @@ if ($intent === 'hot') {
         $medal = $medals[$i] ?? '•';
         if ($isManager) {
             $lines[] = t("{$medal} {$r['brand']} {$r['model']} — {$r['sold']} sold",
-                         "{$medal} {$r['brand']} {$r['model']} — اتباع منه {$r['sold']}", $lang);
+                         "{$medal} {$r['brand']} {$r['model']} — بيع منه {$r['sold']}", $lang);
         } else {
             $lines[] = "{$medal} {$r['brand']} {$r['model']}";
         }
     }
-    respond([], t("🔥 Hottest movers (last 60 days):", "🔥 الأكثر رواجاً (آخر 60 يوم):", $lang)
+    respond([], t("🔥 Hottest movers (last 60 days):", "🔥 الأكثر رواجاً (آخر 60 يوماً):", $lang)
             . "\n" . implode("\n", $lines), [backOption($lang)]);
 }
 
@@ -1360,11 +1365,11 @@ if (empty($ctx['brand'])) {
     $options = array_map(fn($b) => ['label' => $b, 'field' => 'brand', 'value' => $b], $brands);
     $options[] = backOption($lang);
     $prompt = [
-        'stock'    => t("Which brand are we checking stock for? 🚗", "هنشوف مخزون أي ماركة؟ 🚗", $lang),
-        'price'    => t("Which brand's deal do you want? 💰", "عايز عرض أي ماركة؟ 💰", $lang),
-        'velocity' => t("Which brand's sales should I read? 📈", "أقرالك مبيعات أي ماركة؟ 📈", $lang),
+        'stock'    => t("Which brand are we checking stock for? 🚗", "مخزون أي ماركة تريد؟ 🚗", $lang),
+        'price'    => t("Which brand's deal do you want? 💰", "عرض أي ماركة تريد؟ 💰", $lang),
+        'velocity' => t("Which brand's sales should I read? 📈", "مبيعات أي ماركة تريد؟ 📈", $lang),
         'incoming' => t("Which brand's shipments? 🚚", "شحنات أي ماركة؟ 🚚", $lang),
-        'deep'     => t("Which brand should I profile? 🧠", "أعملك ملف كامل لأي ماركة؟ 🧠", $lang),
+        'deep'     => t("Which brand should I profile? 🧠", "ملف كامل لأي ماركة؟ 🧠", $lang),
     ][$intent] ?? t("Which brand?", "أي ماركة؟", $lang);
     respond($ctx, $prompt, $options);
 }
@@ -1381,7 +1386,7 @@ if (empty($ctx['model'])) {
     }
     $options = array_map(fn($m) => ['label' => $m, 'field' => 'model', 'value' => $m], $models);
     $options[] = ['label' => t('⬅ Back', '⬅ رجوع', $lang), 'field' => 'brand', 'value' => null];
-    respond($ctx, t("Nice — which {$ctx['brand']}? 👇", "تمام — أي {$ctx['brand']}؟ 👇", $lang), $options);
+    respond($ctx, t("Nice — which {$ctx['brand']}? 👇", "حسناً — أي {$ctx['brand']}؟ 👇", $lang), $options);
 }
 
 $brand = $ctx['brand'];
@@ -1417,12 +1422,12 @@ if (empty($ctx['color'])) {
     if (!$colors) {
         respond($ctx, pick([
             t("No {$brand} {$model} in stock right now 😕 — want the deal or what's coming?",
-              "مفيش {$brand} {$model} متوفر حالياً 😕 — عايز العرض ولا القادم؟", $lang),
+              "لا توجد {$brand} {$model} متوفرة حالياً 😕 — هل تريد العرض أم القادم؟", $lang),
             t("{$brand} {$model} is out of stock at the moment.",
-              "{$brand} {$model} مش متوفر حالياً.", $lang),
+              "{$brand} {$model} غير متوفرة حالياً.", $lang),
         ]), [
-            ['label' => t('💰 See deal', '💰 شوف العرض', $lang),        'field' => 'intent', 'value' => 'price',    'keepModel' => true],
-            ['label' => t('🚚 When arriving', '🚚 القادم امتى', $lang),  'field' => 'intent', 'value' => 'incoming', 'keepModel' => true],
+            ['label' => t('💰 See deal', '💰 عرض السعر', $lang),        'field' => 'intent', 'value' => 'price',    'keepModel' => true],
+            ['label' => t('🚚 When arriving', '🚚 موعد القادم', $lang),  'field' => 'intent', 'value' => 'incoming', 'keepModel' => true],
             backOption($lang),
         ]);
     }

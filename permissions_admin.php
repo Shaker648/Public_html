@@ -263,6 +263,10 @@ body {
 .nav-btn.users { background:var(--green); color:#002b14; }
 .nav-btn.imgs  { background:linear-gradient(90deg,#9333ea,#c084fc); }
 .nav-btn.notif { background:linear-gradient(90deg,#16a34a,#0891b2); }
+.nav-btn.check { background:linear-gradient(90deg,#dc2626,#9333ea); }
+.notif-card.check { border-color:rgba(248,113,113,.4); background:linear-gradient(120deg,rgba(220,38,38,.14),rgba(147,51,234,.10)); }
+.notif-card.check .nc-go { background:linear-gradient(90deg,#dc2626,#9333ea); }
+.notif-card .nc-ic { width:58px; height:58px; border-radius:14px; flex-shrink:0; display:grid; place-items:center; font-size:30px; background:rgba(255,255,255,.06); border:1px solid rgba(255,255,255,.1); }
 .lang-row { display:flex; gap:8px; margin-top:14px; }
 .lang-btn {
     text-decoration:none; padding:7px 14px; border-radius:10px;
@@ -419,6 +423,9 @@ body {
             <?php if (can('page.notifications_admin')): ?>
             <a href="notifications_admin.php?lang=<?= $lang ?>" class="nav-btn notif">🔔 <?= $lang === 'ar' ? 'الإشعارات' : 'Notifications' ?></a>
             <?php endif; ?>
+            <?php if (can('page.stock_check')): ?>
+            <a href="stock_check.php?lang=<?= $lang ?>" class="nav-btn check">📋 <?= $lang === 'ar' ? 'الجرد المفاجئ' : 'Stock check' ?></a>
+            <?php endif; ?>
         </div>
     </div>
     <div class="lang-row">
@@ -439,6 +446,16 @@ body {
     <div>
         <div class="nc-t">🔔 <?= $lang === 'ar' ? 'التحكم في الإشعارات' : 'Notification control' ?></div>
         <div class="nc-s"><?= $lang === 'ar' ? 'من يستلم أي إشعار (المبيعات / المديرين / الأدمن أو أشخاص بعينهم)، ساعات الهدوء، الأجهزة المفعّلة، إشعار تجربة وسجل كل ما أُرسل' : 'Who receives which notification (sales / managers / admins or specific people), quiet hours, enabled phones, a test notification and a log of everything sent' ?></div>
+    </div>
+    <span class="nc-go"><?= $lang === 'ar' ? 'فتح ←' : 'Open →' ?></span>
+</a>
+<?php endif; ?>
+<?php if (can('page.stock_check')): ?>
+<a class="notif-card check" href="stock_check.php?lang=<?= $lang ?>">
+    <div class="nc-ic">📋</div>
+    <div>
+        <div class="nc-t">🚨 <?= $lang === 'ar' ? 'الجرد المفاجئ' : 'Surprise stock check' ?></div>
+        <div class="nc-s"><?= $lang === 'ar' ? 'أرسل جرداً مفاجئاً لأي فرع: حدّد المكلَّف والمدة، وتابع النتيجة لحظة بلحظة، وافتح النظام لمن توقف عنه' : 'Send a surprise check to any branch: pick who does it and the time, follow the result live, and unlock whoever was locked' ?></div>
     </div>
     <span class="nc-go"><?= $lang === 'ar' ? 'فتح ←' : 'Open →' ?></span>
 </a>
