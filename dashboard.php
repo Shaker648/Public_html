@@ -680,6 +680,7 @@ function arDate($dt, $lang) {
             background:linear-gradient(120deg,rgba(220,38,38,.35),rgba(147,51,234,.25)); border:1px solid rgba(248,113,113,.55); box-shadow:0 0 0 0 rgba(239,68,68,.5); animation:dtPulse 2s infinite; }
         @keyframes dtPulse { 70% { box-shadow:0 0 0 12px rgba(239,68,68,0); } 100% { box-shadow:0 0 0 0 rgba(239,68,68,0); } }
         .duty-bar .dt-ic { font-size:24px; }
+        .duty-bar.watch { background:linear-gradient(120deg,rgba(234,179,8,.3),rgba(147,51,234,.25)); border-color:rgba(250,204,21,.6); animation:none; }
         .duty-bar.iss { background:linear-gradient(120deg,rgba(220,38,38,.55),rgba(127,29,29,.45)); border-color:rgba(248,113,113,.8); }
         .duty-bar.chk { background:linear-gradient(120deg,rgba(220,38,38,.45),rgba(234,88,12,.3)); }
         .duty-bar .dt-tx { flex:1; min-width:0; font-size:14.5px; font-weight:900; line-height:1.5; }
@@ -1144,6 +1145,15 @@ function arDate($dt, $lang) {
         <span class="dt-go">🛠️ <?= $lang === 'ar' ? 'اتخاذ قرار' : 'Decide' ?></span>
     </a>
     <?php endif; ?>
+    <?php $watchChk = function_exists('smart_checks_watching') ? smart_checks_watching($pdo, (int)$_SESSION['user_id']) : [];
+    foreach ($watchChk as $wc): [$wT, $wM, , $wX] = smart_check_counts($pdo, (int)$wc['id']); ?>
+    <a class="duty-bar watch" href="stock_check.php?lang=<?= $lang ?>&id=<?= (int)$wc['id'] ?>" data-secs="<?= max(0, (int)$wc['secs']) ?>">
+        <span class="dt-ic">📋</span>
+        <span class="dt-tx"><?= $lang === 'ar' ? 'جرد جارٍ الآن: فرع ' . htmlspecialchars(push_branch_label($pdo, (string)$wc['branch'], 'ar')) . ' — المكلَّف: ' . htmlspecialchars(implode('، ', smart_check_users($pdo, (int)$wc['id']))) : 'Stock check running: ' . htmlspecialchars((string)$wc['branch']) . ' — ' . htmlspecialchars(implode(', ', smart_check_users($pdo, (int)$wc['id']))) ?>
+            <small><?= $lang === 'ar' ? 'تمت مراجعة ' . $wM . ' من أصل ' . $wT . ($wX ? ' · ❌ غير موجودة ' . $wX : '') . ' · ' . ($wc['status'] === 'expired' ? 'انتهى الوقت' : 'متبقٍّ ') : $wM . ' of ' . $wT . ' checked · ' . ($wc['status'] === 'expired' ? 'time is up' : 'left ') ?><?php if ($wc['status'] !== 'expired'): ?><b class="dt-t">—</b><?= (int)$wc['lock_on'] ? ($lang === 'ar' ? ' قبل بدء الإيقاف' : ' before the lock') : '' ?><?php endif; ?></small></span>
+        <span class="dt-go">👁️ <?= $lang === 'ar' ? 'متابعة' : 'Follow' ?></span>
+    </a>
+    <?php endforeach; ?>
     <?php $myChk = function_exists('smart_checks_for_user') ? smart_checks_for_user($pdo, (int)$_SESSION['user_id']) : [];
     foreach ($myChk as $ck): ?>
     <a class="duty-bar chk" href="stock_check.php?lang=<?= $lang ?>&id=<?= (int)$ck['id'] ?>" data-secs="<?= max(0, (int)$ck['secs']) ?>">

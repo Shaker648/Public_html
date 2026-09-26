@@ -53,7 +53,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $okB = $pdo->prepare("SELECT 1 FROM branches WHERE name = ?"); $okB->execute([$branch]);
                 if (!$okB->fetchColumn()) { echo json_encode(['ok' => false, 'error' => 'branch']); exit; }
                 if (!$users) { echo json_encode(['ok' => false, 'error' => 'nobody']); exit; }
-                $id = smart_check_create($pdo, $branch, $users, (int)($in['minutes'] ?? 30), trim((string)($in['note'] ?? '')), !empty($in['lock']), $me);
+                $id = smart_check_create($pdo, $branch, $users, (int)($in['minutes'] ?? 30), trim((string)($in['note'] ?? '')), !empty($in['lock']), $me, array_map('intval', (array)($in['watch'] ?? [])));
                 echo json_encode(['ok' => true, 'id' => $id]); exit;
             case 'mark':
                 if (!sc_access($pdo, $cid, $uid, false) && !$isBoss) break;
@@ -69,7 +69,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 // the admin follows the check car by car (one notification per check on the phone, updated each time)
                 if ($prev && $state && ($prev['state'] !== $state || ($state === 'missing' && $note !== '' && $note !== (string)$prev['note']))) {
                     notify_event($pdo, 'check_item', ['id' => $cid, 'branch' => $prev['branch'], 'label' => $prev['label'], 'chassis' => $prev['chassis'], 'state' => $state,
-                        'note' => $note, 'done' => $counts[1], 'total' => $counts[0], 'missing' => $counts[3], 'actor' => $me, 'tag' => 'check-' . $cid]);
+                        'note' => $note, 'done' => $counts[1], 'total' => $counts[0], 'missing' => $counts[3], 'actor' => $me, 'tag' => 'check-' . $cid]
+                        + (($w = smart_check_watchers($pdo, $cid)) ? ['only' => $w] : []));
                 }
                 echo json_encode(['ok' => true, 'counts' => $counts]); exit;
             case 'extra':
@@ -170,6 +171,10 @@ $ago = function ($s) use ($ar): string {
 .sc-p small{font-size:10.5px;color:#86efac;margin-inline-start:4px}
 .sc-p.on{background:linear-gradient(90deg,#0ea5e9,#6366f1);border-color:transparent;color:#fff}.sc-p.on small{color:#e0f2fe}
 .sc-times{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.sc-watch{margin-top:16px;padding:12px 14px;border-radius:14px;border:1px solid rgba(250,204,21,.3);background:rgba(250,204,21,.05)}
+.sc-w{height:36px;padding:0 13px;border-radius:999px;border:1px solid var(--line);background:rgba(255,255,255,.04);color:var(--txt);font:inherit;font-size:13px;font-weight:800;cursor:pointer}
+.sc-w.on{background:linear-gradient(90deg,#f59e0b,#eab308);border-color:transparent;color:#1c1917}
+.sc-hint{display:block;margin-top:6px;font-size:12px;color:var(--mut);font-weight:700}
 .sc-t{height:36px;padding:0 13px;border-radius:10px;border:1px solid var(--line);background:rgba(255,255,255,.04);color:var(--txt);font:inherit;font-size:13px;font-weight:800;cursor:pointer}
 .sc-t.on{background:rgba(245,158,11,.2);border-color:rgba(245,158,11,.6);color:#fde68a}
 .sc-in{height:40px;border-radius:12px;border:1px solid var(--line);background:#0b1426;color:var(--txt);font:inherit;font-size:14px;padding:0 12px}
@@ -228,29 +233,38 @@ $ago = function ($s) use ($ar): string {
         <p class="nf-note"><?= $ar ? 'يصل للمكلَّف فوراً على موبايله وداخل النظام. قائمة السيارات هي الموجودة في الفرع لحظة الإرسال.' : 'It reaches the people chosen at once, on their phone and in the system. The list is the cars at the branch right now.' ?></p>
         <div class="sc-form">
             <div>
-                <label class="sc-l">1) <?= $ar ? 'الفرع' : 'Branch' ?></label>
+                <label class="sc-l"><?= $ar ? 'الفرع' : 'Branch' ?></label>
                 <div class="sc-brs">
                     <?php foreach ($branches as $b): ?>
                     <button type="button" class="sc-b" data-b="<?= htmlspecialchars($b['name']) ?>"><b>📍 <?= htmlspecialchars(($ar ? $b['name_ar'] : $b['name_en']) ?: $b['name']) ?></b><small>🚗 <?= $ar ? ((int)$b['n'] ? push_ar_cars((int)$b['n']) : 'لا توجد سيارات') : (int)$b['n'] . ' cars' ?></small></button>
                     <?php endforeach; ?>
                 </div>
-                <label class="sc-l" style="margin-top:16px">3) <?= $ar ? 'المدة المسموحة' : 'Time allowed' ?></label>
+                <label class="sc-l" style="margin-top:16px"><?= $ar ? 'المدة المسموحة' : 'Time allowed' ?></label>
                 <div class="sc-times">
                     <?php foreach ([15, 30, 45, 60, 90, 120] as $m): ?><button type="button" class="sc-t<?= $m === 30 ? ' on' : '' ?>" data-m="<?= $m ?>"><?= $ar ? ([15 => '15 دقيقة', 30 => '30 دقيقة', 45 => '45 دقيقة', 60 => 'ساعة', 90 => 'ساعة ونصف', 120 => 'ساعتان'][$m]) : ($m < 60 ? $m . ' min' : ($m / 60) . ' h') ?></button><?php endforeach; ?>
                     <input type="number" class="sc-in sc-num" id="scMin" min="5" max="1440" value="30"> <?= $ar ? 'دقيقة' : 'min' ?>
                 </div>
             </div>
             <div>
-                <label class="sc-l">2) <?= $ar ? 'المكلَّف بالجرد' : 'Who does the check' ?></label>
+                <label class="sc-l"><?= $ar ? 'المكلَّف بالجرد' : 'Who does the check' ?></label>
                 <div class="sc-ppl">
                     <?php foreach ($people as $p): ?>
                     <button type="button" class="sc-p" data-u="<?= (int)$p['id'] ?>" data-here="<?= htmlspecialchars($here[(int)$p['id']] ?? '') ?>"><?= htmlspecialchars($p['username']) ?><small></small></button>
                     <?php endforeach; ?>
                 </div>
-                <label class="sc-l" style="margin-top:16px">4) <?= $ar ? 'ملاحظة (اختياري)' : 'Note (optional)' ?></label>
+                <label class="sc-l" style="margin-top:16px"><?= $ar ? 'ملاحظة (اختياري)' : 'Note (optional)' ?></label>
                 <input class="sc-in sc-note" id="scNote" maxlength="200" placeholder="<?= $ar ? 'مثال: يرجى التأكد من الشاسيه لكل سيارة' : 'e.g. check every chassis number' ?>">
                 <label class="sc-opt"><span class="tg"><input type="checkbox" id="scLock" checked><span></span></span> 🔒 <?= $ar ? 'إيقاف النظام عن المكلَّف إذا لم يكتمل الجرد في الوقت' : 'Lock the system for them if it is not finished in time' ?></label>
             </div>
+        </div>
+        <div class="sc-watch">
+            <label class="sc-l">🔔 <?= $ar ? 'من يستلم إشعارات هذا الجرد؟ (البدء، الوقت المتبقي، كل سيارة، النتيجة)' : 'Who gets this check\'s notifications? (start, time left, every car, result)' ?></label>
+            <div class="sc-ppl">
+                <?php foreach ($people as $p): ?>
+                <button type="button" class="sc-w<?= (int)$p['id'] === $uid ? ' on' : '' ?>" data-u="<?= (int)$p['id'] ?>"><?= (int)$p['id'] === $uid ? '⭐ ' . ($ar ? 'أنا' : 'Me') . ' (' . htmlspecialchars($p['username']) . ')' : htmlspecialchars($p['username']) ?></button>
+                <?php endforeach; ?>
+            </div>
+            <small class="sc-hint"><?= $ar ? 'المكلَّف بالجرد يستلم إشعاراته دائماً.' : 'The people doing the check always get their notifications.' ?></small>
         </div>
         <button type="button" class="sc-go" id="scGo">🚨 <?= $ar ? 'إرسال الجرد الآن' : 'Send the check now' ?></button>
         <div class="nf-msg" id="scMsg"></div>
@@ -288,6 +302,7 @@ $ago = function ($s) use ($ar): string {
 
     <?php if ($isBoss): ?>
     <section class="nf-card">
+        <?php $wn = smart_check_watchers($pdo, (int)$check['id']); if ($wn): ?><p class="nf-note">🔔 <?= $ar ? 'يستلم الإشعارات: ' : 'Notified: ' ?><?= htmlspecialchars(implode('، ', $wn)) ?></p><?php endif; ?>
         <h2>👤 <?= $ar ? 'المكلَّفون' : 'Assigned' ?></h2>
         <div class="sc-ppl2">
             <?php foreach ($assigned as $aid => $an): ?>
@@ -342,6 +357,7 @@ $ago = function ($s) use ($ar): string {
         const paintHere = () => ppl.forEach(p => { p.querySelector('small').textContent = branch && p.dataset.here === branch ? (AR ? '• في الفرع الآن' : '• at the branch') : ''; });
         document.querySelectorAll('.sc-b').forEach(b => b.addEventListener('click', () => { branch = b.dataset.b; document.querySelectorAll('.sc-b').forEach(x => x.classList.toggle('on', x === b)); paintHere(); }));
         ppl.forEach(p => p.addEventListener('click', () => p.classList.toggle('on')));
+        document.querySelectorAll('.sc-w').forEach(w => w.addEventListener('click', () => w.classList.toggle('on')));
         document.querySelectorAll('.sc-t').forEach(t => t.addEventListener('click', () => { mins = +t.dataset.m; $('scMin').value = mins; document.querySelectorAll('.sc-t').forEach(x => x.classList.toggle('on', x === t)); }));
         $('scMin').addEventListener('input', () => { mins = +$('scMin').value; document.querySelectorAll('.sc-t').forEach(x => x.classList.toggle('on', +x.dataset.m === mins)); });
         $('scGo').addEventListener('click', async () => {
@@ -350,7 +366,8 @@ $ago = function ($s) use ($ar): string {
             if (!users.length) { m.textContent = AR ? 'اختر المكلَّف بالجرد' : 'Pick who does the check'; m.className = 'nf-msg bad'; return; }
             if (!confirm(AR ? 'إرسال الجرد المفاجئ الآن؟' : 'Send the surprise check now?')) return;
             $('scGo').disabled = true;
-            const r = await post({ action: 'create', branch, users, minutes: +$('scMin').value || 30, note: $('scNote').value, lock: $('scLock').checked });
+            const r = await post({ action: 'create', branch, users, minutes: +$('scMin').value || 30, note: $('scNote').value, lock: $('scLock').checked,
+                watch: [...document.querySelectorAll('.sc-w.on')].map(w => +w.dataset.u) });
             if (r.ok) location.href = '?lang=<?= $lang ?>&id=' + r.id; else { $('scGo').disabled = false; m.textContent = '✗ ' + r.error; m.className = 'nf-msg bad'; }
         });
     }

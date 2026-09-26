@@ -67,6 +67,7 @@ function notify_events(): array
         // surprise stock check (جرد مفاجئ)
         'check_start'      => ['بدء جرد مفاجئ',                 'Surprise stock check started', '📋', ['admin'], true, true, 'check'],
         'check_item'       => ['تأكيد كل سيارة أثناء الجرد',    'Each car confirmed during a check', '🔎', ['admin'], true, null, 'check'],
+        'check_tick'       => ['الوقت المتبقي للجرد (منتصف المدة)', 'Stock check time left (half-way)', '⏳', ['admin'], true, true, 'check'],
         'check_warn'       => ['اقتراب انتهاء وقت الجرد',        'Stock check time almost up', '⚠️', ['admin'], true, true, 'check'],
         'check_locked'     => ['إيقاف النظام لعدم إتمام الجرد',  'Locked: stock check not done', '🔒', ['admin'], true, true, 'check'],
         'check_done'       => ['نتيجة الجرد',                    'Stock check result',         '✅', ['admin'], true, null, 'check'],
@@ -322,6 +323,10 @@ function push_tables(PDO $pdo): void
         finished_by VARCHAR(100) NULL,
         INDEX idx_status (status)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    try {
+        $cols = $pdo->query("SHOW COLUMNS FROM stock_checks")->fetchAll(PDO::FETCH_COLUMN);
+        if (!in_array('watchers', $cols, true)) $pdo->exec("ALTER TABLE stock_checks ADD watchers TEXT NULL, ADD half_sent TINYINT NOT NULL DEFAULT 0");
+    } catch (Throwable $e) { error_log('stock_checks upgrade: ' . $e->getMessage()); }
     $pdo->exec("CREATE TABLE IF NOT EXISTS stock_check_users (
         check_id INT NOT NULL,
         user_id INT NOT NULL,
@@ -811,6 +816,7 @@ function notify_message(PDO $pdo, string $event, array $d, string $lang): array
             $url = 'stock_check.php?lang=' . $lang . '&id=' . (int)($d['id'] ?? 0);
             break;
         case 'check_start':
+        case 'check_tick':
         case 'check_warn':
         case 'check_locked':
         case 'check_done':
@@ -818,13 +824,17 @@ function notify_message(PDO $pdo, string $event, array $d, string $lang): array
             $n  = (int)($d['count'] ?? 0);
             $url = 'stock_check.php?lang=' . $lang . (!empty($d['id']) ? '&id=' . (int)$d['id'] : '');
             if ($event === 'check_start') {
-                $title = $ev[2] . ' ' . ($ar ? 'جرد مفاجئ: فرع ' . $bn : 'Surprise stock check: ' . $bn);
-                $body[] = $ar ? 'المطلوب تأكيد وجود ' . push_ar_cars($n) . ' في الفرع قبل الساعة ' . $d['until'] : 'Confirm ' . $n . ' cars at the branch before ' . $d['until'];
-                $body[] = ($ar ? '👤 المكلَّف: ' : '👤 Assigned: ') . ($d['users'] ?? '');
+                $title = $ev[2] . ' ' . ($ar ? 'بدأ جرد مفاجئ: فرع ' . $bn . ' — المكلَّف: ' . ($d['users'] ?? '') : 'Surprise stock check started: ' . $bn . ' — ' . ($d['users'] ?? ''));
+                $body[] = $ar ? '⏱️ المدة ' . ($d['dur'] ?? '') . ' — تنتهي الساعة ' . $d['until'] : '⏱️ ' . ($d['dur'] ?? '') . ' — ends at ' . $d['until'];
+                $body[] = $ar ? '🚗 المطلوب تأكيد وجود ' . push_ar_cars($n) . ' في الفرع' : '🚗 ' . $n . ' cars to confirm';
                 if (!empty($d['note'])) $body[] = '📝 ' . $d['note'];
-                if (!empty($d['lock'])) $body[] = $ar ? '⚠️ إذا لم يكتمل الجرد في الوقت يتوقف النظام' : '⚠️ If not finished in time the system locks';
+                if (!empty($d['lock'])) $body[] = $ar ? '🔒 بعد الساعة ' . $d['until'] . ' يبدأ إيقاف النظام عن المكلَّف إذا لم يكتمل الجرد' : '🔒 After ' . $d['until'] . ' the system locks for them if not finished';
+            } elseif ($event === 'check_tick') {
+                $title = '⏳ ' . ($ar ? 'متبقٍّ ' . push_ar_mins((int)$d['mins']) . ' — جرد فرع ' . $bn : (int)$d['mins'] . ' min left — ' . $bn . ' stock check');
+                $body[] = ($ar ? '👤 المكلَّف: ' : '👤 Assigned: ') . ($d['users'] ?? '') . ' · ' . ($ar ? 'تمت مراجعة ' . (int)$d['done'] . ' من أصل ' . $n : (int)$d['done'] . ' of ' . $n . ' checked');
+                $body[] = $ar ? '🔒 ينتهي الوقت الساعة ' . ($d['until'] ?? '') . (!empty($d['lock']) ? ' ثم يبدأ إيقاف النظام' : '') : '🔒 Time ends at ' . ($d['until'] ?? '') . (!empty($d['lock']) ? ', then the lock starts' : '');
             } elseif ($event === 'check_warn') {
-                $title = $ev[2] . ' ' . ($ar ? 'متبقٍّ ' . push_ar_mins((int)$d['mins']) . ' على انتهاء جرد فرع ' . $bn : (int)$d['mins'] . ' min left for the ' . $bn . ' stock check');
+                $title = $ev[2] . ' ' . ($ar ? 'متبقٍّ ' . push_ar_mins((int)$d['mins']) . ' على بدء الإيقاف — جرد فرع ' . $bn : (int)$d['mins'] . ' min until the lock — ' . $bn . ' stock check');
                 $body[] = ($ar ? 'تم تأكيد ' : 'Checked ') . (int)$d['done'] . ($ar ? ' من أصل ' : ' of ') . $n . ($ar ? '' : ' cars') . ' · ' . ($d['users'] ?? '');
             } elseif ($event === 'check_locked') {
                 $title = $ev[2] . ' ' . ($ar ? 'تم إيقاف النظام عن ' : 'System locked for ') . ($d['users'] ?? '');
@@ -889,7 +899,7 @@ function notify_message(PDO $pdo, string $event, array $d, string $lang): array
         default:
             $title = $ev[2] . ' ' . ($ar ? $ev[0] : $ev[1]);
     }
-    $noBy = ['test', 'transfer_missing', 'transfer_resolved', 'check_start', 'check_warn', 'check_locked', 'check_done', 'transfer_received', 'duty_start', 'duty_warn', 'duty_locked', 'duty_done', 'duty_unlocked', 'sale_celebrate', 'last_car', 'reserve_old', 'stock_aged', 'transfer_unconfirmed',
+    $noBy = ['test', 'check_tick', 'transfer_missing', 'transfer_resolved', 'check_start', 'check_warn', 'check_locked', 'check_done', 'transfer_received', 'duty_start', 'duty_warn', 'duty_locked', 'duty_done', 'duty_unlocked', 'sale_celebrate', 'last_car', 'reserve_old', 'stock_aged', 'transfer_unconfirmed',
              'amana_long', 'bank_waiting', 'clockout_forgot', 'login_failed', 'price_reserved'];
     if ($by !== '' && !in_array($event, $noBy, true) && strpos($event, 'att_') !== 0) $body[] = ($ar ? '✍️ بواسطة ' : '✍️ by ') . $by;
     return [
@@ -1072,6 +1082,22 @@ function notify_event(PDO $pdo, string $event, array $data = []): void
                 $am = notify_message($pdo, $event, $data, $opt['lang']);
                 $pdo->prepare("INSERT INTO activity_log (event, title, actor, url) VALUES (?, ?, ?, ?)")->execute([$event, $am['title'], $actor, $am['url']]);
             } catch (Throwable $e) { error_log('activity_log: ' . $e->getMessage()); }
+        }
+
+        // exactly these people (chosen by the admin for this one action, e.g. a stock check)
+        if (isset($data['only']) && is_array($data['only'])) {
+            $only = array_values(array_unique(array_filter(array_map('strval', $data['only']))));
+            if (!$only) return;
+            $ph = implode(',', array_fill(0, count($only), '?'));
+            $st = $pdo->prepare("SELECT id FROM users WHERE active = 1 AND username IN ($ph)");
+            $st->execute($only);
+            $ids = array_map('intval', $st->fetchAll(PDO::FETCH_COLUMN));
+            if (!$ids) return;
+            $msg = notify_message($pdo, $event, $data, $opt['lang']);
+            $logId = notify_store($pdo, $event, $msg, $actor, $ids, false, (string)($data['ref'] ?? ''));
+            if (empty($data['force']) && push_in_quiet_hours($opt)) return;
+            notify_deliver($pdo, $logId, $event, $msg, $ids, $opt['lang'], (string)($data['tag'] ?? ($event . '-' . $logId)), false, !empty($data['now']));
+            return;
         }
 
         $rule = notify_rules($pdo)[$event];
