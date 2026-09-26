@@ -1006,7 +1006,7 @@ function notify_deliver(PDO $pdo, int $logId, string $event, array $msg, array $
 
     // same kind, not seen yet, in the last 15 minutes → one grouped notification
     $group = [];
-    if (!in_array($event, ['message', 'test', 'transfer_incoming', 'check_item'], true)) {
+    if (!in_array($event, ['message', 'test', 'transfer_incoming', 'check_item', 'check_start', 'check_tick', 'check_warn', 'check_locked', 'check_done', 'transfer_missing'], true)) {
         $in2 = implode(',', $withDev);
         $gs = $pdo->prepare("SELECT i.user_id, l.title FROM notify_inbox i JOIN notify_log l ON l.id = i.log_id
                              WHERE i.user_id IN ($in2) AND l.event = ? AND i.seen_at IS NULL AND l.created_at >= NOW() - INTERVAL 15 MINUTE

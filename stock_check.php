@@ -121,6 +121,8 @@ $stLbl = $ar ? ['active' => '⏳ جارٍ', 'expired' => '⌛ انتهى الو�
 if ($isBoss && !$check) {
     $branches = $pdo->query("SELECT b.name, b.name_ar, b.name_en, (SELECT COUNT(*) FROM cars c WHERE c.branch = b.name AND c.status IN ('available', 'reserved')) AS n FROM branches b ORDER BY b.id")->fetchAll(PDO::FETCH_ASSOC);
     $people = $pdo->query("SELECT id, username, role FROM users WHERE active = 1 ORDER BY FIELD(role,'manager','sales','admin'), username")->fetchAll(PDO::FETCH_ASSOC);
+    $phones = [];   // user id => phones with notifications turned on
+    try { foreach ($pdo->query("SELECT user_id, COUNT(*) n FROM push_subscriptions GROUP BY user_id") as $r) $phones[(int)$r['user_id']] = (int)$r['n']; } catch (Throwable $e) {}
     $here = [];   // who is clocked in where right now
     try { foreach ($pdo->query("SELECT user_id, branch_name FROM attendance_logs WHERE clock_in >= CURDATE() AND clock_out IS NULL") as $r) $here[(int)$r['user_id']] = $r['branch_name']; } catch (Throwable $e) {}
     $list = $pdo->query("SELECT c.*, TIMESTAMPDIFF(SECOND, NOW(), c.deadline) AS secs,
@@ -174,6 +176,10 @@ $ago = function ($s) use ($ar): string {
 .sc-watch{margin-top:16px;padding:12px 14px;border-radius:14px;border:1px solid rgba(250,204,21,.3);background:rgba(250,204,21,.05)}
 .sc-w{height:36px;padding:0 13px;border-radius:999px;border:1px solid var(--line);background:rgba(255,255,255,.04);color:var(--txt);font:inherit;font-size:13px;font-weight:800;cursor:pointer}
 .sc-w.on{background:linear-gradient(90deg,#f59e0b,#eab308);border-color:transparent;color:#1c1917}
+.sc-grp{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 8px}
+.sc-grp button{height:30px;padding:0 11px;border-radius:9px;border:1px solid rgba(250,204,21,.35);background:rgba(250,204,21,.08);color:#fde68a;font:inherit;font-size:12px;font-weight:800;cursor:pointer}
+.sc-w i{font-style:normal;font-size:12px;margin-inline-start:2px}
+.sc-w i.no{opacity:.75}
 .sc-hint{display:block;margin-top:6px;font-size:12px;color:var(--mut);font-weight:700}
 .sc-t{height:36px;padding:0 13px;border-radius:10px;border:1px solid var(--line);background:rgba(255,255,255,.04);color:var(--txt);font:inherit;font-size:13px;font-weight:800;cursor:pointer}
 .sc-t.on{background:rgba(245,158,11,.2);border-color:rgba(245,158,11,.6);color:#fde68a}
@@ -259,12 +265,19 @@ $ago = function ($s) use ($ar): string {
         </div>
         <div class="sc-watch">
             <label class="sc-l">🔔 <?= $ar ? 'من يستلم إشعارات هذا الجرد؟ (البدء، الوقت المتبقي، كل سيارة، النتيجة)' : 'Who gets this check\'s notifications? (start, time left, every car, result)' ?></label>
+            <div class="sc-grp">
+                <button type="button" data-g="admin">👑 <?= $ar ? 'الإدارة' : 'Admins' ?></button>
+                <button type="button" data-g="manager">🧑‍💼 <?= $ar ? 'المدراء' : 'Managers' ?></button>
+                <button type="button" data-g="sales">🛒 <?= $ar ? 'المبيعات' : 'Sales' ?></button>
+                <button type="button" data-g="*">👥 <?= $ar ? 'الكل' : 'Everyone' ?></button>
+                <button type="button" data-g="none">✖ <?= $ar ? 'إلغاء التحديد' : 'Clear' ?></button>
+            </div>
             <div class="sc-ppl">
-                <?php foreach ($people as $p): ?>
-                <button type="button" class="sc-w<?= (int)$p['id'] === $uid ? ' on' : '' ?>" data-u="<?= (int)$p['id'] ?>"><?= (int)$p['id'] === $uid ? '⭐ ' . ($ar ? 'أنا' : 'Me') . ' (' . htmlspecialchars($p['username']) . ')' : htmlspecialchars($p['username']) ?></button>
+                <?php foreach ($people as $p): $pid = (int)$p['id']; $on = $pid === $uid || in_array($p['role'], ['admin', 'manager'], true); $ph = $phones[$pid] ?? 0; ?>
+                <button type="button" class="sc-w<?= $on ? ' on' : '' ?>" data-u="<?= $pid ?>" data-role="<?= htmlspecialchars($p['role']) ?>" title="<?= $ph ? ($ar ? 'الإشعارات مفعّلة على ' . $ph . ' جهاز' : $ph . ' device(s) with notifications on') : ($ar ? 'لم يفعّل الإشعارات على أي هاتف — ستصله داخل النظام فقط' : 'No phone with notifications on — in the system only') ?>"><?= $pid === $uid ? '⭐ ' . ($ar ? 'أنا' : 'Me') . ' (' . htmlspecialchars($p['username']) . ')' : htmlspecialchars($p['username']) ?> <i class="<?= $ph ? 'ok' : 'no' ?>"><?= $ph ? '📲' . ($ph > 1 ? $ph : '') : '🔕' ?></i></button>
                 <?php endforeach; ?>
             </div>
-            <small class="sc-hint"><?= $ar ? 'المكلَّف بالجرد يستلم إشعاراته دائماً.' : 'The people doing the check always get their notifications.' ?></small>
+            <small class="sc-hint"><?= $ar ? 'المكلَّف بالجرد يستلم إشعاراته دائماً. 📲 = الإشعارات مفعّلة على هاتفه · 🔕 = لم يفعّلها بعد (تصله داخل النظام فقط)، ويستلم كل شخص الإشعار على كل هاتف فعّل عليه الإشعارات.' : 'The people doing the check always get it. 📲 = notifications on · 🔕 = not turned on yet (in the system only). Each person gets it on every phone where they turned notifications on.' ?></small>
         </div>
         <button type="button" class="sc-go" id="scGo">🚨 <?= $ar ? 'إرسال الجرد الآن' : 'Send the check now' ?></button>
         <div class="nf-msg" id="scMsg"></div>
@@ -358,6 +371,13 @@ $ago = function ($s) use ($ar): string {
         document.querySelectorAll('.sc-b').forEach(b => b.addEventListener('click', () => { branch = b.dataset.b; document.querySelectorAll('.sc-b').forEach(x => x.classList.toggle('on', x === b)); paintHere(); }));
         ppl.forEach(p => p.addEventListener('click', () => p.classList.toggle('on')));
         document.querySelectorAll('.sc-w').forEach(w => w.addEventListener('click', () => w.classList.toggle('on')));
+        document.querySelectorAll('.sc-grp button').forEach(g => g.addEventListener('click', () => {
+            const ws = [...document.querySelectorAll('.sc-w')];
+            if (g.dataset.g === 'none') { ws.forEach(w => w.classList.remove('on')); return; }
+            const grp = ws.filter(w => g.dataset.g === '*' || w.dataset.role === g.dataset.g);
+            const all = grp.every(w => w.classList.contains('on'));
+            grp.forEach(w => w.classList.toggle('on', !all));
+        }));
         document.querySelectorAll('.sc-t').forEach(t => t.addEventListener('click', () => { mins = +t.dataset.m; $('scMin').value = mins; document.querySelectorAll('.sc-t').forEach(x => x.classList.toggle('on', x === t)); }));
         $('scMin').addEventListener('input', () => { mins = +$('scMin').value; document.querySelectorAll('.sc-t').forEach(x => x.classList.toggle('on', +x.dataset.m === mins)); });
         $('scGo').addEventListener('click', async () => {
