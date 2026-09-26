@@ -4,6 +4,8 @@ require 'config.php';
 require_once __DIR__ . '/push_helpers.php';
 require_once __DIR__ . '/notify_smart.php';
 require 'car_images_helpers.php';
+require_once __DIR__ . '/pricing_helpers.php';
+pricing_fix_duplicates($pdo);
 
 $lang = $_GET['lang'] ?? 'ar';
 $dir  = $lang === 'ar' ? 'rtl' : 'ltr';

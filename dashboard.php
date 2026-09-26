@@ -3,6 +3,8 @@
 require 'auth.php';
 require 'config.php';
 require 'reserve_helpers.php';
+require_once __DIR__ . '/pricing_helpers.php';
+pricing_fix_duplicates($pdo);
 
 $lang = $_GET['lang'] ?? 'ar';
 
@@ -264,9 +266,9 @@ $query = "
         colors.color_en,
         branches.name_ar,
         branches.name_en,
-        MAX(pricing.official_price) AS official_price,
-        MAX(pricing.customer_price) AS customer_price,
-        MAX(pricing.trade_price)    AS trade_price,
+        pricing.official_price,
+        pricing.customer_price,
+        pricing.trade_price,
         TIMESTAMPDIFF(DAY, cars.created_at, NOW()) AS days_in
     FROM cars
     LEFT JOIN colors   ON cars.color  = colors.color_en
@@ -275,6 +277,10 @@ $query = "
                       AND pricing.model_name = cars.model
                       AND pricing.trim_name  = cars.trim_name
                       AND pricing.car_year   = cars.car_year
+                      AND pricing.id = (SELECT p2.id FROM pricing p2          -- the latest saved price, same as the prices page
+                                        WHERE p2.brand = cars.brand AND p2.model_name = cars.model
+                                          AND p2.trim_name = cars.trim_name AND p2.car_year = cars.car_year
+                                        ORDER BY p2.updated_at DESC, p2.id DESC LIMIT 1)
     $whereClause
     GROUP BY cars.id
     ORDER BY cars.id DESC
