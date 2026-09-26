@@ -355,6 +355,12 @@ function perm_catalog(): array
                     'den' => 'Choose who gets each event (sale, transfer, reservation…), see every linked phone and the delivery log',
                     'd' => [1, 0, 0],
                 ],
+                'page.lockdown' => [
+                    'ar' => 'إيقاف النظام', 'en' => 'Stop the system',
+                    'dar' => 'إيقاف النظام عن أي موظف مع سبب، والتحكم في البصمة أثناء الإيقاف، وفتح النظام',
+                    'den' => 'Stop the system for anyone with a reason, control the clock-in during the stop, and unlock',
+                    'd' => [1, 0, 0],
+                ],
                 'page.stock_check' => [
                     'ar' => 'الجرد المفاجئ', 'en' => 'Surprise stock check',
                     'dar' => 'إرسال جرد مفاجئ لفرع: تحديد المكلَّف والمدة، ومتابعة النتيجة وفتح النظام لمن توقف عنه',

@@ -238,7 +238,7 @@ $T = $lang === 'ar' ? [
     'm_empty' => 'Write the message first',
 ];
 $T += $lang === 'ar' ? [
-    'g_live' => '⚡ أحداث فورية', 'g_remind' => '⏰ تذكيرات تلقائية', 'g_security' => '🛡️ الأمان', 'g_check' => '📋 الجرد المفاجئ', 'owner' => 'المعنيّ بالأمر',
+    'g_live' => '⚡ أحداث فورية', 'g_remind' => '⏰ تذكيرات تلقائية', 'g_security' => '🛡️ الأمان', 'g_check' => '📋 الجرد المفاجئ', 'g_lock' => '🔒 إيقاف النظام', 'owner' => 'المعنيّ بالأمر',
     'ownerTip' => 'من تخصه العملية: من حجز السيارة، أو موظفو الفرع الذي تتجه إليه السيارة، أو صاحب طلب التقسيط…',
     's_h' => 'إعدادات التذكيرات التلقائية', 's_note' => 'تُرسل التذكيرات في أوقات العمل (١٠ ص – ٩ م) — باستثناء تذكير الانصراف',
     's_res' => 'التذكير بالحجز بعد', 's_aged' => 'تُعد السيارة «قديمة» بعد', 's_dow' => 'تقرير السيارات القديمة كل يوم', 's_amana' => 'التذكير بالأمانة بعد',
@@ -258,7 +258,7 @@ $T += $lang === 'ar' ? [
     'q_h' => 'رسائل مجدولة', 'q_cancel' => 'إلغاء', 'q_cancelQ' => 'إلغاء الرسالة المجدولة؟',
     'o_h' => 'لم يفعّلوا الإشعارات', 'o_note' => 'هؤلاء لم يفعّلوا الإشعارات على أي هاتف — لن تصلهم إلا داخل النظام', 'o_all' => '📣 تذكيرهم جميعاً', 'o_one' => 'تذكير', 'o_done' => '✅ أُرسلت إليهم رسالة بالخطوات', 'o_none' => '🎉 الجميع فعّلوا الإشعارات',
 ] : [
-    'g_live' => '⚡ Live events', 'g_remind' => '⏰ Automatic reminders', 'g_security' => '🛡️ Security', 'g_check' => '📋 Surprise stock check', 'owner' => 'Person concerned',
+    'g_live' => '⚡ Live events', 'g_remind' => '⏰ Automatic reminders', 'g_security' => '🛡️ Security', 'g_check' => '📋 Surprise stock check', 'g_lock' => '🔒 Stopping the system', 'owner' => 'Person concerned',
     'ownerTip' => 'Whoever it is about: who reserved the car, the staff of the branch it is going to, the salesperson of the bank request…',
     's_h' => 'Automatic reminder settings', 's_note' => 'Reminders go out in working hours (10 am – 9 pm) — except the clock-out one',
     's_res' => 'Remind about a reservation after', 's_aged' => 'A car is "old" after', 's_dow' => 'Old-cars report every', 's_amana' => 'Remind about a consignment after',

@@ -264,6 +264,9 @@ body {
 .nav-btn.imgs  { background:linear-gradient(90deg,#9333ea,#c084fc); }
 .nav-btn.notif { background:linear-gradient(90deg,#16a34a,#0891b2); }
 .nav-btn.check { background:linear-gradient(90deg,#dc2626,#9333ea); }
+.nav-btn.lock { background:linear-gradient(90deg,#7f1d1d,#b91c1c); }
+.notif-card.lock { border-color:rgba(239,68,68,.55); background:linear-gradient(120deg,rgba(127,29,29,.35),rgba(15,23,42,.6)); }
+.notif-card.lock .nc-go { background:linear-gradient(90deg,#b91c1c,#7f1d1d); }
 .notif-card.check { border-color:rgba(248,113,113,.4); background:linear-gradient(120deg,rgba(220,38,38,.14),rgba(147,51,234,.10)); }
 .notif-card.check .nc-go { background:linear-gradient(90deg,#dc2626,#9333ea); }
 .notif-card .nc-ic { width:58px; height:58px; border-radius:14px; flex-shrink:0; display:grid; place-items:center; font-size:30px; background:rgba(255,255,255,.06); border:1px solid rgba(255,255,255,.1); }
@@ -423,6 +426,9 @@ body {
             <?php if (can('page.notifications_admin')): ?>
             <a href="notifications_admin.php?lang=<?= $lang ?>" class="nav-btn notif">🔔 <?= $lang === 'ar' ? 'الإشعارات' : 'Notifications' ?></a>
             <?php endif; ?>
+            <?php if (can('page.lockdown')): ?>
+            <a href="lockdown.php?lang=<?= $lang ?>" class="nav-btn lock">🔒 <?= $lang === 'ar' ? 'إيقاف النظام' : 'Stop the system' ?></a>
+            <?php endif; ?>
             <?php if (can('page.stock_check')): ?>
             <a href="stock_check.php?lang=<?= $lang ?>" class="nav-btn check">📋 <?= $lang === 'ar' ? 'الجرد المفاجئ' : 'Stock check' ?></a>
             <?php endif; ?>
@@ -446,6 +452,16 @@ body {
     <div>
         <div class="nc-t">🔔 <?= $lang === 'ar' ? 'التحكم في الإشعارات' : 'Notification control' ?></div>
         <div class="nc-s"><?= $lang === 'ar' ? 'من يستلم أي إشعار (المبيعات / المديرين / الأدمن أو أشخاص بعينهم)، ساعات الهدوء، الأجهزة المفعّلة، إشعار تجربة وسجل كل ما أُرسل' : 'Who receives which notification (sales / managers / admins or specific people), quiet hours, enabled phones, a test notification and a log of everything sent' ?></div>
+    </div>
+    <span class="nc-go"><?= $lang === 'ar' ? 'فتح ←' : 'Open →' ?></span>
+</a>
+<?php endif; ?>
+<?php if (can('page.lockdown')): ?>
+<a class="notif-card lock" href="lockdown.php?lang=<?= $lang ?>">
+    <div class="nc-ic">🔒</div>
+    <div>
+        <div class="nc-t">🔒 <?= $lang === 'ar' ? 'إيقاف النظام' : 'Stop the system' ?></div>
+        <div class="nc-s"><?= $lang === 'ar' ? 'أوقف النظام عن أي موظف مع سبب أو بدون، واختر إيقاف بصمته أو استمرارها — وتابع كل الإيقافات التلقائية (الجرد والاستلام) وافتح النظام' : 'Stop the system for anyone with or without a reason, choose to stop or keep their clock-in — and follow every automatic stop (stock check, receiving) and unlock' ?></div>
     </div>
     <span class="nc-go"><?= $lang === 'ar' ? 'فتح ←' : 'Open →' ?></span>
 </a>

@@ -198,7 +198,7 @@ $branches = $pdo->query("SELECT name, name_ar, name_en FROM branches ORDER BY na
 
 /* Today's completed sessions */
 $todayStmt = $pdo->prepare(
-    "SELECT clock_in, clock_out, auto_closed,
+    "SELECT *,
             TIMESTAMPDIFF(SECOND, clock_in, clock_out) AS dur_secs
      FROM attendance_logs
      WHERE user_id = ? AND status = 'completed' AND DATE(clock_in) = CURDATE()
@@ -525,7 +525,8 @@ if ($isClockedIn && $active['branch_name']) {
       ?>
         <div class="sess-row">
           <span class="sess-time"><?= htmlspecialchars(fmtT($t['clock_in'])) ?> → <?= htmlspecialchars(fmtT($t['clock_out'])) ?>
-            <?php if ($t['auto_closed']): ?><span class="sess-auto">⏰ <?= $isRTL ? 'نسيت تسجيل الانصراف — لا تُحسب' : 'Forgot to clock out — not counted' ?></span><?php endif; ?></span>
+            <?php if ($t['auto_closed']): ?><span class="sess-auto">⏰ <?= $isRTL ? 'نسيت تسجيل الانصراف — لا تُحسب' : 'Forgot to clock out — not counted' ?></span><?php endif; ?>
+            <?php if (!empty($t['stop_reason'])): ?><span class="sess-auto">🔒 <?= $isRTL ? 'أُوقفت البصمة' : 'Clock-in stopped' ?>: <?= htmlspecialchars($t['stop_reason']) ?></span><?php endif; ?></span>
           <span class="sess-dur <?= $t['auto_closed'] ? 'x' : '' ?>"><?= fmtHM($d) ?></span>
         </div>
       <?php endforeach; ?>

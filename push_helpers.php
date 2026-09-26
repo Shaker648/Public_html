@@ -57,7 +57,6 @@ function notify_events(): array
         'transfer_incoming'=> ['سيارة في الطريق إلى فرعك (زر «تم الاستلام»)', 'Car on its way to your branch', '🚚', [], true, true, 'transfer'],
         'duty_start'       => ['بدء مهلة تأكيد الاستلام',          'Time to confirm has started', '⏱️', ['admin'], true, true, 'transfer'],
         'duty_warn'        => ['اقتراب إيقاف النظام',          'About to be locked',         '⚠️', ['admin'], true, true, 'transfer'],
-        'duty_locked'      => ['إيقاف النظام عن موظف',               'System locked for someone',  '🔒', ['admin'], true, true, 'transfer'],
         'duty_done'        => ['أنجز المطلوب وينتظر فتح النظام',   'Confirmed everything, waiting to be unlocked', '✅', ['admin'], true, null, 'transfer'],
         'duty_unlocked'    => ['فتح النظام من الإدارة',                'Unlocked by the admin',      '🔓', [], true, true, 'transfer'],
         'transfer_missing' => ['بلاغ: سيارة منقولة لم تصل',        'Report: transferred car did not arrive', '❗', ['admin'], true, true, 'transfer'],
@@ -69,8 +68,10 @@ function notify_events(): array
         'check_item'       => ['تأكيد كل سيارة أثناء الجرد',    'Each car confirmed during a check', '🔎', ['admin'], true, null, 'check'],
         'check_tick'       => ['الوقت المتبقي للجرد (منتصف المدة)', 'Stock check time left (half-way)', '⏳', ['admin'], true, true, 'check'],
         'check_warn'       => ['اقتراب انتهاء وقت الجرد',        'Stock check time almost up', '⚠️', ['admin'], true, true, 'check'],
-        'check_locked'     => ['إيقاف النظام لعدم إتمام الجرد',  'Locked: stock check not done', '🔒', ['admin'], true, true, 'check'],
         'check_done'       => ['نتيجة الجرد',                    'Stock check result',         '✅', ['admin'], true, null, 'check'],
+        // stopping the system (manual, stock check, transfers) — every admin always gets it
+        'user_locked'      => ['إيقاف النظام عن موظف (يدوي أو تلقائي)', 'System stopped for someone (manual or automatic)', '🔒', ['admin'], true, true, 'lock'],
+        'lock_basma'       => ['قرار البصمة أثناء الإيقاف',           'Clock-in decision during a stop', '⏱️', ['admin'], true, true, 'lock'],
         // security
         'login_failed'     => ['محاولات دخول خاطئة',           'Failed sign-in attempts',    '🔐', ['admin'], true, null, 'security'],
         'sensitive_change' => ['تغيير حساس (شاسيه / سيارة مباعة / تخفيض سعر)', 'Sensitive change (chassis / sold car / price cut)', '🚨', ['admin'], true, null, 'security'],
@@ -345,6 +346,14 @@ function push_tables(PDO $pdo): void
         marked_at DATETIME NULL,
         INDEX idx_check (check_id)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    try {   // what kind of stop, who did it, and what happened to the clock-in
+        $cols = $pdo->query("SHOW COLUMNS FROM user_locks")->fetchAll(PDO::FETCH_COLUMN);
+        if (!in_array('kind', $cols, true)) $pdo->exec("ALTER TABLE user_locks ADD kind VARCHAR(20) NOT NULL DEFAULT 'transfer', ADD locked_by VARCHAR(100) NULL, ADD basma VARCHAR(20) NULL, ADD att_log_id INT NULL");
+    } catch (Throwable $e) { error_log('user_locks upgrade: ' . $e->getMessage()); }
+    try {   // why a clock-in was stopped (shown in attendance)
+        $cols = $pdo->query("SHOW COLUMNS FROM attendance_logs")->fetchAll(PDO::FETCH_COLUMN);
+        if ($cols && !in_array('stop_reason', $cols, true)) $pdo->exec("ALTER TABLE attendance_logs ADD stop_reason VARCHAR(255) NULL");
+    } catch (Throwable $e) {}   // no attendance table yet
     $pdo->exec("CREATE TABLE IF NOT EXISTS transfer_issues (
         movement_id INT PRIMARY KEY,
         reported_by VARCHAR(100) NOT NULL,
@@ -847,6 +856,23 @@ function notify_message(PDO $pdo, string $event, array $d, string $lang): array
                 $body[] = ($ar ? '👤 بواسطة ' : '👤 by ') . ($d['by'] ?? '');
             }
             break;
+        case 'user_locked':
+        case 'lock_basma':
+            $who = (string)($d['user'] ?? '');
+            $bl = ['stopped' => ($ar ? '⏹ أُوقفت البصمة من وقت الإيقاف' : '⏹ Clock-in stopped at the time of the stop') . (!empty($d['at']) ? ' (' . $d['at'] . ')' : ''),
+                   'running' => $ar ? '▶ البصمة مستمرة أثناء الإيقاف' : '▶ Clock-in keeps running during the stop',
+                   'pending' => $ar ? '❓ البصمة مستمرة حتى تقرر الإدارة: إيقافها من وقت الإيقاف أم استمرارها' : '❓ The clock-in keeps running until management decides: stop it from the moment of the stop, or keep it',
+                   'none'    => $ar ? '— لم يكن مسجّلاً حضوره' : '— was not clocked in'][$d['basma'] ?? 'none'] ?? '';
+            if ($event === 'user_locked') {
+                $title = $ev[2] . ' ' . ($ar ? 'تم إيقاف النظام عن ' : 'System stopped for ') . $who;
+                $body[] = '📝 ' . ($d['reason'] ?? '');
+                if (($d['kind'] ?? '') === 'manual' && !empty($d['by'])) $body[] = ($ar ? '👤 بقرار من ' : '👤 By ') . $d['by'];
+            } else {
+                $title = $ev[2] . ' ' . ($ar ? 'البصمة — ' : 'Clock-in — ') . $who;
+            }
+            $body[] = $bl;
+            $url = 'lockdown.php?lang=' . $lang;
+            break;
         case 'transfer_missing':
             $to = push_branch_label($pdo, (string)($d['to'] ?? ''), $lang);
             $title = $ev[2] . ' ' . ($ar ? $by . ' أبلغ أن ' . $line . ' لم تصل إلى ' . $to : $by . ' reports ' . $line . ' did not arrive at ' . $to);
@@ -899,7 +925,7 @@ function notify_message(PDO $pdo, string $event, array $d, string $lang): array
         default:
             $title = $ev[2] . ' ' . ($ar ? $ev[0] : $ev[1]);
     }
-    $noBy = ['test', 'check_tick', 'transfer_missing', 'transfer_resolved', 'check_start', 'check_warn', 'check_locked', 'check_done', 'transfer_received', 'duty_start', 'duty_warn', 'duty_locked', 'duty_done', 'duty_unlocked', 'sale_celebrate', 'last_car', 'reserve_old', 'stock_aged', 'transfer_unconfirmed',
+    $noBy = ['test', 'user_locked', 'check_tick', 'transfer_missing', 'transfer_resolved', 'check_start', 'check_warn', 'check_locked', 'check_done', 'transfer_received', 'duty_start', 'duty_warn', 'duty_locked', 'duty_done', 'duty_unlocked', 'sale_celebrate', 'last_car', 'reserve_old', 'stock_aged', 'transfer_unconfirmed',
              'amana_long', 'bank_waiting', 'clockout_forgot', 'login_failed', 'price_reserved'];
     if ($by !== '' && !in_array($event, $noBy, true) && strpos($event, 'att_') !== 0) $body[] = ($ar ? '✍️ بواسطة ' : '✍️ by ') . $by;
     return [
@@ -989,7 +1015,7 @@ function notify_store(PDO $pdo, string $event, array $msg, string $actor, array 
  * close together — one grouped notification ("3 × car sold") instead of many.
  * $now = true sends immediately and returns [devices, delivered, failed].
  */
-function notify_deliver(PDO $pdo, int $logId, string $event, array $msg, array $ids, string $lang, string $tag, bool $needAck = false, bool $now = false): array
+function notify_deliver(PDO $pdo, int $logId, string $event, array $msg, array $ids, string $lang, string $tag, bool $needAck = false, bool $now = false, array $opts = []): array
 {
     $ar = $lang === 'ar';
     $in = implode(',', array_map('intval', $ids));
@@ -999,6 +1025,8 @@ function notify_deliver(PDO $pdo, int $logId, string $event, array $msg, array $
     $withDev = array_values(array_unique(array_map('intval', array_column($subs, 'user_id'))));
 
     $badge = notify_unread_counts($pdo, $withDev);
+    $roleOf = [];
+    foreach ($pdo->query("SELECT id, role FROM users WHERE id IN (" . implode(',', $withDev) . ")") as $r) $roleOf[(int)$r['id']] = $r['role'];
     $toks = [];
     $st = $pdo->prepare("SELECT user_id, tok FROM notify_inbox WHERE log_id = ?");
     $st->execute([$logId]);
@@ -1006,7 +1034,7 @@ function notify_deliver(PDO $pdo, int $logId, string $event, array $msg, array $
 
     // same kind, not seen yet, in the last 15 minutes → one grouped notification
     $group = [];
-    if (!in_array($event, ['message', 'test', 'transfer_incoming', 'check_item', 'check_start', 'check_tick', 'check_warn', 'check_locked', 'check_done', 'transfer_missing'], true)) {
+    if (!in_array($event, ['message', 'test', 'transfer_incoming', 'check_item', 'check_start', 'check_tick', 'check_warn', 'check_locked', 'check_done', 'transfer_missing', 'user_locked', 'lock_basma', 'duty_unlocked'], true)) {
         $in2 = implode(',', $withDev);
         $gs = $pdo->prepare("SELECT i.user_id, l.title FROM notify_inbox i JOIN notify_log l ON l.id = i.log_id
                              WHERE i.user_id IN ($in2) AND l.event = ? AND i.seen_at IS NULL AND l.created_at >= NOW() - INTERVAL 15 MINUTE
@@ -1026,6 +1054,10 @@ function notify_deliver(PDO $pdo, int $logId, string $event, array $msg, array $
             if ($event === 'transfer_incoming')       { $acts['recv'] = [$ar ? '✅ تم الاستلام' : '✅ Received', 'notify_act.php?a=recv&t=' . $t];
                                                         $acts['miss'] = [$ar ? '❌ لم تصل' : '❌ Did not arrive', 'notify_act.php?a=miss&t=' . $t]; }
             if ($event === 'clockout_forgot')           $acts['open'] = [$ar ? '🔵 تسجيل الانصراف' : '🔵 Clock out', $msg['url']];
+            if ($event === 'user_locked' && !empty($opts['ask_basma']) && ($roleOf[$uid] ?? '') === 'admin') {
+                $acts['bstop'] = [$ar ? '⏹ إيقاف البصمة' : '⏹ Stop clock-in', 'notify_act.php?a=bstop&t=' . $t];
+                $acts['bkeep'] = [$ar ? '▶ استمرار البصمة' : '▶ Keep it running', 'notify_act.php?a=bkeep&t=' . $t];
+            }
         }
         if ($acts) {
             $p['actions'] = array_map(fn($k, $a) => ['action' => $k, 'title' => $a[0]], array_keys($acts), $acts);
@@ -1096,7 +1128,8 @@ function notify_event(PDO $pdo, string $event, array $data = []): void
             $msg = notify_message($pdo, $event, $data, $opt['lang']);
             $logId = notify_store($pdo, $event, $msg, $actor, $ids, false, (string)($data['ref'] ?? ''));
             if (empty($data['force']) && push_in_quiet_hours($opt)) return;
-            notify_deliver($pdo, $logId, $event, $msg, $ids, $opt['lang'], (string)($data['tag'] ?? ($event . '-' . $logId)), false, !empty($data['now']));
+            notify_deliver($pdo, $logId, $event, $msg, $ids, $opt['lang'], (string)($data['tag'] ?? ($event . '-' . $logId)), false, !empty($data['now']),
+                           ['ask_basma' => !empty($data['ask_basma'])]);
             return;
         }
 
@@ -1125,7 +1158,8 @@ function notify_event(PDO $pdo, string $event, array $data = []): void
 
         if (empty($data['force']) && push_in_quiet_hours($opt)) return;   // kept in history, no sound at night
 
-        notify_deliver($pdo, $logId, $event, $msg, $ids, $opt['lang'], (string)($data['tag'] ?? ($event . '-' . ($data['car']['id'] ?? $logId))), false, !empty($data['now']));
+        notify_deliver($pdo, $logId, $event, $msg, $ids, $opt['lang'], (string)($data['tag'] ?? ($event . '-' . ($data['car']['id'] ?? $logId))), false, !empty($data['now']),
+                       ['ask_basma' => !empty($data['ask_basma'])]);
     } catch (Throwable $e) {
         error_log('notify_event(' . $event . ') failed: ' . $e->getMessage());
     }
