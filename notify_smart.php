@@ -222,17 +222,17 @@ function smart_duty_scan(PDO $pdo): array
                 foreach ($rows as $r) $mark->execute([(int)$r['movement_id'], $uid]);
                 if (($roles[$uid][1] ?? '') === 'admin') continue;           // an admin is never locked out
                 if (!user_lock_active($pdo, $uid)) {
-                    $pdo->prepare("INSERT INTO user_locks (user_id, reason, locked_at) VALUES (?, ?, NOW())")
-                        ->execute([$uid, mb_substr(implode(', ', $names($rows)), 0, 250)]);
-                    notify_event($pdo, 'duty_locked', ['user' => $roles[$uid][0] ?? '', 'owners' => [$roles[$uid][0] ?? ''], 'branch' => $rows[0]['to_branch'],
-                        'count' => count($rows), 'actor' => '', 'force' => true, 'now' => true]);
-                    $log[] = 'duty_locked ' . ($roles[$uid][0] ?? $uid);
+                    $why = $lang === 'ar'
+                        ? 'لم يؤكد استلام ' . push_ar_cars(count($rows)) . ' منقولة إلى فرع ' . push_branch_label($pdo, (string)$rows[0]['to_branch'], 'ar') . ' في الوقت المحدد (' . implode('، ', array_map(fn($r) => $r['chassis'], $rows)) . ')'
+                        : 'Did not confirm ' . count($rows) . ' transferred car(s) at ' . $rows[0]['to_branch'] . ' in time';
+                    smart_lock_user($pdo, $uid, 'transfer', $why, '');
+                    $log[] = 'locked(transfer) ' . ($roles[$uid][0] ?? $uid);
                 }
             }
         }
 
         /* 4 — a locked person confirmed every car and finished every stock check */
-        foreach ($pdo->query("SELECT * FROM user_locks WHERE unlocked_at IS NULL AND done_at IS NULL")->fetchAll(PDO::FETCH_ASSOC) as $lk) {
+        foreach ($pdo->query("SELECT * FROM user_locks WHERE unlocked_at IS NULL AND done_at IS NULL AND kind <> 'manual'")->fetchAll(PDO::FETCH_ASSOC) as $lk) {
             $uid = (int)$lk['user_id'];
             if (smart_my_duties($pdo, $uid) || smart_checks_for_user($pdo, $uid)) continue;
             $pdo->prepare("UPDATE user_locks SET done_at = NOW() WHERE id = ?")->execute([(int)$lk['id']]);
@@ -273,6 +273,105 @@ function smart_extend(PDO $pdo, int $uid, int $minutes): void
     $pdo->prepare("UPDATE transfer_duty d LEFT JOIN transfer_receipts r ON r.movement_id = d.movement_id
                    SET d.deadline = GREATEST(d.deadline, NOW()) + INTERVAL ? MINUTE, d.warned = 0, d.locked = 0
                    WHERE d.user_id = ? AND r.movement_id IS NULL")->execute([max(5, min(1440, $minutes)), $uid]);
+}
+
+/* ════════════════════════ stopping the system (إيقاف النظام) ════════════════════════ */
+/**
+ * Who is told about a stop and what happens to the clock-in (lockdown.php):
+ *   watchers    people told about every stop (every admin is always told)
+ *   auto_basma  for automatic stops (stock check / transfers): 'ask' (keep it
+ *               running until the admin decides) | 'stop' | 'keep'
+ */
+function lock_rules(PDO $pdo): array
+{
+    $o = json_decode(push_setting($pdo, 'lock_rules', ''), true) ?: [];
+    return [
+        'watchers'   => array_values(array_filter(array_map('intval', (array)($o['watchers'] ?? [])))),
+        'auto_basma' => in_array($o['auto_basma'] ?? '', ['ask', 'stop', 'keep'], true) ? $o['auto_basma'] : 'ask',
+    ];
+}
+
+/** The open attendance record of a user (clocked in, not out), or null. */
+function lock_open_attendance(PDO $pdo, int $uid): ?array
+{
+    try {
+        $st = $pdo->prepare("SELECT * FROM attendance_logs WHERE user_id = ? AND status = 'active' ORDER BY id DESC LIMIT 1");
+        $st->execute([$uid]);
+        return $st->fetch(PDO::FETCH_ASSOC) ?: null;
+    } catch (Throwable $e) { return null; }
+}
+
+/**
+ * Stop the system for someone.
+ *   $kind   'manual' (the admin) | 'check' (surprise stock check) | 'transfer' (cars not confirmed)
+ *   $basma  'stop' | 'keep' | '' (automatic stops follow lock_rules auto_basma)
+ * Every admin, the people chosen and the person are told. Returns the lock id.
+ */
+function smart_lock_user(PDO $pdo, int $uid, string $kind, string $reason, string $by, array $extraWatchers = [], string $basma = '', array $watchIds = []): int
+{
+    push_tables($pdo);
+    $u = $pdo->prepare("SELECT username, role FROM users WHERE id = ?");
+    $u->execute([$uid]);
+    $u = $u->fetch(PDO::FETCH_ASSOC);
+    if (!$u || $u['role'] === 'admin') return 0;                      // an admin is never locked out
+    $rules = lock_rules($pdo);
+    $lang  = notify_options($pdo)['lang'];
+    $att   = lock_open_attendance($pdo, $uid);
+    if ($basma === '') $basma = $kind === 'manual' ? 'keep' : ['ask' => 'pending', 'stop' => 'stop', 'keep' => 'keep'][$rules['auto_basma']];
+    $state = $att ? ($basma === 'stop' ? 'stopped' : ($basma === 'pending' ? 'pending' : 'running')) : 'none';
+    $pdo->prepare("INSERT INTO user_locks (user_id, reason, locked_at, kind, locked_by, basma, att_log_id) VALUES (?, ?, NOW(), ?, ?, ?, ?)")
+        ->execute([$uid, mb_substr($reason, 0, 250), $kind, $by !== '' ? $by : null, $state, $att ? (int)$att['id'] : null]);
+    $lockId = (int)$pdo->lastInsertId();
+    if ($state === 'stopped') lock_stop_attendance($pdo, $lockId);
+
+    // every admin + the people chosen for stops (+ for this one) + the person
+    $admins = array_map('strval', $pdo->query("SELECT username FROM users WHERE active = 1 AND role = 'admin'")->fetchAll(PDO::FETCH_COLUMN));
+    $ids = array_values(array_unique(array_merge($rules['watchers'], array_map('intval', $watchIds))));
+    $w = $ids ? array_map('strval', $pdo->query("SELECT username FROM users WHERE active = 1 AND id IN (" . implode(',', $ids) . ")")->fetchAll(PDO::FETCH_COLUMN)) : [];
+    $lk = $pdo->prepare("SELECT locked_at FROM user_locks WHERE id = ?"); $lk->execute([$lockId]);
+    notify_event($pdo, 'user_locked', ['user' => $u['username'], 'kind' => $kind, 'reason' => $reason !== '' ? $reason : ($kind === 'manual' ? ($lang === 'ar' ? 'بدون سبب مكتوب' : 'no reason given')
+            : (($lang === 'ar' ? ['check' => 'عدم إكمال الجرد المفاجئ في الوقت المحدد', 'transfer' => 'عدم تأكيد استلام سيارات منقولة']
+                               : ['check' => 'stock check not finished in time', 'transfer' => 'transferred cars not confirmed'])[$kind] ?? '')),
+        'by' => $by, 'basma' => $state, 'at' => smart_time_label((int)strtotime((string)$lk->fetchColumn()), $lang), 'ask_basma' => $state === 'pending',
+        'only' => array_merge($admins, $w, $extraWatchers, [$u['username']]), 'actor' => $by, 'ref' => 'lock:' . $lockId, 'force' => true, 'now' => true]);
+    return $lockId;
+}
+
+/** Close the person's clock-in at the moment of the stop, and write why into attendance. */
+function lock_stop_attendance(PDO $pdo, int $lockId): bool
+{
+    $st = $pdo->prepare("SELECT * FROM user_locks WHERE id = ?");
+    $st->execute([$lockId]);
+    $lk = $st->fetch(PDO::FETCH_ASSOC);
+    if (!$lk || !$lk['att_log_id']) return false;
+    $lang = notify_options($pdo)['lang'];
+    $why = ($lang === 'ar'
+            ? ['manual' => 'إيقاف مفاجئ من الإدارة', 'check' => 'إيقاف تلقائي: عدم إكمال الجرد المفاجئ', 'transfer' => 'إيقاف تلقائي: عدم تأكيد استلام سيارات منقولة']
+            : ['manual' => 'Sudden stop by management', 'check' => 'Automatic stop: stock check not finished', 'transfer' => 'Automatic stop: transferred cars not confirmed'])[$lk['kind']] ?? '';
+    if ((string)$lk['reason'] !== '' && $lk['kind'] === 'manual') $why .= ' — ' . $lk['reason'];
+    $up = $pdo->prepare("UPDATE attendance_logs SET clock_out = GREATEST(clock_in, ?), status = 'completed', out_branch_name = branch_name, stop_reason = ?
+                         WHERE id = ? AND status = 'active'");
+    $up->execute([$lk['locked_at'], mb_substr($why, 0, 250), (int)$lk['att_log_id']]);
+    $pdo->prepare("UPDATE user_locks SET basma = 'stopped' WHERE id = ?")->execute([$lockId]);
+    return $up->rowCount() > 0;
+}
+
+/** The admin decides about the clock-in of a stopped person: 'stop' (from the moment of the stop) or 'keep'. */
+function lock_basma_decide(PDO $pdo, int $lockId, string $how, string $by): bool
+{
+    push_tables($pdo);
+    $st = $pdo->prepare("SELECT l.*, u.username FROM user_locks l JOIN users u ON u.id = l.user_id WHERE l.id = ?");
+    $st->execute([$lockId]);
+    $lk = $st->fetch(PDO::FETCH_ASSOC);
+    if (!$lk || !$lk['att_log_id']) return false;
+    if ($how === 'stop') { if (!lock_stop_attendance($pdo, $lockId) && $lk['basma'] !== 'stopped') return false; }
+    elseif ($how === 'keep') $pdo->prepare("UPDATE user_locks SET basma = 'running' WHERE id = ? AND basma <> 'stopped'")->execute([$lockId]);
+    else return false;
+    $lang = notify_options($pdo)['lang'];
+    $admins = array_map('strval', $pdo->query("SELECT username FROM users WHERE active = 1 AND role = 'admin'")->fetchAll(PDO::FETCH_COLUMN));
+    notify_event($pdo, 'lock_basma', ['user' => $lk['username'], 'basma' => $how === 'stop' ? 'stopped' : 'running', 'at' => smart_time_label(strtotime($lk['locked_at']), $lang),
+        'only' => array_merge($admins, [(string)$lk['username']]), 'actor' => $by, 'force' => true, 'now' => true]);
+    return true;
 }
 
 /* ════════════════════════ «لم تصل» — a transferred car did not arrive ════════════════════════ */
@@ -507,15 +606,13 @@ function smart_check_scan(PDO $pdo): array
             if ((int)$c['secs'] <= 0) {
                 $pdo->prepare("UPDATE stock_checks SET status = 'expired' WHERE id = ? AND status = 'active'")->execute([$id]);
                 if ((int)$c['lock_on']) {
-                    $locked = [];
                     foreach ($names as $uid => $un) {
                         if (($roles[$uid] ?? '') === 'admin' || user_lock_active($pdo, $uid)) continue;   // never an admin
-                        $pdo->prepare("INSERT INTO user_locks (user_id, reason, locked_at) VALUES (?, ?, NOW())")
-                            ->execute([$uid, mb_substr(($lang === 'ar' ? 'جرد مفاجئ لم يكتمل — ' : 'Unfinished stock check — ') . push_branch_label($pdo, (string)$c['branch'], $lang), 0, 250)]);
-                        $locked[] = $un;
+                        $why = $lang === 'ar'
+                            ? 'لم يُكمل الجرد المفاجئ في فرع ' . push_branch_label($pdo, (string)$c['branch'], 'ar') . ' في الوقت المحدد (تمت مراجعة ' . $m . ' من أصل ' . $t . ')'
+                            : 'Did not finish the surprise stock check at ' . $c['branch'] . ' in time (' . $m . ' of ' . $t . ')';
+                        smart_lock_user($pdo, $uid, 'check', $why, '', smart_check_watchers($pdo, $id));
                     }
-                    if ($locked) notify_event($pdo, 'check_locked', ['id' => $id, 'branch' => $c['branch'], 'count' => $t, 'done' => $m,
-                        'users' => implode('، ', $locked), 'only' => array_merge($locked, smart_check_watchers($pdo, $id)), 'actor' => '', 'tag' => 'chk-' . $id, 'force' => true, 'now' => true]);
                 }
                 $log[] = 'check_expired #' . $id;
             }
