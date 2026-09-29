@@ -39,6 +39,10 @@ $dir = $lang === 'ar' ? 'rtl' : 'ltr';
 /* ─── Permission-gated (default: admin / manager) ─────────── */
 $role = $_SESSION['role'] ?? 'sales';
 perm_require('page.receive_shipment');
+
+/* incoming_colors.interior — optional فرش set on the incoming cars page */
+try { $pdo->query("SELECT interior FROM incoming_colors LIMIT 0"); }
+catch (Throwable $e) { try { $pdo->exec("ALTER TABLE incoming_colors ADD COLUMN interior VARCHAR(60) NULL"); } catch (Throwable $e2) {} }
 $username = $_SESSION['username'] ?? '';
 
 /* ═══════════════════════════════════════════════════════════
@@ -151,7 +155,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                  . $ship['brand'] . ' ' . $ship['model'] . ' ' . $ship['trim_name'];
         $added   = [];
 
+        $rowInt = $pdo->prepare("SELECT COALESCE(interior,'') FROM incoming_colors WHERE id = ? AND incoming_id = ?");
         foreach ($clean as $u) {
+            $carNote = $note;
+            if ($u['row_id'] > 0) {
+                $rowInt->execute([$u['row_id'], $shipId]);
+                $inter = trim((string)$rowInt->fetchColumn());
+                if ($inter !== '') $carNote .= ' — فرش ' . $inter;
+            }
             $insCar->execute([
                 $ship['brand'],
                 $ship['model'],
@@ -161,12 +172,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $u['chassis'],
                 $branch,
                 $branch,          // original_branch = branch at creation
-                $note,
+                $carNote,
                 $username,
             ]);
             $carId = (int)$pdo->lastInsertId();
 
-            $insMov->execute([$carId, $branch, $branch, $username, $note]);
+            $insMov->execute([$carId, $branch, $branch, $username, $carNote]);
 
             /* Consume the incoming color row (specific row if we have its id,
                otherwise the oldest row of that color; unassigned units have
@@ -365,9 +376,10 @@ foreach ($shipments as $s) {
     $rowsOut = [];
     foreach ($rows as $r) {
         $rowsOut[] = [
-            'id'    => (int)$r['id'],
-            'color' => $r['color'],
-            'label' => $colorName[$r['color']] ?? $r['color'],
+            'id'       => (int)$r['id'],
+            'color'    => $r['color'],
+            'interior' => trim((string)($r['interior'] ?? '')),
+            'label'    => ($colorName[$r['color']] ?? $r['color']) . (trim((string)($r['interior'] ?? '')) !== '' ? ' · 🛋️ ' . ($lang === 'ar' ? 'فرش ' : 'interior ') . trim($r['interior']) : ''),
         ];
     }
     $years = [ (string)$s['year1'] ];
@@ -885,13 +897,14 @@ function renderChips(){
     const groups = {};
     ship.rows.forEach(r => {
         if (usedRowIds.includes(r.id)) return;
-        (groups[r.color] = groups[r.color] || {label:r.label, ids:[]}).ids.push(r.id);
+        const k = r.color + '|' + (r.interior || '');
+        (groups[k] = groups[k] || {color:r.color, interior:r.interior || '', label:r.label, ids:[]}).ids.push(r.id);
     });
 
-    let html = Object.entries(groups).map(([color, g]) => `
+    let html = Object.values(groups).map(g => `
         <button type="button" class="chip" title="${esc(TXT.chipHint)}"
-                data-color="${esc(color)}" data-rowid="${g.ids[0]}">
-            <span class="swatch" style="background:${swatchCss(color)}"></span>
+                data-color="${esc(g.color)}" data-interior="${esc(g.interior)}" data-rowid="${g.ids[0]}">
+            <span class="swatch" style="background:${swatchCss(g.color)}"></span>
             ${esc(g.label)}
             ${g.ids.length > 1 ? `<span class="cnt">x${g.ids.length}</span>` : ''}
         </button>
@@ -910,16 +923,16 @@ function renderChips(){
     }
     $('chipRow').innerHTML = html || `<span class="hint" style="margin:0">—</span>`;
     $('chipRow').querySelectorAll('.chip').forEach(c =>
-        c.addEventListener('click', () => addUnit(c.dataset.color, +c.dataset.rowid)));
+        c.addEventListener('click', () => addUnit(c.dataset.color, +c.dataset.rowid, c.dataset.interior || '')));
 }
 
-function addUnit(color, rowId){
+function addUnit(color, rowId, interior = ''){
     /* total cap = shipment quantity */
     if (units.length >= ship.qty) return;
     let label = color;
     if (rowId > 0){
         /* pick the first not-yet-used row of this color */
-        const free = ship.rows.find(x => x.color === color && !units.some(u => u.rowId === x.id));
+        const free = ship.rows.find(x => x.color === color && (x.interior || '') === interior && !units.some(u => u.rowId === x.id));
         if (!free) return;
         rowId = free.id;
         label = free.label;

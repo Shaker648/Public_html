@@ -5,6 +5,11 @@ require 'config.php';
 
 perm_require('page.incoming_cars');
 
+/* incoming_colors.interior — optional فرش of that car (e.g. «جملي»); empty = normal */
+try { $pdo->query("SELECT interior FROM incoming_colors LIMIT 0"); }
+catch (Throwable $e) { try { $pdo->exec("ALTER TABLE incoming_colors ADD COLUMN interior VARCHAR(60) NULL"); } catch (Throwable $e2) {} }
+$INTERIORS = ['جملي', 'بيج', 'أسود', 'أحمر', 'بني', 'رمادي', 'أبيض'];
+
 $lang = $_GET['lang'] ?? 'ar';
 if (!in_array($lang, ['ar', 'en'])) $lang = 'ar';
 
@@ -174,10 +179,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $pdo->prepare("UPDATE incoming_cars SET quantity=? WHERE id=?")->execute([$newQty, $id]);
                 }
             } else {
-                $rows = $pdo->prepare("SELECT id FROM incoming_colors WHERE incoming_id=? AND color=? ORDER BY id ASC LIMIT ?");
+                $rows = $pdo->prepare("SELECT id FROM incoming_colors WHERE incoming_id=? AND color=? AND COALESCE(interior,'')=? ORDER BY id ASC LIMIT ?");
                 $rows->bindValue(1, $id, PDO::PARAM_INT);
                 $rows->bindValue(2, $removeColor, PDO::PARAM_STR);
-                $rows->bindValue(3, $removeCount, PDO::PARAM_INT);
+                $rows->bindValue(3, trim($_POST['remove_interior'] ?? ''), PDO::PARAM_STR);
+                $rows->bindValue(4, $removeCount, PDO::PARAM_INT);
                 $rows->execute();
                 $ids = $rows->fetchAll(PDO::FETCH_COLUMN);
                 $deleted = 0;
@@ -199,6 +205,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if ($action === 'add_color') {
         $id    = (int)($_POST['incoming_id'] ?? 0);
         $color = trim($_POST['color'] ?? '');
+        $count = max(1, (int)($_POST['count'] ?? 1));
+        $inter = mb_substr(trim($_POST['interior'] ?? ''), 0, 60);
+        $inCnt = $inter !== '' ? max(1, min($count, (int)($_POST['interior_count'] ?? $count))) : 0;
         if ($id > 0 && $color !== '') {
             $r = $pdo->prepare("SELECT quantity FROM incoming_cars WHERE id=?");
             $r->execute([$id]);
@@ -206,9 +215,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $u = $pdo->prepare("SELECT COUNT(*) FROM incoming_colors WHERE incoming_id=?");
             $u->execute([$id]);
             $used = (int)$u->fetchColumn();
-            if ($used < $qty) {
-                $pdo->prepare("INSERT INTO incoming_colors(incoming_id,color,sold)VALUES(?,?,0)")
-                    ->execute([$id,$color]);
+            $count = min($count, max(0, $qty - $used));          // never more than what is still without a color
+            $ins = $pdo->prepare("INSERT INTO incoming_colors(incoming_id,color,sold,interior)VALUES(?,?,0,?)");
+            for ($n = 0; $n < $count; $n++) {
+                $ins->execute([$id, $color, $n < $inCnt ? $inter : null]);
             }
         }
     }
@@ -218,10 +228,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $color = trim($_POST['color'] ?? '');
         $num   = max(1, (int)($_POST['num'] ?? 1));
         if ($id > 0 && $color !== '') {
-            $rows = $pdo->prepare("SELECT id FROM incoming_colors WHERE incoming_id=? AND color=? ORDER BY id ASC LIMIT ?");
+            $rows = $pdo->prepare("SELECT id FROM incoming_colors WHERE incoming_id=? AND color=? AND COALESCE(interior,'')=? ORDER BY id ASC LIMIT ?");
             $rows->bindValue(1, $id, PDO::PARAM_INT);
             $rows->bindValue(2, $color, PDO::PARAM_STR);
-            $rows->bindValue(3, $num, PDO::PARAM_INT);
+            $rows->bindValue(3, trim($_POST['interior'] ?? ''), PDO::PARAM_STR);
+            $rows->bindValue(4, $num, PDO::PARAM_INT);
             $rows->execute();
             $deleted = 0;
             foreach ($rows->fetchAll(PDO::FETCH_COLUMN) as $rid) {
@@ -239,10 +250,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $color = trim($_POST['color'] ?? '');
         $num   = max(1, (int)($_POST['num'] ?? 1));
         if ($id > 0 && $color !== '') {
-            $rows = $pdo->prepare("SELECT id FROM incoming_colors WHERE incoming_id=? AND color=? ORDER BY id ASC LIMIT ?");
+            $rows = $pdo->prepare("SELECT id FROM incoming_colors WHERE incoming_id=? AND color=? AND COALESCE(interior,'')=? ORDER BY id ASC LIMIT ?");
             $rows->bindValue(1, $id, PDO::PARAM_INT);
             $rows->bindValue(2, $color, PDO::PARAM_STR);
-            $rows->bindValue(3, $num, PDO::PARAM_INT);
+            $rows->bindValue(3, trim($_POST['interior'] ?? ''), PDO::PARAM_STR);
+            $rows->bindValue(4, $num, PDO::PARAM_INT);
             $rows->execute();
             foreach ($rows->fetchAll(PDO::FETCH_COLUMN) as $rid) {
                 $pdo->prepare("DELETE FROM incoming_colors WHERE id=?")->execute([$rid]);
@@ -253,6 +265,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if ($action === 'delete') {
         $id = (int)($_POST['incoming_id'] ?? 0);
         if ($id > 0) {
+            $pdo->prepare("DELETE FROM incoming_colors WHERE incoming_id=?")->execute([$id]);
             $pdo->prepare("DELETE FROM incoming_cars WHERE id=?")->execute([$id]);
         }
     }
@@ -276,6 +289,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         }
     }
+
+    if ($action === 'reorder') {
+        $ids = array_values(array_filter(array_map('intval', (array)($_POST['ids'] ?? []))));
+        $up  = $pdo->prepare("UPDATE incoming_cars SET sort_order=? WHERE id=?");
+        foreach ($ids as $n => $rid) $up->execute([$n + 1, $rid]);
+    }
+
+    if ($action === 'move_top') {
+        $id = (int)($_POST['incoming_id'] ?? 0);
+        if ($id > 0) {
+            $mn = (int)$pdo->query("SELECT COALESCE(MIN(sort_order),1) FROM incoming_cars")->fetchColumn();
+            $pdo->prepare("UPDATE incoming_cars SET sort_order=? WHERE id=?")->execute([$mn - 1, $id]);
+        }
+    }
+
+    /* the page updates in place (no reload): answer with a tiny OK */
+    if (!empty($_SERVER['HTTP_X_INCOMING_AJAX'])) { header('Content-Type: application/json'); echo '{"ok":true}'; exit; }
 
     $anchor = isset($_POST['incoming_id']) ? '#ship-'.(int)$_POST['incoming_id'] : '';
     header('Location: incoming_cars.php?lang='.$lang.$anchor);
@@ -768,6 +798,23 @@ a.icon-btn { text-decoration:none; }
 .all-done { color:var(--green); font-weight:700; font-size:14px; padding:6px 0; }
 
 .assign-row { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+.assign-row select.as-count { width:84px; }
+.as-int-toggle { height:46px; padding:0 14px; border-radius:12px; border:1px dashed rgba(245,158,11,.5); background:rgba(245,158,11,.08); color:#fcd34d; font:inherit; font-size:14px; font-weight:700; cursor:pointer; }
+.as-int { display:none; width:100%; align-items:center; gap:8px; flex-wrap:wrap; padding:10px 12px; border-radius:12px; background:rgba(245,158,11,.07); border:1px solid rgba(245,158,11,.3); color:#fde68a; font-weight:700; font-size:14px; }
+.as-int.open { display:flex; }
+.as-int select { height:40px !important; width:auto; min-width:70px; }
+.int-chip { font-size:12px; font-weight:800; padding:2px 8px; border-radius:999px; background:rgba(245,158,11,.18); color:#fcd34d; margin-inline-start:4px; }
+.drag-handle { cursor:grab; touch-action:none; user-select:none; }
+.ship-card.sortable-ghost { opacity:.35; }
+.ship-card.sortable-chosen { box-shadow:0 0 0 2px var(--purple), 0 18px 40px rgba(0,0,0,.5); }
+.pending-hide { display:none !important; }
+.ic-toast { position:fixed; inset-inline:16px; bottom:calc(18px + env(safe-area-inset-bottom)); margin:auto; max-width:520px; z-index:9999; display:flex; align-items:center; gap:12px;
+  padding:14px 16px; border-radius:16px; background:#0b1426; border:1px solid rgba(147,51,234,.5); box-shadow:0 18px 40px rgba(0,0,0,.55); color:#f1f5f9; font-weight:700; font-size:15px;
+  transform:translateY(160%); visibility:hidden; transition:transform .25s ease, visibility .25s; }
+.ic-toast.show { transform:none; visibility:visible; }
+.ic-toast .tx { flex:1; }
+.ic-toast button { height:40px; padding:0 16px; border-radius:12px; border:0; background:linear-gradient(90deg,#9333ea,#2563eb); color:#fff; font:inherit; font-weight:800; cursor:pointer; white-space:nowrap; }
+.ic-busy { opacity:.6; pointer-events:none; transition:opacity .15s; }
 .assign-row select { max-width:260px; height:46px; }
 .btn-add-color {
     height:46px; padding:0 20px; border:none; border-radius:12px; font-weight:800; font-size:14px;
@@ -950,12 +997,12 @@ a.icon-btn { text-decoration:none; }
             <div class="page-subtitle"><?= $t[$lang]['subtitle'] ?></div>
         </div>
         <div class="header-actions">
-            <?php if ($totalCars > 0): ?>
+            <span data-live="pill"><?php if ($totalCars > 0): ?>
                 <button type="button" class="count-pill count-pill-btn" onclick="openBrandBreakdown()" title="<?= $lang==='ar'?'عرض التوزيع حسب الماركة':'View breakdown by brand' ?>">
                     🚗 <?= $totalCars ?> <?= $t[$lang]['count_label'] ?>
                     <span class="count-pill-arrow">▾</span>
                 </button>
-            <?php endif; ?>
+            <?php endif; ?></span>
             <button type="button" class="action-btn add-btn" onclick="toggleAdd()">➕ <?= $t[$lang]['add_car'] ?></button>
             <a href="dashboard.php?lang=<?= $lang ?>" class="action-btn dashboard-btn">🏠 <?= $t[$lang]['dashboard'] ?></a>
         </div>
@@ -1052,6 +1099,7 @@ a.icon-btn { text-decoration:none; }
 <!-- ══════════════════════════════════
      SHIPMENTS
 ══════════════════════════════════ -->
+<div data-live="list">
 <?php if (empty($shipments)): ?>
 <div class="empty-state">
     <div class="e-icon">🚚</div>
@@ -1069,16 +1117,18 @@ a.icon-btn { text-decoration:none; }
     $pct         = $qty > 0 ? round(($totalUsed / $qty) * 100) : 0;
     $activeGroups = [];
     foreach ($activeTags as $ac) {
-        $activeGroups[$ac['color']][] = $ac;
+        $activeGroups[$ac['color'] . '|' . trim((string)($ac['interior'] ?? ''))][] = $ac;
     }
     $isFirst = ($i === 0);
     $isLast  = ($i === count($shipments) - 1);
     $editColorData = [];
-    foreach ($activeGroups as $colorEn => $rows) {
+    foreach ($activeGroups as $gk => $rows) {
+        [$colorEn, $inter] = explode('|', $gk, 2);
         $editColorData[] = [
-            'color' => $colorEn,
-            'label' => $colorName[$colorEn] ?? $colorEn,
-            'count' => count($rows),
+            'color'    => $colorEn,
+            'interior' => $inter,
+            'label'    => ($colorName[$colorEn] ?? $colorEn) . ($inter !== '' ? ' · 🛋️ ' . ($lang === 'ar' ? 'فرش ' : 'interior ') . $inter : ''),
+            'count'    => count($rows),
         ];
     }
     $editJsonColors    = json_encode($editColorData, JSON_HEX_APOS | JSON_HEX_QUOT);
@@ -1086,7 +1136,7 @@ a.icon-btn { text-decoration:none; }
     /* search data string — used by JS to match */
     $searchData = strtolower($s['brand'] . ' ' . $s['model'] . ' ' . $s['trim_name'] . ' ' . $s['year1'] . ($s['year2'] ? ' '.$s['year2'] : ''));
 ?>
-<div class="ship-card" id="ship-<?= $s['id'] ?>"
+<div class="ship-card" id="ship-<?= $s['id'] ?>" data-id="<?= $s['id'] ?>"
      data-search="<?= htmlspecialchars($searchData, ENT_QUOTES) ?>">
     <div class="ship-head">
         <div>
@@ -1100,6 +1150,12 @@ a.icon-btn { text-decoration:none; }
             </div>
         </div>
         <div class="ship-controls">
+            <span class="icon-btn drag-handle" title="<?= $lang==='ar'?'اسحب لتغيير الترتيب':'Drag to reorder' ?>">⠿</span>
+            <form method="POST" style="display:inline">
+                <input type="hidden" name="action" value="move_top">
+                <input type="hidden" name="incoming_id" value="<?= $s['id'] ?>">
+                <button class="icon-btn" title="<?= $lang==='ar'?'نقل لأول القائمة':'Move to top' ?>" <?= $isFirst?'disabled':'' ?>>⏫</button>
+            </form>
             <a class="icon-btn receive-btn" title="<?= $t[$lang]['receive'] ?>"
                href="receive_shipment.php?id=<?= $s['id'] ?>&lang=<?= $lang ?>">📦</a>
             <form method="POST" style="display:inline">
@@ -1143,18 +1199,21 @@ a.icon-btn { text-decoration:none; }
 
     <?php if (!empty($activeGroups)): ?>
     <div class="color-tags">
-        <?php foreach ($activeGroups as $colorEn => $rows):
-            $dispName = $colorName[$colorEn] ?? $colorEn;
+        <?php foreach ($activeGroups as $gk => $rows):
+            [$colorEn, $inter] = explode('|', $gk, 2);
+            $dispName = ($colorName[$colorEn] ?? $colorEn) . ($inter !== '' ? ' · ' . ($lang === 'ar' ? 'فرش ' : 'interior ') . $inter : '');
             $cnt      = count($rows);
         ?>
         <button type="button" class="color-tag js-color-tag"
             data-shipid="<?= $s['id'] ?>"
             data-colorraw="<?= htmlspecialchars($colorEn, ENT_QUOTES) ?>"
+            data-interior="<?= htmlspecialchars($inter, ENT_QUOTES) ?>"
             data-car="<?= htmlspecialchars($s['brand'].' '.$s['model'], ENT_QUOTES) ?>"
             data-color="<?= htmlspecialchars($dispName, ENT_QUOTES) ?>"
             data-count="<?= $cnt ?>">
             <span class="color-swatch" style="background:<?= strtolower(str_replace(' ','',htmlspecialchars($colorEn))) ?>;"></span>
-            <?= htmlspecialchars($dispName) ?>
+            <?= htmlspecialchars($colorName[$colorEn] ?? $colorEn) ?>
+            <?php if ($inter !== ''): ?><span class="int-chip">🛋️ <?= htmlspecialchars($inter) ?></span><?php endif; ?>
             <?php if ($cnt > 1): ?>
                 <span class="color-count">x<?= $cnt ?></span>
             <?php endif; ?>
@@ -1176,7 +1235,23 @@ a.icon-btn { text-decoration:none; }
             </option>
             <?php endforeach; ?>
         </select>
+        <select name="count" class="as-count" title="<?= $lang==='ar'?'العدد':'How many' ?>">
+            <?php for ($n = 1; $n <= $remaining; $n++): ?><option value="<?= $n ?>">× <?= $n ?></option><?php endfor; ?>
+        </select>
         <button type="submit" class="btn-add-color">🎨 <?= $t[$lang]['add_color'] ?></button>
+        <button type="button" class="as-int-toggle js-int-toggle">🛋️ <?= $lang==='ar'?'فرش مختلف؟':'Special interior?' ?></button>
+        <div class="as-int">
+            <span><?= $lang==='ar'?'منها':'of them' ?></span>
+            <select name="interior_count" class="as-int-count">
+                <?php for ($n = 1; $n <= $remaining; $n++): ?><option value="<?= $n ?>"><?= $n ?></option><?php endfor; ?>
+            </select>
+            <span><?= $lang==='ar'?'بفرش':'with' ?></span>
+            <select name="interior" class="as-int-sel">
+                <option value=""><?= $lang==='ar'?'— اختر الفرش —':'— pick —' ?></option>
+                <?php foreach ($INTERIORS as $iv): ?><option value="<?= htmlspecialchars($iv) ?>"><?= htmlspecialchars($iv) ?></option><?php endforeach; ?>
+                <option value="__other__"><?= $lang==='ar'?'✏️ أخرى…':'✏️ Other…' ?></option>
+            </select>
+        </div>
     </form>
     <?php else: ?>
     <div class="all-done"><?= $t[$lang]['all_assigned'] ?></div>
@@ -1185,12 +1260,14 @@ a.icon-btn { text-decoration:none; }
 <?php endforeach; ?>
 </div>
 <?php endif; ?>
+</div>
 
 </div><!-- /container -->
 
 <!-- ══════════════════════════════════
      BRAND BREAKDOWN MODAL
 ══════════════════════════════════ -->
+<div data-live="bd">
 <?php if ($totalCars > 0): ?>
 <div class="bd-overlay" id="bdOverlay" onclick="closeBrandBreakdown(event)">
     <div class="bd-box" onclick="event.stopPropagation()">
@@ -1226,6 +1303,7 @@ a.icon-btn { text-decoration:none; }
     </div>
 </div>
 <?php endif; ?>
+</div>
 
 <!-- Color dialog -->
 <div class="clr-dialog hidden" id="clrDialog">
@@ -1301,6 +1379,7 @@ a.icon-btn { text-decoration:none; }
     <input type="hidden" name="incoming_id" id="clrFormShip">
     <input type="hidden" name="color"       id="clrFormColor">
     <input type="hidden" name="num"         id="clrFormNum" value="1">
+    <input type="hidden" name="interior"    id="clrFormInterior">
 </form>
 <form method="POST" id="edIncForm" style="display:none;">
     <input type="hidden" name="action"      value="increase_qty">
@@ -1312,6 +1391,7 @@ a.icon-btn { text-decoration:none; }
     <input type="hidden" name="incoming_id"   id="edDecShip">
     <input type="hidden" name="remove_color"  id="edDecColor">
     <input type="hidden" name="remove_count"  id="edDecCount">
+    <input type="hidden" name="remove_interior" id="edDecInterior">
 </form>
 
 <script>
@@ -1385,11 +1465,10 @@ a.icon-btn { text-decoration:none; }
     var input      = document.getElementById('shipSearch');
     var clearBtn   = document.getElementById('searchClearBtn');
     var emptyMsg   = document.getElementById('searchEmptyMsg');
-    var cards      = document.querySelectorAll('#shipList .ship-card');
-
     if (!input) return; // no shipments rendered
 
     input.addEventListener('input', function () {
+        var cards = document.querySelectorAll('#shipList .ship-card');
         var q = this.value.trim().toLowerCase();
         clearBtn.classList.toggle('visible', q.length > 0);
         var visible = 0;
@@ -1417,9 +1496,10 @@ a.icon-btn { text-decoration:none; }
 /* ══════════════════════════════════════
    COLOR DIALOG (unchanged)
 ══════════════════════════════════════ */
-var _clrShip=0,_clrColor='',_clrCount=1;
-function openColorDialog(shipId,colorRaw,carName,colorLabel,count){
-    _clrShip=shipId; _clrColor=colorRaw; _clrCount=parseInt(count)||1;
+var _clrShip=0,_clrColor='',_clrCount=1,_clrInterior='';
+function openColorDialog(shipId,colorRaw,carName,colorLabel,count,interior){
+    _clrShip=shipId; _clrColor=colorRaw; _clrCount=parseInt(count)||1; _clrInterior=interior||'';
+    document.getElementById('clrFormInterior').value=_clrInterior;
     document.getElementById('clrName').textContent=carName+' — '+colorLabel;
     document.getElementById('clrFormShip').value=shipId;
     document.getElementById('clrFormColor').value=colorRaw;
@@ -1452,14 +1532,19 @@ function openColorDialog(shipId,colorRaw,carName,colorLabel,count){
 }
 function doColorAction(action){
     document.getElementById('clrFormAction').value=action;
-    document.getElementById('clrForm').submit();
+    closeDialog();
+    icSend(document.getElementById('clrForm'), {
+        hide: document.querySelector('.js-color-tag[data-shipid="'+_clrShip+'"][data-colorraw="'+CSS.escape(_clrColor)+'"][data-interior="'+CSS.escape(_clrInterior)+'"]'),
+        partial: (+document.getElementById('clrFormNum').value) < _clrCount,
+        msg: action==='mark_sold' ? IC.sold : IC.removed
+    });
 }
 document.addEventListener('click',function(e){
     var tag=e.target.closest('.js-color-tag');
     if(!tag)return;
     e.preventDefault();
     openColorDialog(tag.getAttribute('data-shipid'),tag.getAttribute('data-colorraw'),
-        tag.getAttribute('data-car'),tag.getAttribute('data-color'),tag.getAttribute('data-count'));
+        tag.getAttribute('data-car'),tag.getAttribute('data-color'),tag.getAttribute('data-count'),tag.getAttribute('data-interior'));
 });
 function closeDialog(){document.getElementById('clrDialog').classList.add('hidden');}
 document.getElementById('clrDialog').addEventListener('click',function(e){if(e.target===this)closeDialog();});
@@ -1467,7 +1552,7 @@ document.getElementById('clrDialog').addEventListener('click',function(e){if(e.t
 /* ══════════════════════════════════════
    EDIT QUANTITY DIALOG (unchanged)
 ══════════════════════════════════════ */
-var _edShipId=0,_edQty=0,_edRemaining=0,_edColors=[],_edIncChosen=1,_edDecColor='',_edDecCount=1;
+var _edShipId=0,_edQty=0,_edRemaining=0,_edColors=[],_edIncChosen=1,_edDecColor='',_edDecCount=1,_edDecInterior='';
 document.addEventListener('click',function(e){
     var btn=e.target.closest('.js-edit-btn');
     if(!btn)return;
@@ -1520,7 +1605,8 @@ function submitIncrease(){
     if(!final||final<1)return;
     document.getElementById('edIncShip').value=_edShipId;
     document.getElementById('edIncCount').value=final;
-    document.getElementById('edIncForm').submit();
+    closeEditDialog();
+    icSend(document.getElementById('edIncForm'));
 }
 function edGoDecrease(){
     document.querySelectorAll('.edit-step').forEach(function(s){s.classList.remove('active');});
@@ -1528,12 +1614,12 @@ function edGoDecrease(){
     container.innerHTML='';
     _edDecColor='';_edDecCount=1;
     var isAr=document.documentElement.lang==='ar';
-    _edColors.forEach(function(c){
+    _edColors.forEach(function(c,ci){
         var item=document.createElement('div');
         item.className='dec-item';
         var swatchBg=c.color.toLowerCase().replace(/\s+/g,'');
         var numBtns='';
-        for(var n=1;n<=c.count;n++){numBtns+='<button type="button" class="dec-n-btn'+(n===1?' active':'')+'" data-color="'+c.color+'" data-num="'+n+'" onclick="decSelectItem(\''+c.color.replace(/'/g,"\\'")+'\',' +n+', this)">'+n+'</button>';}
+        for(var n=1;n<=c.count;n++){numBtns+='<button type="button" class="dec-n-btn'+(n===1&&ci===0?' active':'')+'" data-color="k'+ci+'" data-num="'+n+'" onclick="decSelectItem(\'k'+ci+'\','+n+', this)">'+n+'</button>';}
         item.innerHTML='<div class="dec-item-left"><div class="dec-swatch" style="background:'+swatchBg+'"></div><div><div class="dec-item-name">'+c.label+'</div><div class="dec-item-sub">'+c.count+' '+(isAr?'سيارة':'cars')+'</div></div></div><div class="dec-num-row">'+numBtns+'</div>';
         container.appendChild(item);
     });
@@ -1541,17 +1627,20 @@ function edGoDecrease(){
         var uItem=document.createElement('div');
         uItem.className='dec-item uncolored-item';
         var uBtns='';
-        for(var n=1;n<=_edRemaining;n++){uBtns+='<button type="button" class="dec-n-btn'+(n===1?' active':'')+'" data-color="__uncolored__" data-num="'+n+'" onclick="decSelectItem(\'__uncolored__\','+n+', this)">'+n+'</button>';}
+        for(var n=1;n<=_edRemaining;n++){uBtns+='<button type="button" class="dec-n-btn'+(n===1&&!_edColors.length?' active':'')+'" data-color="__uncolored__" data-num="'+n+'" onclick="decSelectItem(\'__uncolored__\','+n+', this)">'+n+'</button>';}
         var uLabel=isAr?(_edRemaining+' سيارة بدون لون'):(_edRemaining+' uncolored car'+(_edRemaining>1?'s':''));
         uItem.innerHTML='<div class="dec-item-left"><div class="dec-swatch" style="background:rgba(245,158,11,.4)"></div><div><div class="dec-item-name" style="color:var(--amber)">'+(isAr?'بدون لون':'Uncolored')+'</div><div class="dec-item-sub">'+uLabel+'</div></div></div><div class="dec-num-row">'+uBtns+'</div>';
         container.appendChild(uItem);
     }
-    if(_edColors.length>0){_edDecColor=_edColors[0].color;_edDecCount=1;}
-    else if(_edRemaining>0){_edDecColor='__uncolored__';_edDecCount=1;}
+    if(_edColors.length>0){_edDecColor=_edColors[0].color;_edDecInterior=_edColors[0].interior||'';_edDecCount=1;}
+    else if(_edRemaining>0){_edDecColor='__uncolored__';_edDecInterior='';_edDecCount=1;}
     document.getElementById('edStep2Dec').classList.add('active');
 }
 function decSelectItem(color,num,btn){
-    _edDecColor=color;_edDecCount=num;
+    var key=color;
+    if(color.charAt(0)==='k'&&_edColors[+color.slice(1)]){var c=_edColors[+color.slice(1)];_edDecColor=c.color;_edDecInterior=c.interior||'';}
+    else{_edDecColor=color;_edDecInterior='';}
+    _edDecCount=num;color=key;
     document.querySelectorAll('#edDecItems .dec-n-btn[data-color="'+color+'"]').forEach(function(b){b.classList.remove('active');});
     btn.classList.add('active');
     document.querySelectorAll('#edDecItems .dec-n-btn').forEach(function(b){if(b.getAttribute('data-color')!==color)b.classList.remove('active');});
@@ -1561,7 +1650,9 @@ function submitDecrease(){
     document.getElementById('edDecShip').value=_edShipId;
     document.getElementById('edDecColor').value=_edDecColor;
     document.getElementById('edDecCount').value=_edDecCount;
-    document.getElementById('edDecForm').submit();
+    document.getElementById('edDecInterior').value=_edDecInterior;
+    closeEditDialog();
+    icSend(document.getElementById('edDecForm'), { msg: IC.decreased });
 }
 function closeEditDialog(){document.getElementById('editDialog').classList.add('hidden');}
 document.getElementById('editDialog').addEventListener('click',function(e){if(e.target===this)closeEditDialog();});
@@ -1620,6 +1711,129 @@ function closeBrandBreakdown(e){
 document.addEventListener('keydown',function(e){
     if(e.key==='Escape'){closeBrandBreakdown();}
 });
+
+/* ══════════════════════════════════════
+   NO RELOAD — every action saves in the background and only the
+   cards update, so the page never jumps. Removing / selling /
+   deleting waits 5 seconds with an «تراجع» button first.
+══════════════════════════════════════ */
+var IC = <?= json_encode($lang === 'ar' ? [
+    'sold' => '✅ تم تسجيل البيع', 'removed' => '🗑 تمت إزالة اللون', 'deleted' => '🗑 تم حذف الشحنة', 'decreased' => '➖ تم تقليل الكمية',
+    'undo' => '↩️ تراجع', 'other' => 'اكتب نوع الفرش:', 'err' => 'تعذّر الحفظ — تحقق من الاتصال وحاول مرة أخرى',
+] : [
+    'sold' => '✅ Marked as sold', 'removed' => '🗑 Color removed', 'deleted' => '🗑 Shipment deleted', 'decreased' => '➖ Quantity reduced',
+    'undo' => '↩️ Undo', 'other' => 'Type the interior:', 'err' => 'Could not save — check the connection and try again',
+], JSON_UNESCAPED_UNICODE) ?>;
+var icPending = null;
+var icToast = document.createElement('div'); icToast.className = 'ic-toast';
+icToast.innerHTML = '<span class="tx"></span><button type="button"></button>';
+document.body.appendChild(icToast);
+icToast.querySelector('button').addEventListener('click', icUndo);
+
+function icPost(fd){
+    return fetch('incoming_cars.php?lang=<?= $lang ?>', { method:'POST', body:fd, credentials:'same-origin', headers:{'X-Incoming-Ajax':'1'} })
+        .then(function(r){ if(!r.ok) throw 0; return r; });
+}
+function icRefresh(){
+    return fetch('incoming_cars.php?lang=<?= $lang ?>', { credentials:'same-origin', cache:'no-store' }).then(function(r){ return r.text(); }).then(function(html){
+        var doc = new DOMParser().parseFromString(html, 'text/html');
+        document.querySelectorAll('[data-live]').forEach(function(el){
+            var fresh = doc.querySelector('[data-live="'+el.getAttribute('data-live')+'"]');
+            if (fresh) el.innerHTML = fresh.innerHTML;
+        });
+        var q = document.getElementById('shipSearch'); if (q && q.value) q.dispatchEvent(new Event('input'));
+        icSortable();
+    });
+}
+function icCommit(){
+    if (!icPending) return Promise.resolve();
+    var p = icPending; icPending = null; clearTimeout(p.timer);
+    icToast.classList.remove('show');
+    return icPost(p.fd).then(icRefresh).catch(function(){ if (p.el) p.el.classList.remove('pending-hide'); alert(IC.err); });
+}
+function icUndo(){
+    if (!icPending) return;
+    clearTimeout(icPending.timer);
+    if (icPending.el) icPending.el.classList.remove('pending-hide');
+    icPending = null; icToast.classList.remove('show');
+}
+/* send a form; with opts.msg it waits 5 seconds (undo) first */
+function icSend(form, opts){
+    opts = opts || {};
+    var fd = new FormData(form);
+    return icCommit().then(function(){
+        if (opts.msg) {
+            var el = opts.partial ? null : opts.hide;
+            if (el) el.classList.add('pending-hide');
+            icPending = { fd: fd, el: el, timer: setTimeout(icCommit, 5000) };
+            icToast.querySelector('.tx').textContent = opts.msg;
+            icToast.querySelector('button').textContent = IC.undo;
+            icToast.classList.add('show');
+            return;
+        }
+        var card = form.closest('.ship-card'); if (card) card.classList.add('ic-busy');
+        return icPost(fd).then(icRefresh).catch(function(){ if (card) card.classList.remove('ic-busy'); alert(IC.err); });
+    });
+}
+/* leaving the page inside the 5 seconds still saves */
+function icFlushBeacon(){
+    if (!icPending) return;
+    clearTimeout(icPending.timer);
+    navigator.sendBeacon('incoming_cars.php?lang=<?= $lang ?>', icPending.fd);
+    icPending = null;
+}
+window.addEventListener('pagehide', icFlushBeacon);
+document.addEventListener('visibilitychange', function(){ if (document.visibilityState === 'hidden') icFlushBeacon(); });
+
+/* every form on the page saves without reloading */
+document.addEventListener('submit', function(e){
+    var f = e.target;
+    if (e.defaultPrevented || !f.matches('form[method="POST"], form[method="post"]')) return;   // e.g. «حذف؟» answered no
+    e.preventDefault();
+    var act = (f.querySelector('[name=action]') || {}).value;
+    if (act === 'delete') {
+        icSend(f, { msg: IC.deleted, hide: f.closest('.ship-card') });
+    } else if (act === 'add') {
+        icSend(f).then(function(){ f.reset(); document.getElementById('addCard').classList.remove('open'); });
+    } else {
+        icSend(f);
+    }
+});
+
+/* «فرش مختلف؟» */
+document.addEventListener('click', function(e){
+    var b = e.target.closest('.js-int-toggle'); if (!b) return;
+    var box = b.parentNode.querySelector('.as-int'); box.classList.toggle('open');
+    if (!box.classList.contains('open')) box.querySelector('.as-int-sel').value = '';
+    else { box.querySelector('.as-int-count').value = 1; b.parentNode.querySelector('.as-count').dispatchEvent(new Event('change', { bubbles: true })); }
+});
+document.addEventListener('change', function(e){
+    var sel = e.target;
+    if (sel.classList.contains('as-int-sel') && sel.value === '__other__') {
+        var v = (prompt(IC.other, '') || '').trim().slice(0, 60);
+        if (!v) { sel.value = ''; return; }
+        var o = document.createElement('option'); o.value = v; o.textContent = v; sel.insertBefore(o, sel.lastElementChild); sel.value = v;
+    }
+    if (sel.classList.contains('as-count')) {           // «منها» can't be more than the count
+        var ic = sel.closest('form').querySelector('.as-int-count');
+        [].forEach.call(ic.options, function(o){ o.disabled = +o.value > +sel.value; });
+        if (+ic.value > +sel.value) ic.value = sel.value;
+    }
+});
+
+/* drag ⠿ to reorder */
+function icSortable(){
+    var list = document.getElementById('shipList');
+    if (!list || !window.Sortable || list._ic) return;
+    list._ic = Sortable.create(list, { handle: '.drag-handle', animation: 160, forceFallback: true, fallbackTolerance: 3, ghostClass: 'sortable-ghost', chosenClass: 'sortable-chosen',
+        onEnd: function(ev){
+            if (ev.oldIndex === ev.newIndex) return;
+            var fd = new FormData(); fd.append('action', 'reorder');
+            list.querySelectorAll('.ship-card').forEach(function(c){ fd.append('ids[]', c.getAttribute('data-id')); });
+            icCommit().then(function(){ return icPost(fd); }).then(icRefresh).catch(function(){ alert(IC.err); });
+        } });
+}
 </script>
+<script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.2/Sortable.min.js" onload="icSortable()"></script>
 </body>
 </html>
