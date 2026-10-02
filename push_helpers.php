@@ -71,6 +71,7 @@ function notify_events(): array
         'check_done'       => ['نتيجة الجرد',                    'Stock check result',         '✅', ['admin'], true, null, 'check'],
         // stopping the system (manual, stock check, transfers) — every admin always gets it
         'user_locked'      => ['إيقاف النظام عن موظف (يدوي أو تلقائي)', 'System stopped for someone (manual or automatic)', '🔒', ['admin'], true, true, 'lock'],
+        'lock_reason'      => ['تعديل سبب إيقاف النظام',             'Stop reason changed', '✏️', ['admin'], true, true, 'lock'],
         'lock_basma'       => ['قرار البصمة أثناء الإيقاف',           'Clock-in decision during a stop', '⏱️', ['admin'], true, true, 'lock'],
         // security
         'login_failed'     => ['محاولات دخول خاطئة',           'Failed sign-in attempts',    '🔐', ['admin'], true, null, 'security'],
@@ -873,6 +874,12 @@ function notify_message(PDO $pdo, string $event, array $d, string $lang): array
             $body[] = $bl;
             $url = 'lockdown.php?lang=' . $lang;
             break;
+        case 'lock_reason':
+            $title = $ev[2] . ' ' . ($ar ? 'تم تعديل سبب إيقاف النظام عن ' : 'Stop reason changed for ') . ($d['user'] ?? '');
+            $body[] = ($ar ? '📝 السبب الجديد: ' : '📝 New reason: ') . (($d['reason'] ?? '') !== '' ? $d['reason'] : ($ar ? 'بدون سبب مكتوب' : 'no reason given'));
+            if (($d['old'] ?? '') !== '') $body[] = ($ar ? '↩️ كان: ' : '↩️ Was: ') . $d['old'];
+            $url = 'lockdown.php?lang=' . $lang;
+            break;
         case 'transfer_missing':
             $to = push_branch_label($pdo, (string)($d['to'] ?? ''), $lang);
             $title = $ev[2] . ' ' . ($ar ? $by . ' أبلغ أن ' . $line . ' لم تصل إلى ' . $to : $by . ' reports ' . $line . ' did not arrive at ' . $to);
@@ -1034,7 +1041,7 @@ function notify_deliver(PDO $pdo, int $logId, string $event, array $msg, array $
 
     // same kind, not seen yet, in the last 15 minutes → one grouped notification
     $group = [];
-    if (!in_array($event, ['message', 'test', 'transfer_incoming', 'check_item', 'check_start', 'check_tick', 'check_warn', 'check_locked', 'check_done', 'transfer_missing', 'user_locked', 'lock_basma', 'duty_unlocked'], true)) {
+    if (!in_array($event, ['message', 'test', 'transfer_incoming', 'check_item', 'check_start', 'check_tick', 'check_warn', 'check_locked', 'check_done', 'transfer_missing', 'user_locked', 'lock_basma', 'lock_reason', 'duty_unlocked'], true)) {
         $in2 = implode(',', $withDev);
         $gs = $pdo->prepare("SELECT i.user_id, l.title FROM notify_inbox i JOIN notify_log l ON l.id = i.log_id
                              WHERE i.user_id IN ($in2) AND l.event = ? AND i.seen_at IS NULL AND l.created_at >= NOW() - INTERVAL 15 MINUTE

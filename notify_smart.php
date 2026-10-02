@@ -356,6 +356,36 @@ function lock_stop_attendance(PDO $pdo, int $lockId): bool
     return $up->rowCount() > 0;
 }
 
+/**
+ * The admin changes the reason of a manual stop. The same people who were told
+ * about the stop (every admin, the people chosen, the person) are told again,
+ * and if the clock-in was stopped the reason in attendance is updated too.
+ */
+function lock_change_reason(PDO $pdo, int $lockId, string $reason, string $by): bool
+{
+    push_tables($pdo);
+    $reason = mb_substr(trim($reason), 0, 240);
+    $st = $pdo->prepare("SELECT l.*, u.username FROM user_locks l JOIN users u ON u.id = l.user_id WHERE l.id = ? AND l.unlocked_at IS NULL");
+    $st->execute([$lockId]);
+    $lk = $st->fetch(PDO::FETCH_ASSOC);
+    if (!$lk || $lk['kind'] !== 'manual' || (string)$lk['reason'] === $reason) return false;
+    $pdo->prepare("UPDATE user_locks SET reason = ? WHERE id = ?")->execute([$reason, $lockId]);
+    if ($lk['basma'] === 'stopped' && $lk['att_log_id']) {
+        $ar = notify_options($pdo)['lang'] === 'ar';
+        $why = ($ar ? 'إيقاف مفاجئ من الإدارة' : 'Sudden stop by management') . ($reason !== '' ? ' — ' . $reason : '');
+        $pdo->prepare("UPDATE attendance_logs SET stop_reason = ? WHERE id = ?")->execute([mb_substr($why, 0, 250), (int)$lk['att_log_id']]);
+    }
+    // everyone who got the stop notification + every admin
+    $r = $pdo->prepare("SELECT DISTINCT u.username FROM notify_log g JOIN notify_inbox i ON i.log_id = g.id JOIN users u ON u.id = i.user_id
+                        WHERE g.event = 'user_locked' AND g.ref = ? AND u.active = 1");
+    $r->execute(['lock:' . $lockId]);
+    $to = array_map('strval', $r->fetchAll(PDO::FETCH_COLUMN));
+    $to = array_merge($to, array_map('strval', $pdo->query("SELECT username FROM users WHERE active = 1 AND role = 'admin'")->fetchAll(PDO::FETCH_COLUMN)), [(string)$lk['username']]);
+    notify_event($pdo, 'lock_reason', ['user' => $lk['username'], 'reason' => $reason, 'old' => (string)$lk['reason'],
+        'only' => array_values(array_unique($to)), 'actor' => $by, 'ref' => 'lock:' . $lockId, 'tag' => 'lockr-' . $lockId, 'force' => true, 'now' => true]);
+    return true;
+}
+
 /** The admin decides about the clock-in of a stopped person: 'stop' (from the moment of the stop) or 'keep'. */
 function lock_basma_decide(PDO $pdo, int $lockId, string $how, string $by): bool
 {
