@@ -124,21 +124,6 @@ $fmt = fn($dt) => $dt ? date('Y-m-d', strtotime($dt)) . ' ' . smart_time_label(s
 .ld-h .i{flex:1;min-width:200px}.ld-h small{display:block;color:var(--mut);font-weight:700}
 .ld-opts.three{grid-template-columns:repeat(3,1fr)}
 @media (max-width:640px){.ld-opts,.ld-opts.three{grid-template-columns:1fr}}
-.rs-ov{position:fixed;inset:0;z-index:9999;display:none;align-items:center;justify-content:center;padding:16px;background:rgba(2,6,23,.75);backdrop-filter:blur(6px)}
-.rs-ov.open{display:flex}
-.rs-box{width:100%;max-width:560px;border-radius:24px;padding:22px;background:linear-gradient(160deg,#111c33,#0b1222);border:1px solid rgba(147,51,234,.45);box-shadow:0 30px 80px rgba(0,0,0,.6);animation:rsIn .2s ease}
-@keyframes rsIn{from{transform:translateY(16px) scale(.97);opacity:0}}
-.rs-box h3{margin:0 0 4px;font-size:20px;font-weight:900}
-.rs-box .who{color:#fca5a5;font-weight:800;font-size:14px;margin-bottom:14px}
-.rs-old{padding:10px 12px;border-radius:12px;background:rgba(255,255,255,.04);border:1px dashed rgba(255,255,255,.15);color:var(--mut);font-size:13.5px;font-weight:700;margin-bottom:12px;line-height:1.7}
-.rs-ta{width:100%;min-height:180px;border-radius:16px;border:1.5px solid rgba(147,51,234,.5);background:#070d1c;color:var(--txt);font:inherit;font-size:16px;line-height:1.8;padding:14px 16px;resize:vertical;outline:none;transition:border-color .15s,box-shadow .15s}
-.rs-ta:focus{border-color:#a855f7;box-shadow:0 0 0 4px rgba(168,85,247,.18)}
-.rs-meta{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin-top:8px;font-size:12.5px;color:var(--mut);font-weight:700}
-.rs-btns{display:flex;gap:10px;margin-top:16px}
-.rs-btns button{flex:1;min-height:52px;white-space:nowrap;border-radius:14px;font:inherit;font-size:16px;font-weight:900;cursor:pointer}
-.rs-save{border:0;background:linear-gradient(90deg,#9333ea,#2563eb);color:#fff;box-shadow:0 10px 26px rgba(147,51,234,.35)}
-.rs-save:disabled{opacity:.5;cursor:default}
-.rs-cancel{border:1px solid var(--line);background:rgba(255,255,255,.05);color:var(--txt)}
 </style>
 </head>
 <body>
@@ -166,7 +151,7 @@ $fmt = fn($dt) => $dt ? date('Y-m-d', strtotime($dt)) . ' ' . smart_time_label(s
             <div class="ld-acts">
                 <?php if (in_array($bs, ['pending', 'running'], true)): ?><button type="button" class="st" data-basma="stop" data-lock="<?= (int)$l['id'] ?>">⏹ <?= $ar ? 'إيقاف البصمة من وقت الإيقاف' : 'Stop clock-in at the stop' ?></button><?php endif; ?>
                 <?php if ($bs === 'pending'): ?><button type="button" class="kp" data-basma="keep" data-lock="<?= (int)$l['id'] ?>">▶ <?= $ar ? 'استمرار البصمة' : 'Keep it running' ?></button><?php endif; ?>
-                <?php if ($l['kind'] === 'manual'): ?><button type="button" data-reason="<?= (int)$l['id'] ?>" data-cur="<?= htmlspecialchars((string)$l['reason']) ?>">✏️ <?= $ar ? 'تعديل السبب' : 'Edit reason' ?></button><?php endif; ?>
+                <?php if ($l['kind'] === 'manual'): ?><button type="button" onclick="ldEditReason(this)" data-reason="<?= (int)$l['id'] ?>" data-cur="<?= htmlspecialchars((string)$l['reason']) ?>">✏️ <?= $ar ? 'تعديل السبب' : 'Edit reason' ?></button><?php endif; ?>
                 <button type="button" class="un" data-unlock="<?= (int)$l['user_id'] ?>" data-name="<?= htmlspecialchars($l['username']) ?>">🔓 <?= $ar ? 'فتح النظام' : 'Unlock' ?></button>
             </div>
         </div>
@@ -237,19 +222,57 @@ $fmt = fn($dt) => $dt ? date('Y-m-d', strtotime($dt)) . ' ' . smart_time_label(s
         <?php endforeach; ?>
     </section>
 </div>
-<div class="rs-ov" id="rsOv">
-    <div class="rs-box">
-        <h3>✏️ <?= $ar ? 'تعديل سبب الإيقاف' : 'Edit the stop reason' ?></h3>
-        <div class="who" id="rsWho"></div>
-        <div class="rs-old" id="rsOld"></div>
-        <textarea class="rs-ta" id="rsTa" maxlength="240" placeholder="<?= $ar ? 'اكتب السبب الجديد هنا…' : 'Type the new reason…' ?>"></textarea>
-        <div class="rs-meta"><span>🔔 <?= $ar ? 'سيصل إشعار لكل من استلم إشعار الإيقاف' : 'Everyone who was told about the stop is notified' ?></span><span id="rsCnt" style="white-space:nowrap">0 / 240</span></div>
-        <div class="rs-btns">
-            <button type="button" class="rs-save" id="rsSave">💾 <?= $ar ? 'حفظ وإرسال' : 'Save & notify' ?></button>
-            <button type="button" class="rs-cancel" id="rsCancel"><?= $ar ? 'إلغاء' : 'Cancel' ?></button>
-        </div>
-    </div>
-</div>
+<script>
+/* ✏️ edit the reason — self-contained: builds its own box on click, so nothing
+   else on the page can stop it; if anything fails it falls back to a simple prompt. */
+function ldEditReason(btn) {
+    var AR = <?= json_encode($ar) ?>, CSRF = <?= json_encode($csrf) ?>;
+    var lock = +btn.getAttribute('data-reason'), cur = btn.getAttribute('data-cur') || '';
+    function save(v, done) {
+        fetch(location.pathname, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ csrf: CSRF, action: 'reason', lock: lock, reason: v }) })
+            .then(function (r) { return r.json(); })
+            .then(function (r) { if (r.ok) location.reload(); else { alert((AR ? 'لم يتم الحفظ' : 'Not saved') + (r.error ? ' (' + r.error + ')' : '')); done && done(); } })
+            .catch(function (e) { alert((AR ? 'تعذّر الحفظ: ' : 'Could not save: ') + e); done && done(); });
+    }
+    function fallback(err) {
+        if (err) { var m = document.getElementById('ldErr'); if (m) { m.textContent = '⚠️ ' + err; m.style.display = 'block'; } }
+        var v = prompt(AR ? 'السبب الجديد:' : 'New reason:', cur);
+        if (v !== null && v.trim() !== cur.trim()) save(v);
+    }
+    try {
+        var old = document.getElementById('ldRsBox'); if (old) old.remove();
+        var row = btn.closest ? btn.closest('.ld-row') : null, nm = row ? row.querySelector('b') : null;
+        var ov = document.createElement('div'); ov.id = 'ldRsBox';
+        ov.setAttribute('style', 'position:fixed;top:0;left:0;right:0;bottom:0;z-index:2147483647;display:flex;align-items:center;justify-content:center;padding:16px;background:rgba(2,6,23,.78)');
+        ov.innerHTML =
+            '<div style="width:100%;max-width:560px;border-radius:24px;padding:22px;background:#0f1a30;border:1px solid rgba(147,51,234,.5);box-shadow:0 30px 80px rgba(0,0,0,.6);color:#f1f5f9;font-family:inherit;direction:' + (AR ? 'rtl' : 'ltr') + '">' +
+            '<div style="font-size:20px;font-weight:900;margin-bottom:4px">✏️ ' + (AR ? 'تعديل سبب الإيقاف' : 'Edit the stop reason') + '</div>' +
+            '<div data-x="who" style="color:#fca5a5;font-weight:800;font-size:14px;margin-bottom:12px"></div>' +
+            '<div data-x="old" style="padding:10px 12px;border-radius:12px;background:rgba(255,255,255,.05);border:1px dashed rgba(255,255,255,.18);color:#94a3b8;font-size:13.5px;font-weight:700;margin-bottom:12px;line-height:1.7;white-space:pre-wrap"></div>' +
+            '<textarea data-x="ta" maxlength="240" style="box-sizing:border-box;width:100%;min-height:180px;border-radius:16px;border:1.5px solid #a855f7;background:#070d1c;color:#f1f5f9;font:inherit;font-size:16px;line-height:1.8;padding:14px 16px;resize:vertical;outline:none"></textarea>' +
+            '<div style="display:flex;justify-content:space-between;gap:10px;margin-top:8px;font-size:12.5px;color:#94a3b8;font-weight:700"><span>🔔 ' + (AR ? 'سيصل إشعار لكل من استلم إشعار الإيقاف' : 'Everyone who was told about the stop is notified') + '</span><span data-x="cnt" style="white-space:nowrap"></span></div>' +
+            '<div style="display:flex;gap:10px;margin-top:16px">' +
+            '<button type="button" data-x="save" style="flex:1;min-height:52px;border:0;border-radius:14px;background:linear-gradient(90deg,#9333ea,#2563eb);color:#fff;font:inherit;font-size:16px;font-weight:900;cursor:pointer">💾 ' + (AR ? 'حفظ وإرسال' : 'Save & notify') + '</button>' +
+            '<button type="button" data-x="cancel" style="flex:1;min-height:52px;border:1px solid rgba(255,255,255,.15);border-radius:14px;background:rgba(255,255,255,.06);color:#f1f5f9;font:inherit;font-size:16px;font-weight:900;cursor:pointer">' + (AR ? 'إلغاء' : 'Cancel') + '</button>' +
+            '</div></div>';
+        var q = function (k) { return ov.querySelector('[data-x="' + k + '"]'); };
+        q('who').textContent = nm ? '🔒 ' + nm.textContent.replace('🔒', '').trim() : '';
+        q('old').textContent = (AR ? 'السبب الحالي: ' : 'Current reason: ') + (cur || (AR ? 'بدون سبب مكتوب' : 'no reason given'));
+        var ta = q('ta'), sv = q('save');
+        ta.value = cur;
+        var upd = function () { q('cnt').textContent = ta.value.length + ' / 240'; sv.disabled = ta.value.trim() === cur.trim(); sv.style.opacity = sv.disabled ? '.5' : '1'; };
+        upd(); ta.addEventListener('input', upd);
+        var close = function () { ov.remove(); document.body.style.overflow = ''; };
+        q('cancel').addEventListener('click', close);
+        ov.addEventListener('click', function (e) { if (e.target === ov) close(); });
+        sv.addEventListener('click', function () { sv.disabled = true; save(ta.value, function () { sv.disabled = false; }); });
+        document.body.appendChild(ov); document.body.style.overflow = 'hidden';
+        setTimeout(function () { try { ta.focus(); } catch (x) {} }, 50);
+    } catch (e) { fallback(e && e.message ? e.message : String(e)); }
+}
+</script>
+<div id="ldErr" style="display:none;position:fixed;bottom:10px;left:10px;right:10px;z-index:2147483647;padding:10px;border-radius:10px;background:#7f1d1d;color:#fff;font-size:12px;direction:ltr"></div>
 <script>
 (function () {
     const CSRF = <?= json_encode($csrf) ?>, AR = <?= json_encode($ar) ?>;
@@ -266,30 +289,6 @@ $fmt = fn($dt) => $dt ? date('Y-m-d', strtotime($dt)) . ' ' . smart_time_label(s
         $('ldGo').disabled = true;
         const r = await post({ action: 'lock', uids, reason: $('ldReason').value, basma, watch: [...document.querySelectorAll('.ld-p.w:not(.rw).on')].map(b => +b.dataset.u) });
         if (r.ok) location.reload(); else { $('ldGo').disabled = false; msg('ldMsg', '✗ ' + (r.error || ''), false); }
-    });
-    let rsLock = 0, rsCur = '';
-    const rsOv = $('rsOv'), rsTa = $('rsTa');
-    const rsCount = () => { $('rsCnt').textContent = rsTa.value.length + ' / 240'; $('rsSave').disabled = rsTa.value.trim() === rsCur.trim(); };
-    const rsClose = () => { rsOv.classList.remove('open'); document.body.style.overflow = ''; };
-    document.addEventListener('click', e => {
-        const b = e.target.closest('[data-reason]'); if (!b) return;
-        e.preventDefault();
-        rsLock = +b.dataset.reason; rsCur = b.dataset.cur;
-        const row = b.closest('.ld-row'), nm = row && row.querySelector('b');
-        $('rsWho').textContent = nm ? '🔒 ' + nm.textContent.replace('🔒', '').trim() : '';
-        $('rsOld').textContent = (AR ? 'السبب الحالي: ' : 'Current reason: ') + (rsCur || (AR ? 'بدون سبب مكتوب' : 'no reason given'));
-        rsTa.value = rsCur; rsCount();
-        rsOv.classList.add('open'); document.body.style.overflow = 'hidden';
-        setTimeout(() => { try { rsTa.focus(); rsTa.setSelectionRange(rsTa.value.length, rsTa.value.length); } catch (x) {} }, 50);
-    });
-    rsTa.addEventListener('input', rsCount);
-    $('rsCancel').addEventListener('click', rsClose);
-    rsOv.addEventListener('click', e => { if (e.target === rsOv) rsClose(); });
-    document.addEventListener('keydown', e => { if (e.key === 'Escape') rsClose(); });
-    $('rsSave').addEventListener('click', async () => {
-        $('rsSave').disabled = true;
-        const r = await post({ action: 'reason', lock: rsLock, reason: rsTa.value });
-        if (r.ok) location.reload(); else $('rsSave').disabled = false;
     });
     document.querySelectorAll('[data-unlock]').forEach(b => b.addEventListener('click', async () => {
         if (!confirm((AR ? 'فتح النظام لـ ' : 'Unlock ') + b.dataset.name + '؟')) return;
