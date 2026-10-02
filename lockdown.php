@@ -36,7 +36,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $n = 0;
                 foreach (array_unique(array_map('intval', (array)($in['uids'] ?? []))) as $u) {
                     if (user_lock_active($pdo, $u)) continue;
-                    if (smart_lock_user($pdo, $u, 'manual', mb_substr(trim((string)($in['reason'] ?? '')), 0, 240), $me, [],
+                    if (smart_lock_user($pdo, $u, 'manual', mb_substr(trim((string)($in['reason'] ?? '')), 0, 1500), $me, [],
                                         ($in['basma'] ?? '') === 'stop' ? 'stop' : 'keep', array_map('intval', (array)($in['watch'] ?? [])))) $n++;
                 }
                 echo json_encode(['ok' => $n > 0, 'n' => $n]); exit;
@@ -90,6 +90,7 @@ $fmt = fn($dt) => $dt ? date('Y-m-d', strtotime($dt)) . ' ' . smart_time_label(s
 <script>
 /* shows any script error on the page itself, so a broken button is never silent */
 window.addEventListener('error', function (e) {
+    if (!e.message) return;   // a picture or font that failed to load is not a script error
     try {
         var m = document.getElementById('ldErr') || document.body && document.body.appendChild(Object.assign(document.createElement('div'), { id: 'ldErr' }));
         if (!m) return;
@@ -113,7 +114,7 @@ window.addEventListener('error', function (e) {
 .ld-p.on{background:linear-gradient(90deg,#b91c1c,#7f1d1d);border-color:transparent;color:#fff}
 .ld-p.w.on{background:linear-gradient(90deg,#f59e0b,#eab308);color:#1c1917}
 .ld-p:disabled{opacity:.45;cursor:default}
-.ld-in{width:100%;min-height:80px;border-radius:14px;border:1px solid var(--line);background:#0b1426;color:var(--txt);font:inherit;font-size:14px;padding:10px 12px;resize:vertical}
+.ld-in{width:100%;min-height:150px;line-height:1.8;border-radius:14px;border:1px solid var(--line);background:#0b1426;color:var(--txt);font:inherit;font-size:14px;padding:10px 12px;resize:vertical}
 .ld-opts{display:grid;grid-template-columns:1fr 1fr;gap:8px}
 .ld-o{display:flex;gap:10px;align-items:flex-start;padding:12px;border-radius:14px;border:1px solid var(--line);background:rgba(255,255,255,.03);cursor:pointer}
 .ld-o input{margin-top:3px;accent-color:#ef4444}
@@ -179,7 +180,7 @@ window.addEventListener('error', function (e) {
             <?php endforeach; ?>
         </div>
         <label class="ld-l"><?= $ar ? 'السبب (اختياري — يظهر له ويُكتب في سجل البصمة إذا أوقفتها)' : 'Reason (optional — shown to them and written into attendance if you stop the clock-in)' ?></label>
-        <textarea class="ld-in" id="ldReason" maxlength="240" placeholder="<?= $ar ? 'مثال: مراجعة عهدة الفرع — برجاء التواصل مع المدير' : 'e.g. branch audit — please contact your manager' ?>"></textarea>
+        <textarea class="ld-in" id="ldReason" maxlength="1500" placeholder="<?= $ar ? 'مثال: مراجعة عهدة الفرع — برجاء التواصل مع المدير' : 'e.g. branch audit — please contact your manager' ?>"></textarea>
         <label class="ld-l"><?= $ar ? 'البصمة أثناء الإيقاف' : 'Clock-in during the stop' ?></label>
         <div class="ld-opts">
             <label class="ld-o on"><input type="radio" name="ldB" value="stop" checked><span><b>⏹ <?= $ar ? 'إيقاف البصمة الآن' : 'Stop the clock-in now' ?></b><small><?= $ar ? 'يُسجَّل انصرافه لحظة الإيقاف، ويُكتب «إيقاف مفاجئ من الإدارة» والسبب في سجل البصمة' : 'Clocked out at the moment of the stop; "sudden stop by management" and the reason are written into attendance' ?></small></span></label>
@@ -261,7 +262,7 @@ function ldEditReason(btn) {
             '<div style="font-size:20px;font-weight:900;margin-bottom:4px">✏️ ' + (AR ? 'تعديل سبب الإيقاف' : 'Edit the stop reason') + '</div>' +
             '<div data-x="who" style="color:#fca5a5;font-weight:800;font-size:14px;margin-bottom:12px"></div>' +
             '<div data-x="old" style="padding:10px 12px;border-radius:12px;background:rgba(255,255,255,.05);border:1px dashed rgba(255,255,255,.18);color:#94a3b8;font-size:13.5px;font-weight:700;margin-bottom:12px;line-height:1.7;white-space:pre-wrap"></div>' +
-            '<textarea data-x="ta" maxlength="240" style="box-sizing:border-box;width:100%;min-height:180px;border-radius:16px;border:1.5px solid #a855f7;background:#070d1c;color:#f1f5f9;font:inherit;font-size:16px;line-height:1.8;padding:14px 16px;resize:vertical;outline:none"></textarea>' +
+            '<textarea data-x="ta" maxlength="1500" style="box-sizing:border-box;width:100%;min-height:260px;max-height:60vh;border-radius:16px;border:1.5px solid #a855f7;background:#070d1c;color:#f1f5f9;font:inherit;font-size:16px;line-height:1.8;padding:14px 16px;resize:vertical;outline:none"></textarea>' +
             '<div style="display:flex;justify-content:space-between;gap:10px;margin-top:8px;font-size:12.5px;color:#94a3b8;font-weight:700"><span>🔔 ' + (AR ? 'سيصل إشعار لكل من استلم إشعار الإيقاف' : 'Everyone who was told about the stop is notified') + '</span><span data-x="cnt" style="white-space:nowrap"></span></div>' +
             '<div style="display:flex;gap:10px;margin-top:16px">' +
             '<button type="button" data-x="save" style="flex:1;min-height:52px;border:0;border-radius:14px;background:linear-gradient(90deg,#9333ea,#2563eb);color:#fff;font:inherit;font-size:16px;font-weight:900;cursor:pointer">💾 ' + (AR ? 'حفظ وإرسال' : 'Save & notify') + '</button>' +
@@ -272,7 +273,7 @@ function ldEditReason(btn) {
         q('old').textContent = (AR ? 'السبب الحالي: ' : 'Current reason: ') + (cur || (AR ? 'بدون سبب مكتوب' : 'no reason given'));
         var ta = q('ta'), sv = q('save');
         ta.value = cur;
-        var upd = function () { q('cnt').textContent = ta.value.length + ' / 240'; sv.disabled = ta.value.trim() === cur.trim(); sv.style.opacity = sv.disabled ? '.5' : '1'; };
+        var upd = function () { q('cnt').textContent = ta.value.length + ' / 1500'; sv.disabled = ta.value.trim() === cur.trim(); sv.style.opacity = sv.disabled ? '.5' : '1'; };
         upd(); ta.addEventListener('input', upd);
         var close = function () { ov.remove(); document.body.style.overflow = ''; };
         q('cancel').addEventListener('click', close);

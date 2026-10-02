@@ -668,7 +668,7 @@ $wdNames = $isRTL ? [6 => 'السبت', 0 => 'الأحد', 1 => 'الاثنين'
               <?php elseif ($log['status'] === 'active'): ?>
                 <span class="badge active">● <?= $isRTL ? 'متواجد' : 'Active' ?></span>
               <?php elseif (!empty($log['stop_reason'])): ?>
-                <span class="badge auto" title="<?= htmlspecialchars($log['stop_reason']) ?>">🔒 <?= $isRTL ? 'أُوقفت البصمة' : 'Clock-in stopped' ?>: <?= htmlspecialchars($log['stop_reason']) ?></span>
+                <span class="badge auto" style="white-space:normal;max-width:100%" title="<?= htmlspecialchars($log['stop_reason']) ?>">🔒 <?= $isRTL ? 'أُوقفت البصمة' : 'Clock-in stopped' ?>: <?= htmlspecialchars(mb_strlen($log['stop_reason']) > 140 ? mb_substr($log['stop_reason'], 0, 140) . '…' : $log['stop_reason']) ?></span>
               <?php else: ?>
                 <span class="badge done"><?= $isRTL ? 'منتهي' : 'Done' ?></span>
               <?php endif; ?>

@@ -353,8 +353,14 @@ function push_tables(PDO $pdo): void
     } catch (Throwable $e) { error_log('user_locks upgrade: ' . $e->getMessage()); }
     try {   // why a clock-in was stopped (shown in attendance)
         $cols = $pdo->query("SHOW COLUMNS FROM attendance_logs")->fetchAll(PDO::FETCH_COLUMN);
-        if ($cols && !in_array('stop_reason', $cols, true)) $pdo->exec("ALTER TABLE attendance_logs ADD stop_reason VARCHAR(255) NULL");
+        if ($cols && !in_array('stop_reason', $cols, true)) $pdo->exec("ALTER TABLE attendance_logs ADD stop_reason TEXT NULL");
     } catch (Throwable $e) {}   // no attendance table yet
+    try {   // long reasons (up to 1500 characters): widen the old 255 columns once
+        foreach ([['user_locks', 'reason'], ['attendance_logs', 'stop_reason']] as [$t, $c]) {
+            $ty = $pdo->query("SHOW COLUMNS FROM `$t` LIKE '$c'")->fetch(PDO::FETCH_ASSOC);
+            if ($ty && stripos((string)$ty['Type'], 'varchar') === 0) $pdo->exec("ALTER TABLE `$t` MODIFY `$c` TEXT NULL");
+        }
+    } catch (Throwable $e) { error_log('reason columns: ' . $e->getMessage()); }
     $pdo->exec("CREATE TABLE IF NOT EXISTS transfer_issues (
         movement_id INT PRIMARY KEY,
         reported_by VARCHAR(100) NOT NULL,
@@ -617,6 +623,13 @@ function push_ar_n(int $n, array $w): string
 function push_ar_cars(int $n): string { return $n === 1 ? 'سيارة واحدة' : push_ar_n($n, ['سيارة', 'سيارتان', 'سيارات', 'سيارة']); }
 function push_ar_mins(int $n): string { return $n === 1 ? 'دقيقة واحدة' : push_ar_n($n, ['دقيقة', 'دقيقتان', 'دقائق', 'دقيقة']); }
 
+/** A long text shortened for a phone notification (phones only take a few KB); the full text stays in the system. */
+function push_short(string $s, int $max = 300): string
+{
+    $s = trim(preg_replace('/\s+/u', ' ', $s));
+    return mb_strlen($s) > $max ? rtrim(mb_substr($s, 0, $max)) . '…' : $s;
+}
+
 /** "5 أيام" / "20 يوماً" — the right Arabic word after a number of days. */
 function push_ar_days(int $n): string
 {
@@ -866,7 +879,7 @@ function notify_message(PDO $pdo, string $event, array $d, string $lang): array
                    'none'    => $ar ? '— لم يكن مسجّلاً حضوره' : '— was not clocked in'][$d['basma'] ?? 'none'] ?? '';
             if ($event === 'user_locked') {
                 $title = $ev[2] . ' ' . ($ar ? 'تم إيقاف النظام عن ' : 'System stopped for ') . $who;
-                $body[] = '📝 ' . ($d['reason'] ?? '');
+                $body[] = '📝 ' . push_short((string)($d['reason'] ?? ''));
                 if (($d['kind'] ?? '') === 'manual' && !empty($d['by'])) $body[] = ($ar ? '👤 بقرار من ' : '👤 By ') . $d['by'];
             } else {
                 $title = $ev[2] . ' ' . ($ar ? 'البصمة — ' : 'Clock-in — ') . $who;
@@ -876,8 +889,8 @@ function notify_message(PDO $pdo, string $event, array $d, string $lang): array
             break;
         case 'lock_reason':
             $title = $ev[2] . ' ' . ($ar ? 'تم تعديل سبب إيقاف النظام عن ' : 'Stop reason changed for ') . ($d['user'] ?? '');
-            $body[] = ($ar ? '📝 السبب الجديد: ' : '📝 New reason: ') . (($d['reason'] ?? '') !== '' ? $d['reason'] : ($ar ? 'بدون سبب مكتوب' : 'no reason given'));
-            if (($d['old'] ?? '') !== '') $body[] = ($ar ? '↩️ كان: ' : '↩️ Was: ') . $d['old'];
+            $body[] = ($ar ? '📝 السبب الجديد: ' : '📝 New reason: ') . (($d['reason'] ?? '') !== '' ? push_short((string)$d['reason']) : ($ar ? 'بدون سبب مكتوب' : 'no reason given'));
+            if (($d['old'] ?? '') !== '') $body[] = ($ar ? '↩️ كان: ' : '↩️ Was: ') . push_short((string)$d['old'], 120);
             $url = 'lockdown.php?lang=' . $lang;
             break;
         case 'transfer_missing':

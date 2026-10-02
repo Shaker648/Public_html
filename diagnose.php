@@ -14,9 +14,9 @@ if (($_SESSION['role'] ?? '') !== 'admin') { http_response_code(403); exit('Admi
 
 /* the fingerprints of the files as they were sent (filled in when this page was made) */
 $EXPECTED = /*EXPECTED*/[
-    'lockdown.php' => 'ba2cd8b10b396685e7cc30dcf2ab05d7',
-    'notify_smart.php' => '874151ede4efd9f08dc20427f83f6a93',
-    'push_helpers.php' => '3c075fe7015ec6370873f79e094e9ad9',
+    'lockdown.php' => 'aacc43a7b200030d5d244dfc8edb6edb',
+    'notify_smart.php' => '494bef1696f514dbcec9e61f470a2955',
+    'push_helpers.php' => 'ab8c5247d74544fab67bc99cd801a470',
     'notify_act.php' => 'da7427e7817ad9a7e99505760739d88d',
     'auth.php' => '2c76b8218182cb5424c959a4afa8b32b',
     'permissions.php' => 'd1c2a9e20cf174c220224e66d8caac32',
@@ -24,8 +24,8 @@ $EXPECTED = /*EXPECTED*/[
     'incoming_cars.php' => 'b67960b37ae61dd4dd86be6b49b8ac1b',
     'receive_shipment.php' => 'a435693a7ae41ac7773e52cb807df536',
     'transfer_lock.php' => 'df214c227b38bc0d7de2c0c550fe9aa8',
-    'attendance.php' => 'cd945b6f63624c1105e3bc0c847ebb4d',
-    'attendance_admin.php' => '3f6e768815cec6bf1de923512b014c48',
+    'attendance.php' => '8e63cd1e2d4ed49bbc9179f1101756e8',
+    'attendance_admin.php' => '7d54c40176024aa632437f25f77c15b6',
     'notifications_admin.php' => '1c3a75bdaa89bc3fab82a06e0e19f519',
     'dashboard.php' => '2a12d2523c121cf956bc76fc691c1951',
     'prices.php' => '0a1e32c255c2bacab37f16fee0563a23',

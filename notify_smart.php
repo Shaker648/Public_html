@@ -320,7 +320,7 @@ function smart_lock_user(PDO $pdo, int $uid, string $kind, string $reason, strin
     if ($basma === '') $basma = $kind === 'manual' ? 'keep' : ['ask' => 'pending', 'stop' => 'stop', 'keep' => 'keep'][$rules['auto_basma']];
     $state = $att ? ($basma === 'stop' ? 'stopped' : ($basma === 'pending' ? 'pending' : 'running')) : 'none';
     $pdo->prepare("INSERT INTO user_locks (user_id, reason, locked_at, kind, locked_by, basma, att_log_id) VALUES (?, ?, NOW(), ?, ?, ?, ?)")
-        ->execute([$uid, mb_substr($reason, 0, 250), $kind, $by !== '' ? $by : null, $state, $att ? (int)$att['id'] : null]);
+        ->execute([$uid, mb_substr($reason, 0, 1500), $kind, $by !== '' ? $by : null, $state, $att ? (int)$att['id'] : null]);
     $lockId = (int)$pdo->lastInsertId();
     if ($state === 'stopped') lock_stop_attendance($pdo, $lockId);
 
@@ -351,7 +351,7 @@ function lock_stop_attendance(PDO $pdo, int $lockId): bool
     if ((string)$lk['reason'] !== '' && $lk['kind'] === 'manual') $why .= ' — ' . $lk['reason'];
     $up = $pdo->prepare("UPDATE attendance_logs SET clock_out = GREATEST(clock_in, ?), status = 'completed', out_branch_name = branch_name, stop_reason = ?
                          WHERE id = ? AND status = 'active'");
-    $up->execute([$lk['locked_at'], mb_substr($why, 0, 250), (int)$lk['att_log_id']]);
+    $up->execute([$lk['locked_at'], mb_substr($why, 0, 1600), (int)$lk['att_log_id']]);
     $pdo->prepare("UPDATE user_locks SET basma = 'stopped' WHERE id = ?")->execute([$lockId]);
     return $up->rowCount() > 0;
 }
@@ -364,7 +364,7 @@ function lock_stop_attendance(PDO $pdo, int $lockId): bool
 function lock_change_reason(PDO $pdo, int $lockId, string $reason, string $by): bool
 {
     push_tables($pdo);
-    $reason = mb_substr(trim($reason), 0, 240);
+    $reason = mb_substr(trim($reason), 0, 1500);
     $st = $pdo->prepare("SELECT l.*, u.username FROM user_locks l JOIN users u ON u.id = l.user_id WHERE l.id = ? AND l.unlocked_at IS NULL");
     $st->execute([$lockId]);
     $lk = $st->fetch(PDO::FETCH_ASSOC);
@@ -373,7 +373,7 @@ function lock_change_reason(PDO $pdo, int $lockId, string $reason, string $by): 
     if ($lk['basma'] === 'stopped' && $lk['att_log_id']) {
         $ar = notify_options($pdo)['lang'] === 'ar';
         $why = ($ar ? 'إيقاف مفاجئ من الإدارة' : 'Sudden stop by management') . ($reason !== '' ? ' — ' . $reason : '');
-        $pdo->prepare("UPDATE attendance_logs SET stop_reason = ? WHERE id = ?")->execute([mb_substr($why, 0, 250), (int)$lk['att_log_id']]);
+        $pdo->prepare("UPDATE attendance_logs SET stop_reason = ? WHERE id = ?")->execute([mb_substr($why, 0, 1600), (int)$lk['att_log_id']]);
     }
     // everyone who got the stop notification + every admin
     $r = $pdo->prepare("SELECT DISTINCT u.username FROM notify_log g JOIN notify_inbox i ON i.log_id = g.id JOIN users u ON u.id = i.user_id
