@@ -526,7 +526,7 @@ if ($isClockedIn && $active['branch_name']) {
         <div class="sess-row">
           <span class="sess-time"><?= htmlspecialchars(fmtT($t['clock_in'])) ?> → <?= htmlspecialchars(fmtT($t['clock_out'])) ?>
             <?php if ($t['auto_closed']): ?><span class="sess-auto">⏰ <?= $isRTL ? 'نسيت تسجيل الانصراف — لا تُحسب' : 'Forgot to clock out — not counted' ?></span><?php endif; ?>
-            <?php if (!empty($t['stop_reason'])): ?><span class="sess-auto">🔒 <?= $isRTL ? 'أُوقفت البصمة' : 'Clock-in stopped' ?>: <?= htmlspecialchars($t['stop_reason']) ?></span><?php endif; ?></span>
+            <?php if (!empty($t['stop_reason'])): ?><span class="sess-auto" style="white-space:normal" title="<?= htmlspecialchars($t['stop_reason']) ?>">🔒 <?= $isRTL ? 'أُوقفت البصمة' : 'Clock-in stopped' ?>: <?= htmlspecialchars(mb_strlen($t['stop_reason']) > 140 ? mb_substr($t['stop_reason'], 0, 140) . '…' : $t['stop_reason']) ?></span><?php endif; ?></span>
           <span class="sess-dur <?= $t['auto_closed'] ? 'x' : '' ?>"><?= fmtHM($d) ?></span>
         </div>
       <?php endforeach; ?>
