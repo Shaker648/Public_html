@@ -38,6 +38,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                         ($in['basma'] ?? '') === 'stop' ? 'stop' : 'keep', array_map('intval', (array)($in['watch'] ?? [])))) $n++;
                 }
                 echo json_encode(['ok' => $n > 0, 'n' => $n]); exit;
+            case 'reason':
+                echo json_encode(['ok' => lock_change_reason($pdo, (int)($in['lock'] ?? 0), (string)($in['reason'] ?? ''), $me)]); exit;
             case 'unlock':
                 smart_unlock($pdo, (int)($in['uid'] ?? 0), $me);
                 echo json_encode(['ok' => true]); exit;
@@ -147,6 +149,7 @@ $fmt = fn($dt) => $dt ? date('Y-m-d', strtotime($dt)) . ' ' . smart_time_label(s
             <div class="ld-acts">
                 <?php if (in_array($bs, ['pending', 'running'], true)): ?><button type="button" class="st" data-basma="stop" data-lock="<?= (int)$l['id'] ?>">⏹ <?= $ar ? 'إيقاف البصمة من وقت الإيقاف' : 'Stop clock-in at the stop' ?></button><?php endif; ?>
                 <?php if ($bs === 'pending'): ?><button type="button" class="kp" data-basma="keep" data-lock="<?= (int)$l['id'] ?>">▶ <?= $ar ? 'استمرار البصمة' : 'Keep it running' ?></button><?php endif; ?>
+                <?php if ($l['kind'] === 'manual'): ?><button type="button" data-reason="<?= (int)$l['id'] ?>" data-cur="<?= htmlspecialchars((string)$l['reason']) ?>">✏️ <?= $ar ? 'تعديل السبب' : 'Edit reason' ?></button><?php endif; ?>
                 <button type="button" class="un" data-unlock="<?= (int)$l['user_id'] ?>" data-name="<?= htmlspecialchars($l['username']) ?>">🔓 <?= $ar ? 'فتح النظام' : 'Unlock' ?></button>
             </div>
         </div>
@@ -234,6 +237,11 @@ $fmt = fn($dt) => $dt ? date('Y-m-d', strtotime($dt)) . ' ' . smart_time_label(s
         const r = await post({ action: 'lock', uids, reason: $('ldReason').value, basma, watch: [...document.querySelectorAll('.ld-p.w:not(.rw).on')].map(b => +b.dataset.u) });
         if (r.ok) location.reload(); else { $('ldGo').disabled = false; msg('ldMsg', '✗ ' + (r.error || ''), false); }
     });
+    document.querySelectorAll('[data-reason]').forEach(b => b.addEventListener('click', async () => {
+        const v = prompt(AR ? 'السبب الجديد (سيصل إشعار لكل من استلم إشعار الإيقاف):' : 'New reason (everyone who was told about the stop is notified):', b.dataset.cur);
+        if (v === null || v.trim() === b.dataset.cur.trim()) return;
+        b.disabled = true; const r = await post({ action: 'reason', lock: +b.dataset.reason, reason: v }); if (r.ok) location.reload(); else b.disabled = false;
+    }));
     document.querySelectorAll('[data-unlock]').forEach(b => b.addEventListener('click', async () => {
         if (!confirm((AR ? 'فتح النظام لـ ' : 'Unlock ') + b.dataset.name + '؟')) return;
         b.disabled = true; const r = await post({ action: 'unlock', uid: +b.dataset.unlock }); if (r.ok) location.reload(); else b.disabled = false;

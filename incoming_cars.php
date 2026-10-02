@@ -807,13 +807,7 @@ a.icon-btn { text-decoration:none; }
 .drag-handle { cursor:grab; touch-action:none; user-select:none; }
 .ship-card.sortable-ghost { opacity:.35; }
 .ship-card.sortable-chosen { box-shadow:0 0 0 2px var(--purple), 0 18px 40px rgba(0,0,0,.5); }
-.pending-hide { display:none !important; }
-.ic-toast { position:fixed; inset-inline:16px; bottom:calc(18px + env(safe-area-inset-bottom)); margin:auto; max-width:520px; z-index:9999; display:flex; align-items:center; gap:12px;
-  padding:14px 16px; border-radius:16px; background:#0b1426; border:1px solid rgba(147,51,234,.5); box-shadow:0 18px 40px rgba(0,0,0,.55); color:#f1f5f9; font-weight:700; font-size:15px;
   transform:translateY(160%); visibility:hidden; transition:transform .25s ease, visibility .25s; }
-.ic-toast.show { transform:none; visibility:visible; }
-.ic-toast .tx { flex:1; }
-.ic-toast button { height:40px; padding:0 16px; border-radius:12px; border:0; background:linear-gradient(90deg,#9333ea,#2563eb); color:#fff; font:inherit; font-weight:800; cursor:pointer; white-space:nowrap; }
 .ic-busy { opacity:.6; pointer-events:none; transition:opacity .15s; }
 .assign-row select { max-width:260px; height:46px; }
 .btn-add-color {
@@ -1533,11 +1527,7 @@ function openColorDialog(shipId,colorRaw,carName,colorLabel,count,interior){
 function doColorAction(action){
     document.getElementById('clrFormAction').value=action;
     closeDialog();
-    icSend(document.getElementById('clrForm'), {
-        hide: document.querySelector('.js-color-tag[data-shipid="'+_clrShip+'"][data-colorraw="'+CSS.escape(_clrColor)+'"][data-interior="'+CSS.escape(_clrInterior)+'"]'),
-        partial: (+document.getElementById('clrFormNum').value) < _clrCount,
-        msg: action==='mark_sold' ? IC.sold : IC.removed
-    });
+    icSend(document.getElementById('clrForm'), { hide: document.getElementById('ship-'+_clrShip) });
 }
 document.addEventListener('click',function(e){
     var tag=e.target.closest('.js-color-tag');
@@ -1652,7 +1642,7 @@ function submitDecrease(){
     document.getElementById('edDecCount').value=_edDecCount;
     document.getElementById('edDecInterior').value=_edDecInterior;
     closeEditDialog();
-    icSend(document.getElementById('edDecForm'), { msg: IC.decreased });
+    icSend(document.getElementById('edDecForm'));
 }
 function closeEditDialog(){document.getElementById('editDialog').classList.add('hidden');}
 document.getElementById('editDialog').addEventListener('click',function(e){if(e.target===this)closeEditDialog();});
@@ -1713,23 +1703,11 @@ document.addEventListener('keydown',function(e){
 });
 
 /* ══════════════════════════════════════
-   NO RELOAD — every action saves in the background and only the
-   cards update, so the page never jumps. Removing / selling /
-   deleting waits 5 seconds with an «تراجع» button first.
+   NO RELOAD — every action saves right away in the background
+   and only the cards update, so the page never jumps.
 ══════════════════════════════════════ */
-var IC = <?= json_encode($lang === 'ar' ? [
-    'sold' => '✅ تم تسجيل البيع', 'removed' => '🗑 تمت إزالة اللون', 'deleted' => '🗑 تم حذف الشحنة', 'decreased' => '➖ تم تقليل الكمية',
-    'undo' => '↩️ تراجع', 'other' => 'اكتب نوع الفرش:', 'err' => 'تعذّر الحفظ — تحقق من الاتصال وحاول مرة أخرى',
-] : [
-    'sold' => '✅ Marked as sold', 'removed' => '🗑 Color removed', 'deleted' => '🗑 Shipment deleted', 'decreased' => '➖ Quantity reduced',
-    'undo' => '↩️ Undo', 'other' => 'Type the interior:', 'err' => 'Could not save — check the connection and try again',
-], JSON_UNESCAPED_UNICODE) ?>;
-var icPending = null;
-var icToast = document.createElement('div'); icToast.className = 'ic-toast';
-icToast.innerHTML = '<span class="tx"></span><button type="button"></button>';
-document.body.appendChild(icToast);
-icToast.querySelector('button').addEventListener('click', icUndo);
-
+var IC = <?= json_encode($lang === 'ar' ? ['other' => 'اكتب نوع الفرش:', 'err' => 'تعذّر الحفظ — تحقق من الاتصال وحاول مرة أخرى']
+                                        : ['other' => 'Type the interior:', 'err' => 'Could not save — check the connection and try again'], JSON_UNESCAPED_UNICODE) ?>;
 function icPost(fd){
     return fetch('incoming_cars.php?lang=<?= $lang ?>', { method:'POST', body:fd, credentials:'same-origin', headers:{'X-Incoming-Ajax':'1'} })
         .then(function(r){ if(!r.ok) throw 0; return r; });
@@ -1745,45 +1723,13 @@ function icRefresh(){
         icSortable();
     });
 }
-function icCommit(){
-    if (!icPending) return Promise.resolve();
-    var p = icPending; icPending = null; clearTimeout(p.timer);
-    icToast.classList.remove('show');
-    return icPost(p.fd).then(icRefresh).catch(function(){ if (p.el) p.el.classList.remove('pending-hide'); alert(IC.err); });
-}
-function icUndo(){
-    if (!icPending) return;
-    clearTimeout(icPending.timer);
-    if (icPending.el) icPending.el.classList.remove('pending-hide');
-    icPending = null; icToast.classList.remove('show');
-}
-/* send a form; with opts.msg it waits 5 seconds (undo) first */
 function icSend(form, opts){
     opts = opts || {};
     var fd = new FormData(form);
-    return icCommit().then(function(){
-        if (opts.msg) {
-            var el = opts.partial ? null : opts.hide;
-            if (el) el.classList.add('pending-hide');
-            icPending = { fd: fd, el: el, timer: setTimeout(icCommit, 5000) };
-            icToast.querySelector('.tx').textContent = opts.msg;
-            icToast.querySelector('button').textContent = IC.undo;
-            icToast.classList.add('show');
-            return;
-        }
-        var card = form.closest('.ship-card'); if (card) card.classList.add('ic-busy');
-        return icPost(fd).then(icRefresh).catch(function(){ if (card) card.classList.remove('ic-busy'); alert(IC.err); });
-    });
+    var card = opts.hide || form.closest('.ship-card');
+    if (card) card.classList.add('ic-busy');
+    return icPost(fd).then(icRefresh).catch(function(){ if (card) card.classList.remove('ic-busy'); alert(IC.err); });
 }
-/* leaving the page inside the 5 seconds still saves */
-function icFlushBeacon(){
-    if (!icPending) return;
-    clearTimeout(icPending.timer);
-    navigator.sendBeacon('incoming_cars.php?lang=<?= $lang ?>', icPending.fd);
-    icPending = null;
-}
-window.addEventListener('pagehide', icFlushBeacon);
-document.addEventListener('visibilitychange', function(){ if (document.visibilityState === 'hidden') icFlushBeacon(); });
 
 /* every form on the page saves without reloading */
 document.addEventListener('submit', function(e){
@@ -1792,7 +1738,7 @@ document.addEventListener('submit', function(e){
     e.preventDefault();
     var act = (f.querySelector('[name=action]') || {}).value;
     if (act === 'delete') {
-        icSend(f, { msg: IC.deleted, hide: f.closest('.ship-card') });
+        icSend(f);
     } else if (act === 'add') {
         icSend(f).then(function(){ f.reset(); document.getElementById('addCard').classList.remove('open'); });
     } else {
@@ -1830,7 +1776,7 @@ function icSortable(){
             if (ev.oldIndex === ev.newIndex) return;
             var fd = new FormData(); fd.append('action', 'reorder');
             list.querySelectorAll('.ship-card').forEach(function(c){ fd.append('ids[]', c.getAttribute('data-id')); });
-            icCommit().then(function(){ return icPost(fd); }).then(icRefresh).catch(function(){ alert(IC.err); });
+            icPost(fd).then(icRefresh).catch(function(){ alert(IC.err); });
         } });
 }
 </script>
