@@ -87,6 +87,17 @@ $fmt = fn($dt) => $dt ? date('Y-m-d', strtotime($dt)) . ' ' . smart_time_label(s
 <!DOCTYPE html>
 <html lang="<?= $lang ?>" dir="<?= $ar ? 'rtl' : 'ltr' ?>">
 <head>
+<script>
+/* shows any script error on the page itself, so a broken button is never silent */
+window.addEventListener('error', function (e) {
+    try {
+        var m = document.getElementById('ldErr') || document.body && document.body.appendChild(Object.assign(document.createElement('div'), { id: 'ldErr' }));
+        if (!m) return;
+        m.setAttribute('style', 'display:block;position:fixed;bottom:10px;left:10px;right:10px;z-index:2147483647;padding:10px;border-radius:10px;background:#7f1d1d;color:#fff;font:12px monospace;direction:ltr;white-space:pre-wrap');
+        m.textContent += '⚠️ ' + (e.message || 'error') + (e.filename ? ' @ ' + e.filename.split('/').pop() + ':' + e.lineno : '') + '\n';
+    } catch (x) {}
+}, true);
+</script>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title><?= $ar ? 'إيقاف النظام' : 'Stop the system' ?> — First 1 Car</title>
