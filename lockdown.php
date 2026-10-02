@@ -15,6 +15,8 @@ require 'config.php';
 require_once __DIR__ . '/notify_smart.php';
 
 perm_require('page.lockdown');
+header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');   // always the latest page (no old copy from a cache)
+header('X-LiteSpeed-Cache-Control: no-cache');
 
 $lang = ($_GET['lang'] ?? 'ar') === 'en' ? 'en' : 'ar';
 $ar   = $lang === 'ar';
@@ -269,14 +271,17 @@ $fmt = fn($dt) => $dt ? date('Y-m-d', strtotime($dt)) . ' ' . smart_time_label(s
     const rsOv = $('rsOv'), rsTa = $('rsTa');
     const rsCount = () => { $('rsCnt').textContent = rsTa.value.length + ' / 240'; $('rsSave').disabled = rsTa.value.trim() === rsCur.trim(); };
     const rsClose = () => { rsOv.classList.remove('open'); document.body.style.overflow = ''; };
-    document.querySelectorAll('[data-reason]').forEach(b => b.addEventListener('click', () => {
+    document.addEventListener('click', e => {
+        const b = e.target.closest('[data-reason]'); if (!b) return;
+        e.preventDefault();
         rsLock = +b.dataset.reason; rsCur = b.dataset.cur;
-        $('rsWho').textContent = '🔒 ' + b.closest('.ld-row').querySelector('b').textContent.replace('🔒', '').trim();
+        const row = b.closest('.ld-row'), nm = row && row.querySelector('b');
+        $('rsWho').textContent = nm ? '🔒 ' + nm.textContent.replace('🔒', '').trim() : '';
         $('rsOld').textContent = (AR ? 'السبب الحالي: ' : 'Current reason: ') + (rsCur || (AR ? 'بدون سبب مكتوب' : 'no reason given'));
         rsTa.value = rsCur; rsCount();
         rsOv.classList.add('open'); document.body.style.overflow = 'hidden';
-        setTimeout(() => { rsTa.focus(); rsTa.setSelectionRange(rsTa.value.length, rsTa.value.length); }, 50);
-    }));
+        setTimeout(() => { try { rsTa.focus(); rsTa.setSelectionRange(rsTa.value.length, rsTa.value.length); } catch (x) {} }, 50);
+    });
     rsTa.addEventListener('input', rsCount);
     $('rsCancel').addEventListener('click', rsClose);
     rsOv.addEventListener('click', e => { if (e.target === rsOv) rsClose(); });
