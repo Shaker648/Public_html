@@ -82,6 +82,7 @@ try {
                     'ack' => (int)$r['need_ack'] === 1 && $r['ack_at'] === null];
         };
         smart_run_maybe($pdo);
+        lock_countdown_scan($pdo);   // ⏳ countdowns end on time even if nobody has the lock page open
         feed_out(['ok' => true, 'messages' => array_map($clean, $msgs), 'events' => array_map($clean, $events), 'more' => max(0, $total - count($events)),
                   'badge' => notify_unread_counts($pdo, [$uid])[$uid] ?? 0]);
     }

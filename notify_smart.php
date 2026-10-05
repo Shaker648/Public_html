@@ -338,7 +338,7 @@ function smart_lock_user(PDO $pdo, int $uid, string $kind, string $reason, strin
 }
 
 /** Close the person's clock-in at the moment of the stop, and write why into attendance. */
-function lock_stop_attendance(PDO $pdo, int $lockId): bool
+function lock_stop_attendance(PDO $pdo, int $lockId, ?string $at = null): bool
 {
     $st = $pdo->prepare("SELECT * FROM user_locks WHERE id = ?");
     $st->execute([$lockId]);
@@ -349,11 +349,81 @@ function lock_stop_attendance(PDO $pdo, int $lockId): bool
             ? ['manual' => 'إيقاف مفاجئ من الإدارة', 'check' => 'إيقاف تلقائي: عدم إكمال الجرد المفاجئ', 'transfer' => 'إيقاف تلقائي: عدم تأكيد استلام سيارات منقولة']
             : ['manual' => 'Sudden stop by management', 'check' => 'Automatic stop: stock check not finished', 'transfer' => 'Automatic stop: transferred cars not confirmed'])[$lk['kind']] ?? '';
     if ((string)$lk['reason'] !== '' && $lk['kind'] === 'manual') $why .= ' — ' . $lk['reason'];
+    if ($at !== null && !empty($lk['cd_mins'])) $why .= $lang === 'ar' ? ' (بعد انتهاء مهلة ' . push_ar_mins((int)$lk['cd_mins']) . ')' : ' (after a ' . (int)$lk['cd_mins'] . '-minute countdown)';
     $up = $pdo->prepare("UPDATE attendance_logs SET clock_out = GREATEST(clock_in, ?), status = 'completed', out_branch_name = branch_name, stop_reason = ?
                          WHERE id = ? AND status = 'active'");
-    $up->execute([$lk['locked_at'], mb_substr($why, 0, 1600), (int)$lk['att_log_id']]);
+    $up->execute([$at ?? $lk['locked_at'], mb_substr($why, 0, 1600), (int)$lk['att_log_id']]);
     $pdo->prepare("UPDATE user_locks SET basma = 'stopped' WHERE id = ?")->execute([$lockId]);
     return $up->rowCount() > 0;
+}
+
+/* ════════════════ ⏳ countdown: «ستتوقف بصمتك خلال …» ════════════════ */
+/** Who hears about a stop: every admin + the people told about it (+ chosen for stops). */
+function lock_audience(PDO $pdo, int $lockId): array
+{
+    $r = $pdo->prepare("SELECT DISTINCT u.username FROM notify_log g JOIN notify_inbox i ON i.log_id = g.id JOIN users u ON u.id = i.user_id
+                        WHERE g.event = 'user_locked' AND g.ref = ? AND u.active = 1");
+    $r->execute(['lock:' . $lockId]);
+    $to = array_map('strval', $r->fetchAll(PDO::FETCH_COLUMN));
+    $to = array_merge($to, array_map('strval', $pdo->query("SELECT username FROM users WHERE active = 1 AND role = 'admin'")->fetchAll(PDO::FETCH_COLUMN)));
+    $w = lock_rules($pdo)['watchers'];
+    if ($w) $to = array_merge($to, array_map('strval', $pdo->query("SELECT username FROM users WHERE active = 1 AND id IN (" . implode(',', $w) . ")")->fetchAll(PDO::FETCH_COLUMN)));
+    return array_values(array_unique($to));
+}
+
+/**
+ * Start a countdown on a stopped person's lock screen: when it ends the clock-in
+ * stops (from that moment) — or, if $fake, nothing happens (pressure only; the
+ * person can't tell the difference). $minutes = 0 cancels it.
+ */
+function lock_countdown_set(PDO $pdo, int $lockId, int $minutes, bool $fake, string $by): bool
+{
+    push_tables($pdo);
+    $st = $pdo->prepare("SELECT l.*, u.username FROM user_locks l JOIN users u ON u.id = l.user_id WHERE l.id = ? AND l.unlocked_at IS NULL");
+    $st->execute([$lockId]);
+    $lk = $st->fetch(PDO::FETCH_ASSOC);
+    if (!$lk) return false;
+    $who = (string)$lk['username'];
+    if ($minutes <= 0) {
+        if (!$lk['cd_until'] || $lk['cd_done']) return false;
+        $pdo->prepare("UPDATE user_locks SET cd_until = NULL, cd_mins = NULL, cd_fake = 0, cd_done = 0 WHERE id = ?")->execute([$lockId]);
+        notify_event($pdo, 'lock_countdown', ['step' => 'cancel', 'user' => $who, 'for_admin' => 1, 'only' => lock_audience($pdo, $lockId), 'actor' => $by, 'tag' => 'lockcd-' . $lockId, 'force' => true, 'now' => true]);
+        return true;
+    }
+    if (!$lk['att_log_id'] || $lk['basma'] === 'stopped' || !lock_open_attendance($pdo, (int)$lk['user_id'])) return false;   // nothing running to stop
+    $minutes = max(1, min(600, $minutes));
+    $pdo->prepare("UPDATE user_locks SET cd_until = NOW() + INTERVAL ? MINUTE, cd_mins = ?, cd_fake = ?, cd_done = 0, basma = IF(basma = 'pending', 'running', basma) WHERE id = ?")
+        ->execute([$minutes, $minutes, $fake ? 1 : 0, $lockId]);
+    $u = $pdo->prepare("SELECT cd_until FROM user_locks WHERE id = ?"); $u->execute([$lockId]);
+    $lang = notify_options($pdo)['lang'];
+    $until = smart_time_label(strtotime((string)$u->fetchColumn()), $lang);
+    // the person: the same message whether it is real or not
+    notify_event($pdo, 'lock_countdown', ['step' => 'start', 'user' => $who, 'mins' => $minutes, 'until' => $until, 'only' => [$who], 'tag' => 'lockcd-' . $lockId, 'force' => true, 'now' => true]);
+    // management: with real / fake
+    notify_event($pdo, 'lock_countdown', ['step' => 'start', 'user' => $who, 'mins' => $minutes, 'until' => $until, 'fake' => $fake, 'for_admin' => 1,
+        'only' => array_values(array_diff(lock_audience($pdo, $lockId), [$who])), 'actor' => $by, 'tag' => 'lockcd-a-' . $lockId, 'force' => true, 'now' => true]);
+    return true;
+}
+
+/** Countdowns that reached zero: real → the clock-in stops at that moment; fake → only management is told. */
+function lock_countdown_scan(PDO $pdo): int
+{
+    $n = 0;
+    try {
+        push_tables($pdo);
+        $rows = $pdo->query("SELECT l.*, u.username FROM user_locks l JOIN users u ON u.id = l.user_id
+                             WHERE l.unlocked_at IS NULL AND l.cd_until IS NOT NULL AND l.cd_done = 0 AND l.cd_until <= NOW()")->fetchAll(PDO::FETCH_ASSOC);
+        foreach ($rows as $lk) {
+            $claim = $pdo->prepare("UPDATE user_locks SET cd_done = 1 WHERE id = ? AND cd_done = 0");
+            $claim->execute([(int)$lk['id']]);
+            if (!$claim->rowCount()) continue;   // another request got it first
+            if (!$lk['cd_fake']) lock_stop_attendance($pdo, (int)$lk['id'], (string)$lk['cd_until']);
+            notify_event($pdo, 'lock_countdown', ['step' => 'end', 'user' => $lk['username'], 'fake' => (bool)$lk['cd_fake'], 'for_admin' => 1,
+                'only' => array_values(array_diff(lock_audience($pdo, (int)$lk['id']), [(string)$lk['username']])), 'tag' => 'lockcd-a-' . $lk['id'], 'force' => true, 'now' => true]);
+            $n++;
+        }
+    } catch (Throwable $e) { error_log('lock_countdown_scan: ' . $e->getMessage()); }
+    return $n;
 }
 
 /**
@@ -747,6 +817,8 @@ function smart_run(PDO $pdo): array
         }
         $s = notify_smart($pdo);
         $day = smart_daytime();
+
+        if (lock_countdown_scan($pdo)) $done[] = 'lock_countdown';
 
         /* 📋 surprise stock checks: warnings, time up → lock */
         $done = array_merge($done, smart_check_scan($pdo));
