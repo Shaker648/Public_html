@@ -156,7 +156,10 @@ $subs    = $pdo->query("SELECT s.id, s.user_id, s.device, s.last_error, s.fail_c
                                TIMESTAMPDIFF(SECOND, s.created_at, NOW()) AS age_created,
                                TIMESTAMPDIFF(SECOND, s.last_ok_at, NOW()) AS age_ok
                         FROM push_subscriptions s LEFT JOIN users u ON u.id = s.user_id ORDER BY s.id DESC")->fetchAll(PDO::FETCH_ASSOC);
-$log     = $pdo->query("SELECT *, TIMESTAMPDIFF(SECOND, created_at, NOW()) AS age FROM notify_log ORDER BY id DESC LIMIT 100")->fetchAll(PDO::FETCH_ASSOC);
+$log     = $pdo->query("SELECT *, TIMESTAMPDIFF(SECOND, created_at, NOW()) AS age FROM notify_log"
+                      // admin-only notices (whether a countdown is real or fake) — and older countdown notices that may say it
+                      . ((($_SESSION['role'] ?? '') === 'admin') ? '' : " WHERE NOT (event = 'lock_countdown' AND (ref IS NULL OR ref LIKE 'lockcd-admin:%'))")
+                      . " ORDER BY id DESC LIMIT 100")->fetchAll(PDO::FETCH_ASSOC);
 $today   = $pdo->query("SELECT COUNT(*) c, COALESCE(SUM(delivered),0) d, COALESCE(SUM(failed),0) f FROM notify_log WHERE created_at >= CURDATE()")->fetch(PDO::FETCH_ASSOC);
 $nIos    = count(array_filter($subs, fn($s) => preg_match('/iPhone|iPad/', (string)$s['device'])));
 $nAnd    = count(array_filter($subs, fn($s) => preg_match('/Android/', (string)$s['device'])));

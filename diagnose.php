@@ -14,9 +14,9 @@ if (($_SESSION['role'] ?? '') !== 'admin') { http_response_code(403); exit('Admi
 
 /* the fingerprints of the files as they were sent (filled in when this page was made) */
 $EXPECTED = /*EXPECTED*/[
-    'lockdown.php' => '1a9451b729db83c8cce3a4d333d542d8',
-    'notify_smart.php' => '19bf6e035e80b0dba3819f7cdb73688c',
-    'push_helpers.php' => 'c7315220e4a6e256de1506ecb5017dee',
+    'lockdown.php' => '85c1202599e3ac822cc121080db45f55',
+    'notify_smart.php' => '3b9604cc2e195c18d0dfb3aa8c5bc356',
+    'push_helpers.php' => 'e549fe35b856d64d9937833ad31cf79d',
     'notify_act.php' => 'da7427e7817ad9a7e99505760739d88d',
     'auth.php' => '2c76b8218182cb5424c959a4afa8b32b',
     'permissions.php' => 'd1c2a9e20cf174c220224e66d8caac32',
@@ -26,7 +26,7 @@ $EXPECTED = /*EXPECTED*/[
     'transfer_lock.php' => '12b4abe4a6ea914438e6ea75fbfb6986',
     'attendance.php' => '8e63cd1e2d4ed49bbc9179f1101756e8',
     'attendance_admin.php' => '7d54c40176024aa632437f25f77c15b6',
-    'notifications_admin.php' => '1c3a75bdaa89bc3fab82a06e0e19f519',
+    'notifications_admin.php' => '79672f13d66dd1d0983713bf6d212e92',
     'dashboard.php' => '2a12d2523c121cf956bc76fc691c1951',
     'prices.php' => '0a1e32c255c2bacab37f16fee0563a23',
     'pricing_helpers.php' => '8a07e7ac7fba1194fd3fce1df9b23d9b',
@@ -60,7 +60,7 @@ $add('⚙️ PHP', 'display_errors', true, (string)ini_get('display_errors') . '
 
 /* 3. functions the lockdown page needs */
 try { require_once __DIR__ . '/notify_smart.php'; } catch (Throwable $e) { $add('🧩 الدوال', 'notify_smart.php', false, $e->getMessage()); }
-foreach (['lock_rules', 'smart_lock_user', 'lock_change_reason', 'lock_countdown_set', 'lock_countdown_scan', 'lock_countdown_update', 'lock_basma_decide', 'smart_unlock', 'smart_time_label', 'push_ar_mins', 'push_ar_days', 'user_lock_active', 'smart_duty_scan', 'smart_check_scan', 'push_setting_set'] as $fn)
+foreach (['lock_rules', 'smart_lock_user', 'lock_change_reason', 'lock_countdown_set', 'lock_countdown_scan', 'lock_countdown_update', 'lock_cd_tell', 'lock_basma_decide', 'smart_unlock', 'smart_time_label', 'push_ar_mins', 'push_ar_days', 'user_lock_active', 'smart_duty_scan', 'smart_check_scan', 'push_setting_set'] as $fn)
     $add('🧩 الدوال', $fn, function_exists($fn), function_exists($fn) ? 'موجودة' : 'غير موجودة — ملف notify_smart.php أو push_helpers.php قديم');
 
 /* 4. database columns */
