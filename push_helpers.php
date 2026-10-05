@@ -361,6 +361,19 @@ function push_tables(PDO $pdo): void
         if (!in_array('cd_until', $cols, true)) $pdo->exec("ALTER TABLE user_locks ADD cd_until DATETIME NULL, ADD cd_fake TINYINT NOT NULL DEFAULT 0, ADD cd_mins INT NULL, ADD cd_done TINYINT NOT NULL DEFAULT 0");
         if (!in_array('cd_msg', $cols, true)) $pdo->exec("ALTER TABLE user_locks ADD cd_msg TEXT NULL");   // the message shown with the countdown
     } catch (Throwable $e) { error_log('user_locks countdown: ' . $e->getMessage()); }
+    try {   // once: take «real / fake» out of countdown notices sent before only admins were told (they reached everyone)
+        if (push_setting($pdo, 'cd_type_scrub', '') === '') {
+            $rows = $pdo->query("SELECT id, body FROM notify_log WHERE event = 'lock_countdown' AND ref IS NULL")->fetchAll(PDO::FETCH_ASSOC);
+            $up = $pdo->prepare("UPDATE notify_log SET body = ? WHERE id = ?");
+            foreach ($rows as $r) {
+                $keep = array_filter(explode("\n", (string)$r['body']), fn($ln) => !preg_match('/🎭|وهمي|حقيقي|⏹ تم إيقاف البصمة الآن|\bfake\b|\breal\b|clock-in has been stopped/iu', $ln));
+                $up->execute([implode("\n", $keep), (int)$r['id']]);
+            }
+            // written directly: push_setting_set() would call push_tables() again from inside itself
+            $pdo->prepare("INSERT INTO settings (setting_key, setting_value, updated_by, updated_at) VALUES ('cd_type_scrub', ?, 'system', NOW())
+                           ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value)")->execute([date('Y-m-d H:i:s')]);
+        }
+    } catch (Throwable $e) { error_log('cd_type_scrub: ' . $e->getMessage()); }
     try {   // long reasons (up to 1500 characters): widen the old 255 columns once
         foreach ([['user_locks', 'reason'], ['attendance_logs', 'stop_reason']] as [$t, $c]) {
             $ty = $pdo->query("SHOW COLUMNS FROM `$t` LIKE '$c'")->fetch(PDO::FETCH_ASSOC);
@@ -900,7 +913,7 @@ function notify_message(PDO $pdo, string $event, array $d, string $lang): array
                 if (!empty($d['for_admin'])) {
                     $title = $ev[2] . ' ' . ($ar ? 'عدّاد إيقاف البصمة — ' : 'Clock-in countdown — ') . ($d['user'] ?? '');
                     $body[] = ($ar ? '⏳ تتوقف بصمته بعد ' : '⏳ Clock-in stops in ') . $minsTxt . ' (' . ($d['until'] ?? '') . ')';
-                    $body[] = !empty($d['fake']) ? ($ar ? '🎭 وهمي — للضغط فقط، البصمة لن تتوقف' : '🎭 Fake — pressure only, the clock-in will not stop')
+                    if (empty($d['hide_type'])) $body[] = !empty($d['fake']) ? ($ar ? '🎭 وهمي — للضغط فقط، البصمة لن تتوقف' : '🎭 Fake — pressure only, the clock-in will not stop')
                                                  : ($ar ? '⏹ حقيقي — ستتوقف البصمة فعلاً عند انتهاء العدّاد' : '⏹ Real — the clock-in really stops when it ends');
                 } else {
                     $title = $ev[2] . ' ' . ($ar ? 'ستتوقف بصمتك خلال ' : 'Your clock-in stops in ') . $minsTxt;
@@ -919,7 +932,7 @@ function notify_message(PDO $pdo, string $event, array $d, string $lang): array
                 $title = $ev[2] . ' ' . ($ar ? 'أُلغي عدّاد إيقاف البصمة — ' : 'Clock-in countdown cancelled — ') . ($d['user'] ?? '');
             } else {   // ended
                 $title = $ev[2] . ' ' . ($ar ? 'انتهى عدّاد ' : 'Countdown ended — ') . ($d['user'] ?? '');
-                $body[] = !empty($d['fake']) ? ($ar ? '🎭 كان وهمياً — البصمة ما زالت مستمرة' : '🎭 It was fake — the clock-in is still running')
+                if (empty($d['hide_type'])) $body[] = !empty($d['fake']) ? ($ar ? '🎭 كان وهمياً — البصمة ما زالت مستمرة' : '🎭 It was fake — the clock-in is still running')
                                              : ($ar ? '⏹ تم إيقاف البصمة الآن' : '⏹ The clock-in has been stopped');
             }
             $url = !empty($d['for_admin']) || ($d['step'] ?? '') !== 'start' ? 'lockdown.php?lang=' . $lang : 'transfer_lock.php?lang=' . $lang;

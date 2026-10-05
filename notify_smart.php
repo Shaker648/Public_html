@@ -372,6 +372,25 @@ function lock_audience(PDO $pdo, int $lockId): array
 }
 
 /**
+ * Tell management about a countdown. Only admins learn whether it is real or fake;
+ * everyone else (the people chosen, managers…) gets the same notice without it.
+ * $adminLines / $otherLines are the update lines for each group (null = not an update).
+ */
+function lock_cd_tell(PDO $pdo, int $lockId, string $who, array $d, ?array $adminLines = null, ?array $otherLines = null): void
+{
+    $aud = array_values(array_diff(lock_audience($pdo, $lockId), [$who]));
+    if (!$aud) return;
+    $admins = array_map('strval', $pdo->query("SELECT username FROM users WHERE active = 1 AND role = 'admin'")->fetchAll(PDO::FETCH_COLUMN));
+    $toAdmins = array_values(array_intersect($aud, $admins));
+    $toOthers = array_values(array_diff($aud, $admins));
+    $base = $d + ['user' => $who, 'for_admin' => 1, 'force' => true, 'now' => true];
+    if ($toAdmins && ($adminLines === null || $adminLines))
+        notify_event($pdo, 'lock_countdown', array_merge($base, ['only' => $toAdmins, 'lines' => $adminLines ?? [], 'ref' => 'lockcd-admin:' . $lockId, 'tag' => 'lockcd-a-' . $lockId]));
+    if ($toOthers && ($otherLines === null || $otherLines))
+        notify_event($pdo, 'lock_countdown', array_merge($base, ['only' => $toOthers, 'lines' => $otherLines ?? [], 'hide_type' => 1, 'fake' => false, 'ref' => 'lockcd:' . $lockId, 'tag' => 'lockcd-o-' . $lockId]));
+}
+
+/**
  * Start a countdown on a stopped person's lock screen: when it ends the clock-in
  * stops (from that moment) — or, if $fake, nothing happens (pressure only; the
  * person can't tell the difference). $minutes = 0 cancels it.
@@ -400,9 +419,8 @@ function lock_countdown_set(PDO $pdo, int $lockId, int $minutes, bool $fake, str
     $until = smart_time_label(strtotime((string)$u->fetchColumn()), $lang);
     // the person: the same message whether it is real or not
     notify_event($pdo, 'lock_countdown', ['step' => 'start', 'user' => $who, 'mins' => $minutes, 'until' => $until, 'msg' => $msg, 'only' => [$who], 'tag' => 'lockcd-' . $lockId, 'force' => true, 'now' => true]);
-    // management: with real / fake
-    notify_event($pdo, 'lock_countdown', ['step' => 'start', 'user' => $who, 'mins' => $minutes, 'until' => $until, 'fake' => $fake, 'for_admin' => 1, 'msg' => $msg,
-        'only' => array_values(array_diff(lock_audience($pdo, $lockId), [$who])), 'actor' => $by, 'tag' => 'lockcd-a-' . $lockId, 'force' => true, 'now' => true]);
+    // management: admins see real / fake, everyone else does not
+    lock_cd_tell($pdo, $lockId, $who, ['step' => 'start', 'mins' => $minutes, 'until' => $until, 'fake' => $fake, 'msg' => $msg, 'actor' => $by]);
     return true;
 }
 
@@ -421,11 +439,12 @@ function lock_countdown_update(PDO $pdo, int $lockId, ?int $minutes, bool $fake,
     if (!$lk) return false;
     $msg = mb_substr(trim($msg), 0, 1000);
     $ar = notify_options($pdo)['lang'] === 'ar';
-    $lines = []; $forPerson = false;
+    $lines = []; $others = []; $forPerson = false;
     if ($minutes !== null && $minutes > 0) {
         $minutes = max(1, min(600, $minutes));
         $pdo->prepare("UPDATE user_locks SET cd_until = NOW() + INTERVAL ? MINUTE, cd_mins = ? WHERE id = ?")->execute([$minutes, $minutes, $lockId]);
         $lines[] = ($ar ? '⏳ الوقت الجديد: ' . push_ar_mins($minutes) . ' من الآن' : '⏳ New time: ' . $minutes . ' min from now');
+        $others[] = end($lines);
         $forPerson = true;
     }
     if ((bool)$lk['cd_fake'] !== $fake) {
@@ -435,6 +454,7 @@ function lock_countdown_update(PDO $pdo, int $lockId, ?int $minutes, bool $fake,
     if ($msg !== trim((string)$lk['cd_msg'])) {
         $pdo->prepare("UPDATE user_locks SET cd_msg = ? WHERE id = ?")->execute([$msg !== '' ? $msg : null, $lockId]);
         $lines[] = $msg !== '' ? ($ar ? '📣 الرسالة: ' : '📣 Message: ') . push_short($msg, 200) : ($ar ? '📣 حُذفت الرسالة' : '📣 Message removed');
+        $others[] = end($lines);
         if ($msg !== '') $forPerson = true;
     }
     if (!$lines) return true;   // nothing changed
@@ -442,8 +462,7 @@ function lock_countdown_update(PDO $pdo, int $lockId, ?int $minutes, bool $fake,
     $leftMin = max(1, (int)ceil(((int)$u->fetchColumn()) / 60));
     $who = (string)$lk['username'];
     if ($forPerson) notify_event($pdo, 'lock_countdown', ['step' => 'update', 'user' => $who, 'mins' => $leftMin, 'msg' => $msg, 'only' => [$who], 'tag' => 'lockcd-' . $lockId, 'force' => true, 'now' => true]);
-    notify_event($pdo, 'lock_countdown', ['step' => 'update', 'user' => $who, 'lines' => $lines, 'for_admin' => 1,
-        'only' => array_values(array_diff(lock_audience($pdo, $lockId), [$who])), 'actor' => $by, 'tag' => 'lockcd-a-' . $lockId, 'force' => true, 'now' => true]);
+    lock_cd_tell($pdo, $lockId, $who, ['step' => 'update', 'actor' => $by], $lines, $others);   // a change of type only reaches admins
     return true;
 }
 
@@ -460,8 +479,7 @@ function lock_countdown_scan(PDO $pdo): int
             $claim->execute([(int)$lk['id']]);
             if (!$claim->rowCount()) continue;   // another request got it first
             if (!$lk['cd_fake']) lock_stop_attendance($pdo, (int)$lk['id'], (string)$lk['cd_until']);
-            notify_event($pdo, 'lock_countdown', ['step' => 'end', 'user' => $lk['username'], 'fake' => (bool)$lk['cd_fake'], 'for_admin' => 1,
-                'only' => array_values(array_diff(lock_audience($pdo, (int)$lk['id']), [(string)$lk['username']])), 'tag' => 'lockcd-a-' . $lk['id'], 'force' => true, 'now' => true]);
+            lock_cd_tell($pdo, (int)$lk['id'], (string)$lk['username'], ['step' => 'end', 'fake' => (bool)$lk['cd_fake']]);
             $n++;
         }
     } catch (Throwable $e) { error_log('lock_countdown_scan: ' . $e->getMessage()); }

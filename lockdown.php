@@ -23,6 +23,7 @@ $ar   = $lang === 'ar';
 if (empty($_SESSION['csrf_token'])) $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
 $csrf = $_SESSION['csrf_token'];
 $me   = (string)$_SESSION['username'];
+$isAdmin = ($_SESSION['role'] ?? '') === 'admin';   // only admins know (and choose) whether a countdown is fake
 push_tables($pdo);
 
 /* ─── actions ─── */
@@ -40,14 +41,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                         ($in['basma'] ?? '') === 'stop' ? 'stop' : 'keep', array_map('intval', (array)($in['watch'] ?? [])));
                     if (!$lid) continue;
                     $n++;
-                    if (($in['basma'] ?? '') === 'countdown') lock_countdown_set($pdo, $lid, (int)($in['cd_mins'] ?? 0), !empty($in['cd_fake']), $me, (string)($in['cd_msg'] ?? ''));
+                    if (($in['basma'] ?? '') === 'countdown') lock_countdown_set($pdo, $lid, (int)($in['cd_mins'] ?? 0), $isAdmin && !empty($in['cd_k']), $me, (string)($in['cd_msg'] ?? ''));
                 }
                 echo json_encode(['ok' => $n > 0, 'n' => $n]); exit;
             case 'countdown':
-                if (!empty($in['edit'])) {
-                    echo json_encode(['ok' => lock_countdown_update($pdo, (int)($in['lock'] ?? 0), isset($in['mins']) && $in['mins'] !== null ? (int)$in['mins'] : null, !empty($in['fake']), (string)($in['msg'] ?? ''), $me)]); exit;
+                $fk = !empty($in['k']);
+                if (!$isAdmin) {   // not an admin: can't see or change the type — keep it as it is (new ones are real)
+                    $cf = $pdo->prepare("SELECT cd_fake FROM user_locks WHERE id = ?"); $cf->execute([(int)($in['lock'] ?? 0)]);
+                    $fk = !empty($in['edit']) && (bool)$cf->fetchColumn();
                 }
-                echo json_encode(['ok' => lock_countdown_set($pdo, (int)($in['lock'] ?? 0), (int)($in['mins'] ?? 0), !empty($in['fake']), $me, (string)($in['msg'] ?? ''))]); exit;
+                if (!empty($in['edit'])) {
+                    echo json_encode(['ok' => lock_countdown_update($pdo, (int)($in['lock'] ?? 0), isset($in['mins']) && $in['mins'] !== null ? (int)$in['mins'] : null, $fk, (string)($in['msg'] ?? ''), $me)]); exit;
+                }
+                echo json_encode(['ok' => lock_countdown_set($pdo, (int)($in['lock'] ?? 0), (int)($in['mins'] ?? 0), $fk, $me, (string)($in['msg'] ?? ''))]); exit;
             case 'reason':
                 echo json_encode(['ok' => lock_change_reason($pdo, (int)($in['lock'] ?? 0), (string)($in['reason'] ?? ''), $me)]); exit;
             case 'unlock':
@@ -182,11 +188,11 @@ window.addEventListener('error', function (e) {
                 <small>🕐 <?= htmlspecialchars($fmt($l['locked_at'])) ?> · <?= htmlspecialchars($ago($l['age'])) ?><?= $l['locked_by'] ? ' · 👤 ' . htmlspecialchars($l['locked_by']) : '' ?><?= $l['done_at'] ? ' · ' . ($ar ? '✅ أنجز المطلوب' : '✅ finished what was asked') : '' ?></small></div>
             <span class="ld-b <?= $bs ?>"><?= $basmaLbl[$bs] ?? $bs ?></span>
             <?php $cdOn = $l['cd_until'] && !$l['cd_done']; if ($cdOn): ?>
-            <span class="ld-cd" data-left="<?= max(0, (int)$l['cd_left']) ?>">⏳ <b>--:--</b> · <?= $l['cd_fake'] ? ($ar ? '🎭 وهمي' : '🎭 fake') : ($ar ? '⏹ حقيقي' : '⏹ real') ?></span>
+            <span class="ld-cd" data-left="<?= max(0, (int)$l['cd_left']) ?>">⏳ <b>--:--</b><?= $isAdmin ? ' · ' . ($l['cd_fake'] ? ($ar ? '🎭 وهمي' : '🎭 fake') : ($ar ? '⏹ حقيقي' : '⏹ real')) : '' ?></span>
             <?php if ((string)$l['cd_msg'] !== ''): ?><div class="ld-cdm">📣 <?= nl2br(htmlspecialchars((string)$l['cd_msg'])) ?></div><?php endif; ?>
-            <?php elseif ($l['cd_until'] && $l['cd_fake']): ?><span class="ld-b"><?= $ar ? '🎭 انتهى العدّاد الوهمي' : '🎭 fake countdown ended' ?></span><?php endif; ?>
+            <?php elseif ($isAdmin && $l['cd_until'] && $l['cd_fake']): ?><span class="ld-b"><?= $ar ? '🎭 انتهى العدّاد الوهمي' : '🎭 fake countdown ended' ?></span><?php endif; ?>
             <div class="ld-acts">
-                <?php if ($cdOn): ?><button type="button" class="cd" onclick="ldCountdown(this)" data-edit="1" data-lock="<?= (int)$l['id'] ?>" data-name="<?= htmlspecialchars($l['username']) ?>" data-fake="<?= (int)$l['cd_fake'] ?>" data-msg="<?= htmlspecialchars((string)$l['cd_msg']) ?>">✏️ <?= $ar ? 'تعديل العدّاد' : 'Edit countdown' ?></button>
+                <?php if ($cdOn): ?><button type="button" class="cd" onclick="ldCountdown(this)" data-edit="1" data-lock="<?= (int)$l['id'] ?>" data-name="<?= htmlspecialchars($l['username']) ?>" <?= $isAdmin ? 'data-k="' . (int)$l['cd_fake'] . '"' : '' ?> data-msg="<?= htmlspecialchars((string)$l['cd_msg']) ?>">✏️ <?= $ar ? 'تعديل العدّاد' : 'Edit countdown' ?></button>
                 <button type="button" class="st" data-cdcancel="<?= (int)$l['id'] ?>">✕ <?= $ar ? 'إلغاء العدّاد' : 'Cancel countdown' ?></button>
                 <?php elseif (in_array($bs, ['pending', 'running'], true)): ?><button type="button" class="cd" onclick="ldCountdown(this)" data-lock="<?= (int)$l['id'] ?>" data-name="<?= htmlspecialchars($l['username']) ?>">⏳ <?= $ar ? 'عدّاد إيقاف البصمة' : 'Clock-in countdown' ?></button><?php endif; ?>
                 <?php if (in_array($bs, ['pending', 'running'], true)): ?><button type="button" class="st" data-basma="stop" data-lock="<?= (int)$l['id'] ?>">⏹ <?= $ar ? 'إيقاف البصمة من وقت الإيقاف' : 'Stop clock-in at the stop' ?></button><?php endif; ?>
@@ -212,16 +218,20 @@ window.addEventListener('error', function (e) {
         <label class="ld-l"><?= $ar ? 'البصمة أثناء الإيقاف' : 'Clock-in during the stop' ?></label>
         <div class="ld-opts">
             <label class="ld-o on"><input type="radio" name="ldB" value="stop" checked><span><b>⏹ <?= $ar ? 'إيقاف البصمة الآن' : 'Stop the clock-in now' ?></b><small><?= $ar ? 'يُسجَّل انصرافه لحظة الإيقاف، ويُكتب «إيقاف مفاجئ من الإدارة» والسبب في سجل البصمة' : 'Clocked out at the moment of the stop; "sudden stop by management" and the reason are written into attendance' ?></small></span></label>
-            <label class="ld-o"><input type="radio" name="ldB" value="countdown"><span><b>⏳ <?= $ar ? 'عدّاد ثم إيقاف البصمة' : 'Countdown, then stop' ?></b><small><?= $ar ? 'يظهر له عدّاد تنازلي «ستتوقف بصمتك خلال …» — حقيقي أو وهمي للضغط فقط' : 'They see «your clock-in stops in …» — real, or fake for pressure only' ?></small></span></label>
+            <label class="ld-o"><input type="radio" name="ldB" value="countdown"><span><b>⏳ <?= $ar ? 'عدّاد ثم إيقاف البصمة' : 'Countdown, then stop' ?></b><small><?= $ar ? 'يظهر له عدّاد تنازلي «ستتوقف بصمتك خلال …»' . ($isAdmin ? ' — حقيقي أو وهمي للضغط فقط' : ' وعند انتهائه تتوقف بصمته') : 'They see «your clock-in stops in …»' . ($isAdmin ? ' — real, or fake for pressure only' : ' and when it ends the clock-in stops') ?></small></span></label>
             <label class="ld-o"><input type="radio" name="ldB" value="keep"><span><b>▶ <?= $ar ? 'استمرار البصمة' : 'Keep it running' ?></b><small><?= $ar ? 'تستمر ساعات حضوره أثناء الإيقاف، ولا يستطيع تسجيل الانصراف حتى يُفتح النظام' : 'Hours keep counting during the stop; they cannot clock out until unlocked' ?></small></span></label>
         </div>
         <div class="ld-cdp" id="ldCdp">
             <div class="row" id="ldCdM"><?php foreach ([5, 10, 15, 30, 60] as $mm): ?><button type="button" data-m="<?= $mm ?>" class="<?= $mm === 15 ? 'on' : '' ?>"><?= $ar ? push_ar_mins($mm) : $mm . ' min' ?></button><?php endforeach; ?>
                 <input type="number" id="ldCdC" min="1" max="600" placeholder="<?= $ar ? 'دقائق' : 'min' ?>"></div>
-            <div class="row ty" id="ldCdT"><button type="button" data-f="0" class="on">⏹ <?= $ar ? 'حقيقي' : 'Real' ?></button><button type="button" data-f="1" class="fk">🎭 <?= $ar ? 'وهمي' : 'Fake' ?></button></div>
+<?php if ($isAdmin): ?>
+            <div class="row ty" id="ldCdK"><button type="button" data-f="0" class="on">⏹ <?= $ar ? 'حقيقي' : 'Real' ?></button><button type="button" data-f="1" class="fk">🎭 <?= $ar ? 'وهمي' : 'Fake' ?></button></div>
+<?php endif; ?>
             <textarea class="ld-in" id="ldCdMsg" maxlength="1000" style="min-height:90px;margin-bottom:8px" placeholder="<?= $ar ? '📣 رسالة تظهر له مع العدّاد (اختياري) — مثال: لديك عملاء بدون متابعة، حدّث الـ CRM الآن' : '📣 Message shown with the countdown (optional)' ?>"></textarea>
+<?php if ($isAdmin): ?>
             <small id="ldCdH"><?= $ar ? '⏹ حقيقي: عند انتهاء العدّاد تتوقف بصمته فعلاً ويُكتب السبب في سجل البصمة.' : '⏹ Real: when it ends the clock-in really stops and the reason is written into attendance.' ?></small>
             <small><?= $ar ? '👁️ الموظف يرى نفس العدّاد في الحالتين — لا يعرف إن كان وهمياً. إن لم يكن حاضراً فلا يظهر العدّاد.' : '👁️ The person sees the same countdown either way. If they are not clocked in, no countdown is shown.' ?></small>
+<?php endif; ?>
         </div>
         <label class="ld-l">🔔 <?= $ar ? 'من يستلم الإشعار؟' : 'Who is notified?' ?></label>
         <div class="ld-ppl">
@@ -277,7 +287,7 @@ window.addEventListener('error', function (e) {
 /* ⏳ start a countdown on a lock that is already active */
 function ldCountdown(btn) {
     var AR = <?= json_encode($ar) ?>, CSRF = <?= json_encode($csrf) ?>, lock = +btn.getAttribute('data-lock');
-    var edit = btn.getAttribute('data-edit') === '1', mins = edit ? null : 15, fake = btn.getAttribute('data-fake') === '1';
+    var edit = btn.getAttribute('data-edit') === '1', mins = edit ? null : 15, kd = btn.getAttribute('data-k') === '1', ADM = <?= json_encode($isAdmin) ?>;
     var old = document.getElementById('ldCdBox'); if (old) old.remove();
     var ov = document.createElement('div'); ov.id = 'ldCdBox';
     ov.setAttribute('style', 'position:fixed;top:0;left:0;right:0;bottom:0;z-index:2147483647;display:flex;align-items:center;justify-content:center;padding:16px;background:rgba(2,6,23,.78)');
@@ -289,9 +299,11 @@ function ldCountdown(btn) {
         '<div style="font-size:13px;font-weight:800;color:#94a3b8;margin-bottom:8px">' + (AR ? 'المدة' : 'Time') + '</div>' +
         '<div data-x="m" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px">' + (edit ? '<button type="button" data-m="0" style="' + chip + '">⏸ ' + (AR ? 'بدون تغيير الوقت' : 'Keep the time') + '</button>' : '') + [5, 10, 15, 30, 60].map(function (m, i) { return '<button type="button" data-m="' + m + '" style="' + chip + '">' + M[i] + '</button>'; }).join('') +
         '<input data-x="c" type="number" min="1" max="600" placeholder="' + (AR ? 'دقائق' : 'min') + '" style="' + chip + ';width:100px;border-radius:12px;text-align:center;cursor:text"></div>' +
+<?php if ($isAdmin): ?>
         '<div style="font-size:13px;font-weight:800;color:#94a3b8;margin:14px 0 8px">' + (AR ? 'النوع' : 'Type') + '</div>' +
         '<div data-x="t" style="display:flex;gap:6px"><button type="button" data-f="0" style="' + chip + ';flex:1">⏹ ' + (AR ? 'حقيقي' : 'Real') + '</button><button type="button" data-f="1" style="' + chip + ';flex:1">🎭 ' + (AR ? 'وهمي' : 'Fake') + '</button></div>' +
         '<div data-x="h" style="margin-top:10px;font-size:12.5px;color:#94a3b8;font-weight:700;line-height:1.7"></div>' +
+<?php endif; ?>
         '<div style="font-size:13px;font-weight:800;color:#94a3b8;margin:14px 0 8px">📣 ' + (AR ? 'رسالة تظهر له مع العدّاد (اختياري)' : 'Message shown with the countdown (optional)') + '</div>' +
         '<textarea data-x="msg" maxlength="1000" style="box-sizing:border-box;width:100%;min-height:110px;border-radius:14px;border:1.5px solid rgba(250,204,21,.55);background:#070d1c;color:#f1f5f9;font:inherit;font-size:15px;line-height:1.8;padding:12px 14px;resize:vertical;outline:none" placeholder="' + (AR ? 'مثال: لديك عملاء بدون متابعة — حدّث الـ CRM الآن' : 'e.g. update the CRM now') + '"></textarea>' +
         '<div style="font-size:12px;color:#94a3b8;font-weight:700;margin-top:6px">🔔 ' + (AR ? 'كل تعديل يصل كإشعار للأدمن ومن اخترتهم' : 'Every change notifies the admins and the people you chose') + '</div>' +
@@ -302,24 +314,29 @@ function ldCountdown(btn) {
     q('msg').value = btn.getAttribute('data-msg') || '';
     var paint = function () {
         ov.querySelectorAll('[data-m]').forEach(function (b) { var on = +b.getAttribute('data-m') === (mins === null ? 0 : mins) && !q('c').value; b.style.background = on ? 'linear-gradient(90deg,#f59e0b,#eab308)' : 'rgba(255,255,255,.05)'; b.style.color = on ? '#1c1917' : '#f1f5f9'; });
-        ov.querySelectorAll('[data-f]').forEach(function (b) { var on = (b.getAttribute('data-f') === '1') === fake; b.style.background = on ? (fake ? 'linear-gradient(90deg,#9333ea,#6366f1)' : 'linear-gradient(90deg,#dc2626,#f59e0b)') : 'rgba(255,255,255,.05)'; });
-        q('h').textContent = fake ? (AR ? '🎭 وهمي: يراه الموظف كأنه حقيقي، لكن عند انتهائه لا يحدث شيء — البصمة تستمر ويصلك إشعار.' : '🎭 Fake: looks real to them, nothing happens at the end — you are told.')
+<?php if ($isAdmin): ?>
+        ov.querySelectorAll('[data-f]').forEach(function (b) { var on = (b.getAttribute('data-f') === '1') === kd; b.style.background = on ? (kd ? 'linear-gradient(90deg,#9333ea,#6366f1)' : 'linear-gradient(90deg,#dc2626,#f59e0b)') : 'rgba(255,255,255,.05)'; });
+        q('h').textContent = kd ? (AR ? '🎭 وهمي: يراه الموظف كأنه حقيقي، لكن عند انتهائه لا يحدث شيء — البصمة تستمر ويصلك إشعار.' : '🎭 Fake: looks real to them, nothing happens at the end — you are told.')
                                   : (AR ? '⏹ حقيقي: عند انتهائه تتوقف بصمته فعلاً من تلك اللحظة ويُكتب السبب في سجل البصمة.' : '⏹ Real: when it ends the clock-in stops from that moment, reason written into attendance.');
+<?php endif; ?>
     };
     ov.querySelectorAll('[data-m]').forEach(function (b) { b.addEventListener('click', function () { mins = +b.getAttribute('data-m') || null; q('c').value = ''; paint(); }); });
     q('c').addEventListener('input', function () { if (+q('c').value > 0) mins = +q('c').value; paint(); });
-    ov.querySelectorAll('[data-f]').forEach(function (b) { b.addEventListener('click', function () { fake = b.getAttribute('data-f') === '1'; paint(); }); });
+<?php if ($isAdmin): ?>
+    ov.querySelectorAll('[data-f]').forEach(function (b) { b.addEventListener('click', function () { kd = b.getAttribute('data-f') === '1'; paint(); }); });
+<?php endif; ?>
     var close = function () { ov.remove(); };
     q('no').addEventListener('click', close);
     ov.addEventListener('click', function (e) { if (e.target === ov) close(); });
     q('go').addEventListener('click', function () {
         q('go').disabled = true;
-        fetch(location.pathname, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ csrf: CSRF, action: 'countdown', lock: lock, mins: mins, fake: fake, msg: q('msg').value, edit: edit ? 1 : 0 }) })
+        fetch(location.pathname, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ csrf: CSRF, action: 'countdown', lock: lock, mins: mins, k: kd, msg: q('msg').value, edit: edit ? 1 : 0 }) })
             .then(function (r) { return r.json(); })
             .then(function (r) { if (r.ok) location.reload(); else { q('go').disabled = false; alert(AR ? 'لا يمكن — بصمته ليست مستمرة الآن' : 'Not possible — the clock-in is not running'); } })
             .catch(function (e) { q('go').disabled = false; alert(e); });
     });
-    paint(); document.body.appendChild(ov);
+    paint();
+    document.body.appendChild(ov);
 }
 
 function ldEditReason(btn) {
@@ -380,16 +397,22 @@ function ldEditReason(btn) {
     document.querySelectorAll('.ld-o input').forEach(r => r.addEventListener('change', () => document.querySelectorAll('input[name="' + r.name + '"]').forEach(x => x.closest('.ld-o').classList.toggle('on', x.checked))));
     /* ⏳ countdown panel in the form */
     const cdMins = () => +$('ldCdC').value || +(document.querySelector('#ldCdM button.on') || {}).dataset?.m || 15;
-    const cdFake = () => document.querySelector('#ldCdT button.on').dataset.f === '1';
+<?php if ($isAdmin): ?>
+    const cdK = () => { const b = document.querySelector('#ldCdK button.on'); return !!b && b.dataset.f === '1'; };
+<?php else: ?>
+    const cdK = () => false;
+<?php endif; ?>
     document.querySelectorAll('input[name=ldB]').forEach(r => r.addEventListener('change', () => $('ldCdp').classList.toggle('open', document.querySelector('input[name=ldB]:checked').value === 'countdown')));
     document.querySelectorAll('#ldCdM button').forEach(b => b.addEventListener('click', () => { document.querySelectorAll('#ldCdM button').forEach(x => x.classList.toggle('on', x === b)); $('ldCdC').value = ''; }));
     $('ldCdC').addEventListener('input', () => document.querySelectorAll('#ldCdM button').forEach(x => x.classList.remove('on')));
-    document.querySelectorAll('#ldCdT button').forEach(b => b.addEventListener('click', () => {
-        document.querySelectorAll('#ldCdT button').forEach(x => x.classList.toggle('on', x === b));
+<?php if ($isAdmin): ?>
+    document.querySelectorAll('#ldCdK button').forEach(b => b.addEventListener('click', () => {
+        document.querySelectorAll('#ldCdK button').forEach(x => x.classList.toggle('on', x === b));
         $('ldCdH').textContent = b.dataset.f === '1'
             ? (AR ? '🎭 وهمي: يراه الموظف كأنه حقيقي، لكن عند انتهائه لا يحدث شيء — البصمة تستمر، ويصلك إشعار بانتهائه.' : '🎭 Fake: looks real to them, but nothing happens when it ends — the clock-in keeps running; you are told it ended.')
             : (AR ? '⏹ حقيقي: عند انتهاء العدّاد تتوقف بصمته فعلاً ويُكتب السبب في سجل البصمة.' : '⏹ Real: when it ends the clock-in really stops and the reason is written into attendance.');
     }));
+<?php endif; ?>
     /* live countdowns in the list */
     const tick = () => document.querySelectorAll('.ld-cd').forEach(el => {
         const left = Math.max(0, (+el.dataset.left) - Math.floor((Date.now() - T0) / 1000));
@@ -407,7 +430,7 @@ function ldEditReason(btn) {
         const basma = document.querySelector('input[name=ldB]:checked').value;
         if (!confirm(AR ? 'إيقاف النظام عن ' + uids.length + ' موظف الآن؟' : 'Stop the system for ' + uids.length + ' now?')) return;
         $('ldGo').disabled = true;
-        const r = await post({ action: 'lock', uids, reason: $('ldReason').value, basma, cd_mins: cdMins(), cd_fake: cdFake(), cd_msg: $('ldCdMsg').value, watch: [...document.querySelectorAll('.ld-p.w:not(.rw).on')].map(b => +b.dataset.u) });
+        const r = await post({ action: 'lock', uids, reason: $('ldReason').value, basma, cd_mins: cdMins(), cd_k: cdK(), cd_msg: $('ldCdMsg').value, watch: [...document.querySelectorAll('.ld-p.w:not(.rw).on')].map(b => +b.dataset.u) });
         if (r.ok) location.reload(); else { $('ldGo').disabled = false; msg('ldMsg', '✗ ' + (r.error || ''), false); }
     });
     document.querySelectorAll('[data-unlock]').forEach(b => b.addEventListener('click', async () => {
