@@ -376,8 +376,9 @@ function lock_audience(PDO $pdo, int $lockId): array
  * stops (from that moment) — or, if $fake, nothing happens (pressure only; the
  * person can't tell the difference). $minutes = 0 cancels it.
  */
-function lock_countdown_set(PDO $pdo, int $lockId, int $minutes, bool $fake, string $by): bool
+function lock_countdown_set(PDO $pdo, int $lockId, int $minutes, bool $fake, string $by, string $msg = ''): bool
 {
+    $msg = mb_substr(trim($msg), 0, 1000);
     push_tables($pdo);
     $st = $pdo->prepare("SELECT l.*, u.username FROM user_locks l JOIN users u ON u.id = l.user_id WHERE l.id = ? AND l.unlocked_at IS NULL");
     $st->execute([$lockId]);
@@ -392,15 +393,56 @@ function lock_countdown_set(PDO $pdo, int $lockId, int $minutes, bool $fake, str
     }
     if (!$lk['att_log_id'] || $lk['basma'] === 'stopped' || !lock_open_attendance($pdo, (int)$lk['user_id'])) return false;   // nothing running to stop
     $minutes = max(1, min(600, $minutes));
-    $pdo->prepare("UPDATE user_locks SET cd_until = NOW() + INTERVAL ? MINUTE, cd_mins = ?, cd_fake = ?, cd_done = 0, basma = IF(basma = 'pending', 'running', basma) WHERE id = ?")
-        ->execute([$minutes, $minutes, $fake ? 1 : 0, $lockId]);
+    $pdo->prepare("UPDATE user_locks SET cd_until = NOW() + INTERVAL ? MINUTE, cd_mins = ?, cd_fake = ?, cd_done = 0, cd_msg = ?, basma = IF(basma = 'pending', 'running', basma) WHERE id = ?")
+        ->execute([$minutes, $minutes, $fake ? 1 : 0, $msg !== '' ? $msg : null, $lockId]);
     $u = $pdo->prepare("SELECT cd_until FROM user_locks WHERE id = ?"); $u->execute([$lockId]);
     $lang = notify_options($pdo)['lang'];
     $until = smart_time_label(strtotime((string)$u->fetchColumn()), $lang);
     // the person: the same message whether it is real or not
-    notify_event($pdo, 'lock_countdown', ['step' => 'start', 'user' => $who, 'mins' => $minutes, 'until' => $until, 'only' => [$who], 'tag' => 'lockcd-' . $lockId, 'force' => true, 'now' => true]);
+    notify_event($pdo, 'lock_countdown', ['step' => 'start', 'user' => $who, 'mins' => $minutes, 'until' => $until, 'msg' => $msg, 'only' => [$who], 'tag' => 'lockcd-' . $lockId, 'force' => true, 'now' => true]);
     // management: with real / fake
-    notify_event($pdo, 'lock_countdown', ['step' => 'start', 'user' => $who, 'mins' => $minutes, 'until' => $until, 'fake' => $fake, 'for_admin' => 1,
+    notify_event($pdo, 'lock_countdown', ['step' => 'start', 'user' => $who, 'mins' => $minutes, 'until' => $until, 'fake' => $fake, 'for_admin' => 1, 'msg' => $msg,
+        'only' => array_values(array_diff(lock_audience($pdo, $lockId), [$who])), 'actor' => $by, 'tag' => 'lockcd-a-' . $lockId, 'force' => true, 'now' => true]);
+    return true;
+}
+
+/**
+ * Change a running countdown: new time (minutes from now, null = keep), real/fake,
+ * and the message. The person is told about a new time or message; management
+ * is told exactly what changed.
+ */
+function lock_countdown_update(PDO $pdo, int $lockId, ?int $minutes, bool $fake, string $msg, string $by): bool
+{
+    push_tables($pdo);
+    $st = $pdo->prepare("SELECT l.*, u.username, TIMESTAMPDIFF(SECOND, NOW(), l.cd_until) AS left_s FROM user_locks l JOIN users u ON u.id = l.user_id
+                         WHERE l.id = ? AND l.unlocked_at IS NULL AND l.cd_until IS NOT NULL AND l.cd_done = 0");
+    $st->execute([$lockId]);
+    $lk = $st->fetch(PDO::FETCH_ASSOC);
+    if (!$lk) return false;
+    $msg = mb_substr(trim($msg), 0, 1000);
+    $ar = notify_options($pdo)['lang'] === 'ar';
+    $lines = []; $forPerson = false;
+    if ($minutes !== null && $minutes > 0) {
+        $minutes = max(1, min(600, $minutes));
+        $pdo->prepare("UPDATE user_locks SET cd_until = NOW() + INTERVAL ? MINUTE, cd_mins = ? WHERE id = ?")->execute([$minutes, $minutes, $lockId]);
+        $lines[] = ($ar ? '⏳ الوقت الجديد: ' . push_ar_mins($minutes) . ' من الآن' : '⏳ New time: ' . $minutes . ' min from now');
+        $forPerson = true;
+    }
+    if ((bool)$lk['cd_fake'] !== $fake) {
+        $pdo->prepare("UPDATE user_locks SET cd_fake = ? WHERE id = ?")->execute([$fake ? 1 : 0, $lockId]);
+        $lines[] = $fake ? ($ar ? '🎭 أصبح وهمياً — البصمة لن تتوقف' : '🎭 Now fake — the clock-in will not stop') : ($ar ? '⏹ أصبح حقيقياً — ستتوقف البصمة عند انتهائه' : '⏹ Now real — the clock-in stops when it ends');
+    }
+    if ($msg !== trim((string)$lk['cd_msg'])) {
+        $pdo->prepare("UPDATE user_locks SET cd_msg = ? WHERE id = ?")->execute([$msg !== '' ? $msg : null, $lockId]);
+        $lines[] = $msg !== '' ? ($ar ? '📣 الرسالة: ' : '📣 Message: ') . push_short($msg, 200) : ($ar ? '📣 حُذفت الرسالة' : '📣 Message removed');
+        if ($msg !== '') $forPerson = true;
+    }
+    if (!$lines) return true;   // nothing changed
+    $u = $pdo->prepare("SELECT TIMESTAMPDIFF(SECOND, NOW(), cd_until) FROM user_locks WHERE id = ?"); $u->execute([$lockId]);
+    $leftMin = max(1, (int)ceil(((int)$u->fetchColumn()) / 60));
+    $who = (string)$lk['username'];
+    if ($forPerson) notify_event($pdo, 'lock_countdown', ['step' => 'update', 'user' => $who, 'mins' => $leftMin, 'msg' => $msg, 'only' => [$who], 'tag' => 'lockcd-' . $lockId, 'force' => true, 'now' => true]);
+    notify_event($pdo, 'lock_countdown', ['step' => 'update', 'user' => $who, 'lines' => $lines, 'for_admin' => 1,
         'only' => array_values(array_diff(lock_audience($pdo, $lockId), [$who])), 'actor' => $by, 'tag' => 'lockcd-a-' . $lockId, 'force' => true, 'now' => true]);
     return true;
 }
