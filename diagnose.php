@@ -14,16 +14,16 @@ if (($_SESSION['role'] ?? '') !== 'admin') { http_response_code(403); exit('Admi
 
 /* the fingerprints of the files as they were sent (filled in when this page was made) */
 $EXPECTED = /*EXPECTED*/[
-    'lockdown.php' => 'aacc43a7b200030d5d244dfc8edb6edb',
-    'notify_smart.php' => '494bef1696f514dbcec9e61f470a2955',
-    'push_helpers.php' => 'ab8c5247d74544fab67bc99cd801a470',
+    'lockdown.php' => '971682ec667e79cc06c4501ff17c4078',
+    'notify_smart.php' => 'cdd9f3a28b2064203f11d403f0228a06',
+    'push_helpers.php' => 'ac81625806f4ef8e1992512eb57bfd28',
     'notify_act.php' => 'da7427e7817ad9a7e99505760739d88d',
     'auth.php' => '2c76b8218182cb5424c959a4afa8b32b',
     'permissions.php' => 'd1c2a9e20cf174c220224e66d8caac32',
     'permissions_admin.php' => 'c3978e52ce0e8c49a79a9a82363e54d0',
     'incoming_cars.php' => 'b67960b37ae61dd4dd86be6b49b8ac1b',
     'receive_shipment.php' => 'a435693a7ae41ac7773e52cb807df536',
-    'transfer_lock.php' => 'df214c227b38bc0d7de2c0c550fe9aa8',
+    'transfer_lock.php' => '7d72181dff3c5f88ace4ffba81dd5e1c',
     'attendance.php' => '8e63cd1e2d4ed49bbc9179f1101756e8',
     'attendance_admin.php' => '7d54c40176024aa632437f25f77c15b6',
     'notifications_admin.php' => '1c3a75bdaa89bc3fab82a06e0e19f519',
@@ -35,7 +35,7 @@ $EXPECTED = /*EXPECTED*/[
     'stock_check.php' => '2134d2a172798933caeb84f3c4e9a8ac',
     'transfer_receive.php' => '8f93c29aae294380af70381ececd7a5c',
     'notify_popup.php' => '2089e46c934442dd507915216323232b',
-    'notify_feed.php' => '46a8d1350eb447f9d3d42a3205f7b8c0',
+    'notify_feed.php' => '2356bb843cbcfb236f54e7da273ce16b',
     'chatbot_widget.php' => '8636fc1054f74536036aa874cb44464c',
     'chatbot_api.php' => 'e41293f9eda11057eb9b34f9b249daa3',
     'sw.js' => '8bba089ed2f6ffdaeb7813240b068975',
@@ -60,13 +60,13 @@ $add('⚙️ PHP', 'display_errors', true, (string)ini_get('display_errors') . '
 
 /* 3. functions the lockdown page needs */
 try { require_once __DIR__ . '/notify_smart.php'; } catch (Throwable $e) { $add('🧩 الدوال', 'notify_smart.php', false, $e->getMessage()); }
-foreach (['lock_rules', 'smart_lock_user', 'lock_change_reason', 'lock_basma_decide', 'smart_unlock', 'smart_time_label', 'push_ar_mins', 'push_ar_days', 'user_lock_active', 'smart_duty_scan', 'smart_check_scan', 'push_setting_set'] as $fn)
+foreach (['lock_rules', 'smart_lock_user', 'lock_change_reason', 'lock_countdown_set', 'lock_countdown_scan', 'lock_basma_decide', 'smart_unlock', 'smart_time_label', 'push_ar_mins', 'push_ar_days', 'user_lock_active', 'smart_duty_scan', 'smart_check_scan', 'push_setting_set'] as $fn)
     $add('🧩 الدوال', $fn, function_exists($fn), function_exists($fn) ? 'موجودة' : 'غير موجودة — ملف notify_smart.php أو push_helpers.php قديم');
 
 /* 4. database columns */
 $col = function (string $t, string $c) use ($pdo): bool { try { $pdo->query("SELECT `$c` FROM `$t` LIMIT 0"); return true; } catch (Throwable $e) { return false; } };
 try { if (function_exists('push_tables')) push_tables($pdo); } catch (Throwable $e) { $add('🗄️ قاعدة البيانات', 'push_tables', false, $e->getMessage()); }
-foreach ([['user_locks', 'kind'], ['user_locks', 'basma'], ['user_locks', 'att_log_id'], ['user_locks', 'locked_by'], ['attendance_logs', 'stop_reason'], ['notify_log', 'ref'], ['notify_inbox', 'tok'], ['incoming_colors', 'interior']] as [$t, $c])
+foreach ([['user_locks', 'kind'], ['user_locks', 'basma'], ['user_locks', 'att_log_id'], ['user_locks', 'locked_by'], ['attendance_logs', 'stop_reason'], ['notify_log', 'ref'], ['notify_inbox', 'tok'], ['incoming_colors', 'interior'], ['user_locks', 'cd_until']] as [$t, $c])
     $add('🗄️ قاعدة البيانات', "$t.$c", $col($t, $c), $col($t, $c) ? 'موجود' : 'غير موجود');
 
 /* 5. what the server really sends for lockdown.php (with this login) */

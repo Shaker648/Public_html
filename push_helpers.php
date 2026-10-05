@@ -72,6 +72,7 @@ function notify_events(): array
         // stopping the system (manual, stock check, transfers) — every admin always gets it
         'user_locked'      => ['إيقاف النظام عن موظف (يدوي أو تلقائي)', 'System stopped for someone (manual or automatic)', '🔒', ['admin'], true, true, 'lock'],
         'lock_reason'      => ['تعديل سبب إيقاف النظام',             'Stop reason changed', '✏️', ['admin'], true, true, 'lock'],
+        'lock_countdown'   => ['عدّاد إيقاف البصمة',                  'Clock-in countdown', '⏳', ['admin'], true, true, 'lock'],
         'lock_basma'       => ['قرار البصمة أثناء الإيقاف',           'Clock-in decision during a stop', '⏱️', ['admin'], true, true, 'lock'],
         // security
         'login_failed'     => ['محاولات دخول خاطئة',           'Failed sign-in attempts',    '🔐', ['admin'], true, null, 'security'],
@@ -355,6 +356,10 @@ function push_tables(PDO $pdo): void
         $cols = $pdo->query("SHOW COLUMNS FROM attendance_logs")->fetchAll(PDO::FETCH_COLUMN);
         if ($cols && !in_array('stop_reason', $cols, true)) $pdo->exec("ALTER TABLE attendance_logs ADD stop_reason TEXT NULL");
     } catch (Throwable $e) {}   // no attendance table yet
+    try {   // ⏳ countdown before the clock-in stops (real, or only to put on pressure)
+        $cols = $pdo->query("SHOW COLUMNS FROM user_locks")->fetchAll(PDO::FETCH_COLUMN);
+        if (!in_array('cd_until', $cols, true)) $pdo->exec("ALTER TABLE user_locks ADD cd_until DATETIME NULL, ADD cd_fake TINYINT NOT NULL DEFAULT 0, ADD cd_mins INT NULL, ADD cd_done TINYINT NOT NULL DEFAULT 0");
+    } catch (Throwable $e) { error_log('user_locks countdown: ' . $e->getMessage()); }
     try {   // long reasons (up to 1500 characters): widen the old 255 columns once
         foreach ([['user_locks', 'reason'], ['attendance_logs', 'stop_reason']] as [$t, $c]) {
             $ty = $pdo->query("SHOW COLUMNS FROM `$t` LIKE '$c'")->fetch(PDO::FETCH_ASSOC);
@@ -887,6 +892,28 @@ function notify_message(PDO $pdo, string $event, array $d, string $lang): array
             $body[] = $bl;
             $url = 'lockdown.php?lang=' . $lang;
             break;
+        case 'lock_countdown':
+            $mins = (int)($d['mins'] ?? 0);
+            $minsTxt = $ar ? push_ar_mins($mins) : $mins . ' min';
+            if (($d['step'] ?? '') === 'start') {
+                if (!empty($d['for_admin'])) {
+                    $title = $ev[2] . ' ' . ($ar ? 'عدّاد إيقاف البصمة — ' : 'Clock-in countdown — ') . ($d['user'] ?? '');
+                    $body[] = ($ar ? '⏳ تتوقف بصمته بعد ' : '⏳ Clock-in stops in ') . $minsTxt . ' (' . ($d['until'] ?? '') . ')';
+                    $body[] = !empty($d['fake']) ? ($ar ? '🎭 وهمي — للضغط فقط، البصمة لن تتوقف' : '🎭 Fake — pressure only, the clock-in will not stop')
+                                                 : ($ar ? '⏹ حقيقي — ستتوقف البصمة فعلاً عند انتهاء العدّاد' : '⏹ Real — the clock-in really stops when it ends');
+                } else {
+                    $title = $ev[2] . ' ' . ($ar ? 'ستتوقف بصمتك خلال ' : 'Your clock-in stops in ') . $minsTxt;
+                    $body[] = $ar ? '⚠️ عند انتهاء الوقت تتوقف بصمتك — تواصل مع مديرك الآن' : '⚠️ When the time is up your clock-in stops — contact your manager now';
+                }
+            } elseif (($d['step'] ?? '') === 'cancel') {
+                $title = $ev[2] . ' ' . ($ar ? 'أُلغي عدّاد إيقاف البصمة — ' : 'Clock-in countdown cancelled — ') . ($d['user'] ?? '');
+            } else {   // ended
+                $title = $ev[2] . ' ' . ($ar ? 'انتهى عدّاد ' : 'Countdown ended — ') . ($d['user'] ?? '');
+                $body[] = !empty($d['fake']) ? ($ar ? '🎭 كان وهمياً — البصمة ما زالت مستمرة' : '🎭 It was fake — the clock-in is still running')
+                                             : ($ar ? '⏹ تم إيقاف البصمة الآن' : '⏹ The clock-in has been stopped');
+            }
+            $url = !empty($d['for_admin']) || ($d['step'] ?? '') !== 'start' ? 'lockdown.php?lang=' . $lang : 'transfer_lock.php?lang=' . $lang;
+            break;
         case 'lock_reason':
             $title = $ev[2] . ' ' . ($ar ? 'تم تعديل سبب إيقاف النظام عن ' : 'Stop reason changed for ') . ($d['user'] ?? '');
             $body[] = ($ar ? '📝 السبب الجديد: ' : '📝 New reason: ') . (($d['reason'] ?? '') !== '' ? push_short((string)$d['reason']) : ($ar ? 'بدون سبب مكتوب' : 'no reason given'));
@@ -1054,7 +1081,7 @@ function notify_deliver(PDO $pdo, int $logId, string $event, array $msg, array $
 
     // same kind, not seen yet, in the last 15 minutes → one grouped notification
     $group = [];
-    if (!in_array($event, ['message', 'test', 'transfer_incoming', 'check_item', 'check_start', 'check_tick', 'check_warn', 'check_locked', 'check_done', 'transfer_missing', 'user_locked', 'lock_basma', 'lock_reason', 'duty_unlocked'], true)) {
+    if (!in_array($event, ['message', 'test', 'transfer_incoming', 'check_item', 'check_start', 'check_tick', 'check_warn', 'check_locked', 'check_done', 'transfer_missing', 'user_locked', 'lock_basma', 'lock_reason', 'lock_countdown', 'duty_unlocked'], true)) {
         $in2 = implode(',', $withDev);
         $gs = $pdo->prepare("SELECT i.user_id, l.title FROM notify_inbox i JOIN notify_log l ON l.id = i.log_id
                              WHERE i.user_id IN ($in2) AND l.event = ? AND i.seen_at IS NULL AND l.created_at >= NOW() - INTERVAL 15 MINUTE

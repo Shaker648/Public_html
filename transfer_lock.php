@@ -24,12 +24,25 @@ $csrf = $_SESSION['csrf_token'];
 push_tables($pdo);
 
 if (($_SESSION['role'] ?? '') === 'admin') { header('Location: notifications_admin.php?lang=' . $lang . '#tr'); exit; }
+lock_countdown_scan($pdo);   // a countdown that reached zero is applied first
 $lock = user_lock_active($pdo, $uid);
+/* what the screen shows: changes → the page refreshes itself */
+$lockState = function () use ($pdo, $uid): array {
+    $st = $pdo->prepare("SELECT basma, cd_until, cd_done, cd_fake, TIMESTAMPDIFF(SECOND, NOW(), cd_until) AS cd_left FROM user_locks WHERE user_id = ? AND unlocked_at IS NULL ORDER BY id");
+    $st->execute([$uid]);
+    $left = null; $sig = '';
+    foreach ($st->fetchAll(PDO::FETCH_ASSOC) as $r) {
+        $sig .= $r['basma'] . ($r['cd_until'] ? ($r['cd_done'] ? 'x' : 'c' . $r['cd_until']) : '') . '|';
+        if ($r['cd_until'] && !$r['cd_done']) $left = $left === null ? max(0, (int)$r['cd_left']) : min($left, max(0, (int)$r['cd_left']));
+    }
+    return ['left' => $left, 'sig' => md5($sig)];
+};
 
 if (isset($_GET['check'])) {
     header('Content-Type: application/json; charset=utf-8');
     header('Cache-Control: no-store');
-    echo json_encode(['locked' => (bool)$lock]);
+    $ls = $lockState();
+    echo json_encode(['locked' => (bool)$lock, 'sig' => $ls['sig']]);
     exit;
 }
 if (!$lock) { header('Location: dashboard.php?lang=' . $lang); exit; }
@@ -48,6 +61,10 @@ $locks = $pdo->prepare("SELECT * FROM user_locks WHERE user_id = ? AND unlocked_
 $locks->execute([$uid]);
 $locks = $locks->fetchAll(PDO::FETCH_ASSOC);
 $manual = array_values(array_filter($locks, fn($l) => ($l['kind'] ?? '') === 'manual'));
+$ls = $lockState();
+$cdLeft = $ls['left'];
+$cdOver = (bool)array_filter($locks, fn($l) => $l['cd_until'] && $l['cd_done'] && $l['cd_fake'] && $l['basma'] !== 'stopped');
+$cdReal = (bool)array_filter($locks, fn($l) => $l['cd_until'] && $l['cd_done'] && !$l['cd_fake'] && $l['basma'] === 'stopped');
 $basma = 'none';
 foreach ($locks as $l) if (in_array($l['basma'], ['stopped', 'running', 'pending'], true)) $basma = $l['basma'] === 'stopped' || $basma === 'none' ? $l['basma'] : $basma;
 $kindTxt = $ar ? ['manual' => 'من الإدارة', 'check' => 'عدم إكمال الجرد المفاجئ', 'transfer' => 'عدم تأكيد استلام سيارات منقولة']
@@ -100,13 +117,25 @@ body{min-height:100vh;background:radial-gradient(120% 70% at 50% 0%,#3b0a0a 0%,#
 .lk-rs div{font-size:14px;font-weight:800;line-height:1.8}.lk-rs small{display:block;color:#94a3b8;font-size:12px;font-weight:700}
 .lk-call{margin:0 0 16px;padding:12px 14px;border-radius:14px;background:rgba(56,189,248,.1);border:1px solid rgba(56,189,248,.4);color:#bae6fd;font-size:14px;font-weight:900}
 .lk-bas.run{background:rgba(250,204,21,.08);border-color:rgba(250,204,21,.4);color:#fde68a}
+.lk-cd{margin:0 0 16px;padding:18px 14px;border-radius:20px;background:linear-gradient(160deg,rgba(220,38,38,.28),rgba(127,29,29,.35));border:1.5px solid rgba(248,113,113,.7);
+  box-shadow:0 0 0 6px rgba(239,68,68,.08),0 18px 44px rgba(239,68,68,.3);animation:lkPulse 1.2s ease-in-out infinite}
+.lk-cd .t{font-size:16px;font-weight:900;color:#fecaca}
+.lk-cd .n{font-family:Inter,monospace;font-size:clamp(52px,16vw,80px);font-weight:900;letter-spacing:2px;color:#fff;line-height:1.1;margin:6px 0;text-shadow:0 0 24px rgba(239,68,68,.8)}
+.lk-cd .s{font-size:13px;font-weight:800;color:#fecaca;line-height:1.7}
+.lk-cd.hot .n{color:#fca5a5;animation:lkBlink .5s steps(2) infinite}
+@keyframes lkPulse{50%{box-shadow:0 0 0 12px rgba(239,68,68,.04),0 18px 54px rgba(239,68,68,.5)}}
+@keyframes lkBlink{50%{opacity:.35}}
 .lk-why{margin-top:18px;font-size:12.5px;color:#94a3b8;font-weight:700;line-height:1.7}
 </style>
 </head>
 <body>
 <div class="lk">
     <?php
-    $basmaBox = function () use ($ar, $basma) {
+    $basmaBox = function () use ($ar, $basma, $cdLeft, $cdOver, $cdReal) {
+        if ($cdReal) return '<div class="lk-bas">⏹ ' . ($ar ? 'انتهت المهلة وتم إيقاف بصمتك، وكُتب السبب في سجل الحضور. لا يمكنك تسجيل الحضور حتى تفتح الإدارة النظام' : 'Time ran out and your clock-in was stopped; the reason is written into attendance. You cannot clock in until the admin unlocks the system') . '</div>';
+        if ($cdLeft !== null && $basma !== 'stopped') return '<div class="lk-cd" id="lkCd" data-left="' . $cdLeft . '"><div class="t">⏳ ' . ($ar ? 'ستتوقف بصمتك خلال' : 'Your clock-in stops in') . '</div>'
+            . '<div class="n" id="lkCdN">--:--</div><div class="s">' . ($ar ? 'عند انتهاء الوقت تتوقف بصمتك ويُسجَّل السبب في سجل الحضور — تواصل مع مديرك الآن 📞' : 'When the time is up your clock-in stops and the reason is recorded — contact your manager now 📞') . '</div></div>';
+        if ($cdOver && $basma !== 'stopped') return '<div class="lk-bas">⏳ ' . ($ar ? 'انتهت المهلة — القرار الآن بيد الإدارة. تواصل مع مديرك فوراً' : 'Time is up — it is now in management\'s hands. Contact your manager now') . '</div>';
         if ($basma === 'stopped') return '<div class="lk-bas">⏹ ' . ($ar ? 'تم إيقاف بصمتك من وقت إيقاف النظام، وكُتب السبب في سجل الحضور. لا يمكنك تسجيل الحضور حتى تفتح الإدارة النظام' : 'Your clock-in was stopped at the moment of the stop and the reason written into attendance. You cannot clock in until the admin unlocks the system') . '</div>';
         if ($basma === 'running' || $basma === 'pending') return '<div class="lk-bas run">▶ ' . ($ar ? 'بصمتك ما زالت مستمرة، ولا يمكنك تسجيل الانصراف حتى تفتح الإدارة النظام' : 'Your clock-in is still running; you cannot clock out until the admin unlocks the system') . '</div>';
         return '<div class="lk-bas">🚫 ' . ($ar ? 'لا يمكنك تسجيل الحضور أو الانصراف (البصمة) حتى تفتح الإدارة النظام' : 'You cannot clock in or out until the admin unlocks the system') . '</div>';
@@ -180,9 +209,28 @@ document.querySelectorAll('.lk-missf').forEach(f => f.addEventListener('submit',
     if (n === null) { e.preventDefault(); return; }
     f.querySelector('[name=note]').value = n;
 }));
-setInterval(async () => {
-    try { const r = await (await fetch('transfer_lock.php?check=1', { credentials: 'same-origin', cache: 'no-store' })).json(); if (r && !r.locked) location.href = 'dashboard.php?lang=<?= $lang ?>'; } catch (e) {}
-}, 10000);
+const LK_SIG = <?= json_encode($ls['sig']) ?>;
+async function lkCheck() {
+    try {
+        const r = await (await fetch('transfer_lock.php?check=1', { credentials: 'same-origin', cache: 'no-store' })).json();
+        if (r && !r.locked) location.href = 'dashboard.php?lang=<?= $lang ?>';
+        else if (r && r.sig !== LK_SIG) location.reload();
+    } catch (e) {}
+}
+setInterval(lkCheck, 10000);
+/* ⏳ the countdown */
+(function () {
+    const box = document.getElementById('lkCd'); if (!box) return;
+    const end = Date.now() + (+box.dataset.left) * 1000, n = document.getElementById('lkCdN');
+    let fired = false;
+    const tick = () => {
+        const left = Math.max(0, Math.round((end - Date.now()) / 1000));
+        n.textContent = String(Math.floor(left / 60)).padStart(2, '0') + ':' + String(left % 60).padStart(2, '0');
+        box.classList.toggle('hot', left <= 60);
+        if (left === 0 && !fired) { fired = true; setTimeout(lkCheck, 1500); setTimeout(() => location.reload(), 6000); }
+    };
+    tick(); setInterval(tick, 1000);
+})();
 </script>
 </body>
 </html>
