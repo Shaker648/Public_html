@@ -359,6 +359,7 @@ function push_tables(PDO $pdo): void
     try {   // ⏳ countdown before the clock-in stops (real, or only to put on pressure)
         $cols = $pdo->query("SHOW COLUMNS FROM user_locks")->fetchAll(PDO::FETCH_COLUMN);
         if (!in_array('cd_until', $cols, true)) $pdo->exec("ALTER TABLE user_locks ADD cd_until DATETIME NULL, ADD cd_fake TINYINT NOT NULL DEFAULT 0, ADD cd_mins INT NULL, ADD cd_done TINYINT NOT NULL DEFAULT 0");
+        if (!in_array('cd_msg', $cols, true)) $pdo->exec("ALTER TABLE user_locks ADD cd_msg TEXT NULL");   // the message shown with the countdown
     } catch (Throwable $e) { error_log('user_locks countdown: ' . $e->getMessage()); }
     try {   // long reasons (up to 1500 characters): widen the old 255 columns once
         foreach ([['user_locks', 'reason'], ['attendance_logs', 'stop_reason']] as [$t, $c]) {
@@ -904,6 +905,15 @@ function notify_message(PDO $pdo, string $event, array $d, string $lang): array
                 } else {
                     $title = $ev[2] . ' ' . ($ar ? 'ستتوقف بصمتك خلال ' : 'Your clock-in stops in ') . $minsTxt;
                     $body[] = $ar ? '⚠️ عند انتهاء الوقت تتوقف بصمتك — تواصل مع مديرك الآن' : '⚠️ When the time is up your clock-in stops — contact your manager now';
+                }
+                if (($d['msg'] ?? '') !== '') $body[] = '📣 ' . push_short((string)$d['msg'], 250);
+            } elseif (($d['step'] ?? '') === 'update') {
+                if (!empty($d['for_admin'])) {
+                    $title = $ev[2] . ' ' . ($ar ? 'تعديل عدّاد ' : 'Countdown changed — ') . ($d['user'] ?? '');
+                    foreach ((array)($d['lines'] ?? []) as $ln) $body[] = $ln;
+                } else {
+                    $title = $ev[2] . ' ' . ($ar ? 'تحديث: ستتوقف بصمتك خلال ' : 'Update: your clock-in stops in ') . $minsTxt;
+                    if (($d['msg'] ?? '') !== '') $body[] = '📣 ' . push_short((string)$d['msg'], 250);
                 }
             } elseif (($d['step'] ?? '') === 'cancel') {
                 $title = $ev[2] . ' ' . ($ar ? 'أُلغي عدّاد إيقاف البصمة — ' : 'Clock-in countdown cancelled — ') . ($d['user'] ?? '');
