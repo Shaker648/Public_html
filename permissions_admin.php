@@ -37,6 +37,16 @@ if (!in_array($lang, ['ar', 'en'], true)) $lang = 'ar';
 $dir = $lang === 'ar' ? 'rtl' : 'ltr';
 
 $catalog  = perm_catalog();
+/* which page each card button opens — shown under the button, and switched on with it */
+$btnPages = perm_button_pages();
+$permName = [];
+foreach ($catalog as $g) foreach ($g['perms'] as $k => $pp) $permName[$k] = $pp;
+$opensTxt = function (string $key) use ($btnPages, $permName, $lang): string {
+    if (empty($btnPages[$key])) return '';
+    $names = array_map(fn($pg) => isset($permName[$pg]) ? ($lang === 'ar' ? $permName[$pg]['ar'] : $permName[$pg]['en']) : $pg, $btnPages[$key]);
+    return '<div class="perm-opens">🔗 ' . ($lang === 'ar' ? 'يفتح: ' : 'Opens: ') . htmlspecialchars(implode(' + ', $names))
+         . ($lang === 'ar' ? ' — تُفعَّل معه تلقائياً عند السماح' : ' — switched on with it when allowed') . '</div>';
+};
 $defaults = perm_defaults();
 $roles    = ['admin', 'manager', 'sales'];
 
@@ -54,6 +64,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $role    = $_POST['role'];
         $backTab = $role;
         $checked = (array)($_POST['perm'] ?? []);
+        foreach (perm_button_pages() as $btn => $pages) {   // a card button that is on needs its page on
+            if (isset($checked[$btn])) foreach ($pages as $pg) $checked[$pg] = '1';
+        }
         $ins = $pdo->prepare("REPLACE INTO role_permissions (role, perm_key, allowed) VALUES (?, ?, ?)");
         foreach (perm_all_keys() as $key) {
             $ins->execute([$role, $key, isset($checked[$key]) ? 1 : 0]);
@@ -71,6 +84,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $uid     = (int)$_POST['user_id'];
         $backTab = 'user';
         $vals    = (array)($_POST['perm'] ?? []);
+        foreach (perm_button_pages() as $btn => $pages) {   // allowing a card button allows the page it opens (unless that page is denied here)
+            if (($vals[$btn] ?? '') === 'allow') foreach ($pages as $pg) if (($vals[$pg] ?? 'inherit') !== 'deny') $vals[$pg] = 'allow';
+        }
         $ins = $pdo->prepare("REPLACE INTO user_permissions (user_id, perm_key, allowed) VALUES (?, ?, ?)");
         $del = $pdo->prepare("DELETE FROM user_permissions WHERE user_id = ? AND perm_key = ?");
         foreach (perm_all_keys() as $key) {
@@ -115,6 +131,7 @@ foreach ($allUsers as $u) {
 }
 $selUserOverrides = $selUser ? perm_user_overrides($pdo, $selUserId) : [];
 $selUserRoleEff   = $selUser ? perm_effective_role($pdo, $selUser['role']) : [];
+$selUserEff       = $selUser ? perm_effective($pdo, $selUserId, $selUser['role']) : [];   // what really applies to this person
 
 /* Count of overrides per role (badge on the tab) */
 $ovCount = [];
@@ -370,6 +387,9 @@ body {
 .perm-controls { display:flex; align-items:center; gap:12px; flex-shrink:0; }
 
 /* Action bar */
+.perm-opens { margin-top: 4px; font-size: 11.5px; font-weight: 700; color: #a5b4fc; }
+.perm-row.flash-on { animation: permFlash 1.2s ease; }
+@keyframes permFlash { 0%,100% { background: transparent; } 30% { background: rgba(34,197,94,.18); } }
 .action-bar {
     position:sticky; bottom:14px; display:flex; gap:10px; justify-content:flex-end;
     background:rgba(15,23,42,.97); border:1px solid rgba(147,51,234,.35); border-radius:18px;
@@ -519,6 +539,7 @@ body {
                     <?php if ($locked): ?><span class="badge badge-locked"><?= $L['locked'] ?></span><?php endif; ?>
                 </div>
                 <div class="perm-desc"><?= htmlspecialchars($lang === 'ar' ? $p['dar'] : $p['den']) ?></div>
+                <?= $opensTxt($key) ?>
             </div>
             <div class="perm-controls">
                 <label class="switch">
@@ -582,7 +603,7 @@ body {
             $locked  = perm_is_locked($p, $selUser['role']);
             $roleVal = !empty($selUserRoleEff[$key]);
             $ov      = array_key_exists($key, $selUserOverrides) ? ($selUserOverrides[$key] ? 'allow' : 'deny') : 'inherit';
-            $final   = $locked ? true : ($ov === 'inherit' ? $roleVal : $ov === 'allow');
+            $final   = !empty($selUserEff[$key]);
         ?>
         <div class="perm-row <?= $ov !== 'inherit' ? 'is-modified' : '' ?>">
             <div class="perm-info">
@@ -595,6 +616,7 @@ body {
                     <?php if ($locked): ?><span class="badge badge-locked"><?= $L['locked'] ?></span><?php endif; ?>
                 </div>
                 <div class="perm-desc"><?= htmlspecialchars($lang === 'ar' ? $p['dar'] : $p['den']) ?></div>
+                <?= $opensTxt($key) ?>
             </div>
             <div class="perm-controls">
                 <span class="eff-pill <?= $final ? 'eff-on' : 'eff-off' ?>">
@@ -630,6 +652,24 @@ body {
 
 </div><!-- /.wrap -->
 <script>
+/* allowing a card button switches on the page it opens (role switches and person dropdowns) */
+(function () {
+    var BP = <?= json_encode($btnPages) ?>;
+    function flash(el) { var r = el.closest('.perm-row'); if (r) { r.classList.remove('flash-on'); void r.offsetWidth; r.classList.add('flash-on'); } }
+    Object.keys(BP).forEach(function (btn) {
+        document.querySelectorAll('[name="perm[' + btn + ']"]').forEach(function (el) {
+            el.addEventListener('change', function () {
+                var form = el.form;
+                BP[btn].forEach(function (pg) {
+                    var t = form.querySelector('[name="perm[' + pg + ']"]');
+                    if (!t || t.disabled) return;
+                    if (el.type === 'checkbox' && el.checked && !t.checked) { t.checked = true; flash(t); }
+                    if (el.tagName === 'SELECT' && el.value === 'allow' && t.value !== 'allow') { t.value = 'allow'; if (window.triColor) triColor(t); flash(t); }
+                });
+            });
+        });
+    });
+})();
 function setAction(form, val) {
     form.querySelector('input[name="action"]').value = val;
     return true;

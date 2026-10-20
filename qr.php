@@ -338,9 +338,9 @@ body {
 
         <?php if ($canManage && $isAvailable): ?>
         <div class="quick-grid">
-            <a class="btn-edit"     href="edit_vehicle.php?id=<?= (int)$car['id'] ?>&lang=<?= $lang ?>"><?= $T['edit'] ?></a>
-            <a class="btn-transfer" href="transfer_vehicle.php?id=<?= (int)$car['id'] ?>&lang=<?= $lang ?>"><?= $T['transfer'] ?></a>
-            <a class="btn-sell"     href="sold_vehicle.php?id=<?= (int)$car['id'] ?>&lang=<?= $lang ?>"><?= $T['sell'] ?></a>
+            <?php if (can('dash.btn_edit') && can('page.edit_vehicle')): ?><a class="btn-edit"     href="edit_vehicle.php?id=<?= (int)$car['id'] ?>&lang=<?= $lang ?>"><?= $T['edit'] ?></a><?php endif; ?>
+            <?php if (can('dash.btn_transfer') && can('page.transfer_vehicle')): ?><a class="btn-transfer" href="transfer_vehicle.php?id=<?= (int)$car['id'] ?>&lang=<?= $lang ?>"><?= $T['transfer'] ?></a><?php endif; ?>
+            <?php if (can('dash.btn_sell') && can('page.sold_vehicle')): ?><a class="btn-sell"     href="sold_vehicle.php?id=<?= (int)$car['id'] ?>&lang=<?= $lang ?>"><?= $T['sell'] ?></a><?php endif; ?>
         </div>
         <?php endif; ?>
 

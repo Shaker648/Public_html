@@ -224,9 +224,11 @@ $canSeeAmana     = can('dash.amana_section');    // amana strip + details
 $canAmanaActions = can('dash.amana_actions');    // mark-sold / return buttons
 $canSoldSection  = can('dash.sold_section');     // sold cards at the bottom
 $canQuotesEdit   = can('dash.quotes_edit');      // ✏️ quote banner editor
-$canBtnEdit      = can('dash.btn_edit');
-$canBtnTransfer  = can('dash.btn_transfer');
-$canBtnSell      = can('dash.btn_sell');
+/* a card button shows only if it works: the button AND the page it opens */
+$canBtnEdit      = can('dash.btn_edit') && can('page.edit_vehicle');
+$canBtnTransfer  = can('dash.btn_transfer') && can('page.transfer_vehicle');
+$canBtnSell      = can('dash.btn_sell') && can('page.sold_vehicle');
+$canJourney      = can('page.vehicle_timeline');
 $canWaCustomer   = can('dash.wa_customer');
 $canWaCustPrice  = can('dash.wa_customer_price');
 $canWaDealer     = can('dash.wa_dealer');
@@ -1321,10 +1323,11 @@ function arDate($dt, $lang) {
                 </div>
                 <?php if ($canAmanaActions): ?>
                 <div class="amana-row-actions">
-                    <a href="vehicle_timeline.php?id=<?= $car['id'] ?>&lang=<?= $lang ?>" class="amana-mini-btn mini-eye" title="<?= $t[$lang]['journey'] ?>">👁 <?= $lang === 'ar' ? 'الرحلة' : 'Trip' ?></a>
-                    <a href="sold_vehicle.php?id=<?= $car['id'] ?>&lang=<?= $lang ?>" class="amana-mini-btn mini-sold"><?= $t[$lang]['amana_sold_btn'] ?></a>
+                    <?php if ($canJourney): ?><a href="vehicle_timeline.php?id=<?= $car['id'] ?>&lang=<?= $lang ?>" class="amana-mini-btn mini-eye" title="<?= $t[$lang]['journey'] ?>">👁 <?= $lang === 'ar' ? 'الرحلة' : 'Trip' ?></a><?php endif; ?>
+                    <?php if (can('page.sold_vehicle')): ?><a href="sold_vehicle.php?id=<?= $car['id'] ?>&lang=<?= $lang ?>" class="amana-mini-btn mini-sold"><?= $t[$lang]['amana_sold_btn'] ?></a><?php endif; ?>
+                    <?php if (can('page.consignment_return')): ?>
                     <button type="button" class="amana-mini-btn mini-return"
-                        data-name="<?= htmlspecialchars($car['brand'].' '.$car['model'], ENT_QUOTES) ?>" onclick="openReturn(<?= (int)$car['id'] ?>, this.dataset.name)"><?= $t[$lang]['amana_return_btn'] ?></button>
+                        data-name="<?= htmlspecialchars($car['brand'].' '.$car['model'], ENT_QUOTES) ?>" onclick="openReturn(<?= (int)$car['id'] ?>, this.dataset.name)"><?= $t[$lang]['amana_return_btn'] ?></button><?php endif; ?>
                 </div>
                 <?php endif; ?>
             </div>
@@ -1454,9 +1457,11 @@ function arDate($dt, $lang) {
                 </div>
 
                 <div class="actions">
+                    <?php if ($canJourney): ?>
                     <a href="vehicle_timeline.php?id=<?= $car['id'] ?>&lang=<?= $lang ?>" class="btn btn-journey">
                         👁 <?= $t[$lang]['journey'] ?>
                     </a>
+                    <?php endif; ?>
 
                     <?php if ($canBtnEdit): ?>
                         <a href="edit_vehicle.php?id=<?= $car['id'] ?>&lang=<?= $lang ?>" class="btn btn-edit">

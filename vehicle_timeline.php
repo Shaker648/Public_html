@@ -334,7 +334,7 @@ $csrfToken = $_SESSION['csrf_token'];
 $onSale    = in_array($car['status'], ['available', 'reserved'], true);
 $acts = [
     'sell'     => $onSale && can('dash.btn_sell') && can('page.sold_vehicle'),
-    'transfer' => $onSale && can('dash.btn_transfer'),
+    'transfer' => $onSale && can('dash.btn_transfer') && can('page.transfer_vehicle'),
     'edit'     => can('dash.btn_edit') && can('page.edit_vehicle'),
     'reserve'  => $car['status'] === 'available' && can('reserve.create'),
     'unreserve'=> $car['status'] === 'reserved'  && can('reserve.cancel'),
