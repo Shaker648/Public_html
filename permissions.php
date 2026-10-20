@@ -589,6 +589,21 @@ function perm_apply_locks(array $eff, string $role): array
 }
 
 /** Effective permissions for any user: default → role override → user override → locks. */
+/**
+ * A button on the car card opens a page: allowing the button must also let the
+ * person use that page, or the button just sends them back to the dashboard.
+ *   button => [pages it opens]
+ */
+function perm_button_pages(): array
+{
+    return [
+        'dash.btn_edit'      => ['page.edit_vehicle'],
+        'dash.btn_transfer'  => ['page.transfer_vehicle'],
+        'dash.btn_sell'      => ['page.sold_vehicle'],
+        'dash.amana_actions' => ['page.sold_vehicle', 'page.consignment_return'],
+    ];
+}
+
 function perm_effective(PDO $pdo, int $userId, string $role): array
 {
     $defaults = perm_defaults();
@@ -596,8 +611,14 @@ function perm_effective(PDO $pdo, int $userId, string $role): array
     foreach (perm_role_overrides($pdo, $role) as $k => $v) {
         if (array_key_exists($k, $eff)) $eff[$k] = $v;
     }
-    foreach (perm_user_overrides($pdo, $userId) as $k => $v) {
+    $userOv = perm_user_overrides($pdo, $userId);
+    foreach ($userOv as $k => $v) {
         if (array_key_exists($k, $eff)) $eff[$k] = $v;
+    }
+    // a button allowed for this person opens its page too — unless that page was denied for them on purpose
+    foreach (perm_button_pages() as $btn => $pages) {
+        if (empty($userOv[$btn])) continue;
+        foreach ($pages as $pg) if (!array_key_exists($pg, $userOv) && array_key_exists($pg, $eff)) $eff[$pg] = true;
     }
     return perm_apply_locks($eff, $role);
 }

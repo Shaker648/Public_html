@@ -14,6 +14,8 @@ if (($_SESSION['role'] ?? '') !== 'admin') { http_response_code(403); exit('Admi
 
 /* the fingerprints of the files as they were sent (filled in when this page was made) */
 $EXPECTED = /*EXPECTED*/[
+    'qr.php' => 'cf2dfd9d80238fcf35b4aedcc5f69969',
+    'vehicle_timeline.php' => '91af998a77656069cf324e5ff72d0db8',
     'other_option.js' => 'a49034c29d984b36705517dfeef04773',
     'edit_vehicle.php' => 'c5b033a2a802ffa99dd1e175899df69c',
     'add_vehicle.php' => 'd1718011bdbbedd2274bb50e92cf7e5b',
@@ -22,15 +24,15 @@ $EXPECTED = /*EXPECTED*/[
     'push_helpers.php' => 'e549fe35b856d64d9937833ad31cf79d',
     'notify_act.php' => 'da7427e7817ad9a7e99505760739d88d',
     'auth.php' => '2c76b8218182cb5424c959a4afa8b32b',
-    'permissions.php' => 'd1c2a9e20cf174c220224e66d8caac32',
-    'permissions_admin.php' => 'c3978e52ce0e8c49a79a9a82363e54d0',
+    'permissions.php' => '7270fc697447852ab8fe184089e28591',
+    'permissions_admin.php' => '0566724d0bc00f7742d1ea2c4d0cb6ef',
     'incoming_cars.php' => 'b67960b37ae61dd4dd86be6b49b8ac1b',
     'receive_shipment.php' => 'a435693a7ae41ac7773e52cb807df536',
     'transfer_lock.php' => '12b4abe4a6ea914438e6ea75fbfb6986',
     'attendance.php' => '8e63cd1e2d4ed49bbc9179f1101756e8',
     'attendance_admin.php' => '7d54c40176024aa632437f25f77c15b6',
     'notifications_admin.php' => '79672f13d66dd1d0983713bf6d212e92',
-    'dashboard.php' => '2a12d2523c121cf956bc76fc691c1951',
+    'dashboard.php' => 'eb7f8f6690b0af06258a259601a0a4fc',
     'prices.php' => '0a1e32c255c2bacab37f16fee0563a23',
     'pricing_helpers.php' => '8a07e7ac7fba1194fd3fce1df9b23d9b',
     'pwa_head.php' => '5bcf1664b82d3459279445d292fbed1f',
