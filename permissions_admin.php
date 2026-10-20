@@ -41,7 +41,13 @@ $catalog  = perm_catalog();
 $btnPages = perm_button_pages();
 $permName = [];
 foreach ($catalog as $g) foreach ($g['perms'] as $k => $pp) $permName[$k] = $pp;
-$opensTxt = function (string $key) use ($btnPages, $permName, $lang): string {
+$pageBtns = perm_page_buttons();
+$opensTxt = function (string $key) use ($btnPages, $pageBtns, $permName, $lang): string {
+    if (isset($pageBtns[$key])) {
+        $b = $pageBtns[$key]; $bn = isset($permName[$b]) ? ($lang === 'ar' ? $permName[$b]['ar'] : $permName[$b]['en']) : $b;
+        return '<div class="perm-opens">🔗 ' . ($lang === 'ar' ? 'زرّها على الكارت: ' : 'Its card button: ') . htmlspecialchars($bn)
+             . ($lang === 'ar' ? ' — يُفعَّل معها تلقائياً عند السماح' : ' — switched on with it when allowed') . '</div>';
+    }
     if (empty($btnPages[$key])) return '';
     $names = array_map(fn($pg) => isset($permName[$pg]) ? ($lang === 'ar' ? $permName[$pg]['ar'] : $permName[$pg]['en']) : $pg, $btnPages[$key]);
     return '<div class="perm-opens">🔗 ' . ($lang === 'ar' ? 'يفتح: ' : 'Opens: ') . htmlspecialchars(implode(' + ', $names))
@@ -67,6 +73,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         foreach (perm_button_pages() as $btn => $pages) {   // a card button that is on needs its page on
             if (isset($checked[$btn])) foreach ($pages as $pg) $checked[$pg] = '1';
         }
+        foreach (perm_page_buttons() as $pg => $btn) {      // and a page that is on shows its card button
+            if (isset($checked[$pg])) $checked[$btn] = '1';
+        }
         $ins = $pdo->prepare("REPLACE INTO role_permissions (role, perm_key, allowed) VALUES (?, ?, ?)");
         foreach (perm_all_keys() as $key) {
             $ins->execute([$role, $key, isset($checked[$key]) ? 1 : 0]);
@@ -86,6 +95,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $vals    = (array)($_POST['perm'] ?? []);
         foreach (perm_button_pages() as $btn => $pages) {   // allowing a card button allows the page it opens (unless that page is denied here)
             if (($vals[$btn] ?? '') === 'allow') foreach ($pages as $pg) if (($vals[$pg] ?? 'inherit') !== 'deny') $vals[$pg] = 'allow';
+        }
+        foreach (perm_page_buttons() as $pg => $btn) {      // allowing a page shows its card button (unless the button is denied here)
+            if (($vals[$pg] ?? '') === 'allow' && ($vals[$btn] ?? 'inherit') !== 'deny') $vals[$btn] = 'allow';
         }
         $ins = $pdo->prepare("REPLACE INTO user_permissions (user_id, perm_key, allowed) VALUES (?, ?, ?)");
         $del = $pdo->prepare("DELETE FROM user_permissions WHERE user_id = ? AND perm_key = ?");
@@ -655,6 +667,8 @@ body {
 /* allowing a card button switches on the page it opens (role switches and person dropdowns) */
 (function () {
     var BP = <?= json_encode($btnPages) ?>;
+    var PB = <?= json_encode(perm_page_buttons()) ?>;
+    Object.keys(PB).forEach(function (pg) { (BP[pg] = BP[pg] || []).push(PB[pg]); });   // page → its button, too
     function flash(el) { var r = el.closest('.perm-row'); if (r) { r.classList.remove('flash-on'); void r.offsetWidth; r.classList.add('flash-on'); } }
     Object.keys(BP).forEach(function (btn) {
         document.querySelectorAll('[name="perm[' + btn + ']"]').forEach(function (el) {
