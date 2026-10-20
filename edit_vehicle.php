@@ -174,6 +174,20 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     $tq->execute([$new['brand'], $new['model'], $new['trim_name']]);
     $okTrim   = $tq->fetchColumn() > 0 || ($new['brand'] === $car['brand'] && $new['model'] === $car['model'] && $new['trim_name'] === $car['trim_name']);
     $okYear   = preg_match('/^(19|20)\d{2}$/', $new['car_year']) === 1;
+    /* «✏️ أخرى…»: a value typed for this car only (the lists are not changed) */
+    $typed = array_intersect((array)($_POST['typed'] ?? []), ['brand', 'model', 'trim_name', 'color']);
+    foreach ($typed as $tf) {
+        $v = $new[$tf];
+        if ($v === '' || $v === '__other__' || mb_strlen($v) > 100) continue;
+        if ($tf === 'brand') $okBrand = true;
+        if ($tf === 'model') $okModel = true;
+        if ($tf === 'trim_name') $okTrim = true;
+        if ($tf === 'color') $okColor = true;
+    }
+    if (in_array('brand', $typed, true) || in_array('model', $typed, true)) {   // a new brand / model has no list of trims
+        if ($new['trim_name'] !== '' && $new['trim_name'] !== '__other__' && mb_strlen($new['trim_name']) <= 100) $okTrim = true;
+    }
+    if (in_array('brand', $typed, true) && $new['model'] !== '' && $new['model'] !== '__other__' && mb_strlen($new['model']) <= 100) $okModel = true;
     $bad = [];
     if (!$okBrand)  $bad[] = $fieldLabel('brand');
     if (!$okModel)  $bad[] = $fieldLabel('model');
@@ -569,6 +583,7 @@ input:focus, select:focus, textarea:focus { box-shadow: 0 0 0 2px #9333ea; }
                         <label><?= $t[$lang]['brand'] ?></label>
                         <select id="brand" name="brand" required>
                             <option value=""><?= $t[$lang]['select_brand'] ?></option>
+<?php if ($form['brand'] !== '' && !in_array($form['brand'], array_column($brands, 'name'), true)): ?><option value="<?= htmlspecialchars($form['brand']) ?>" data-custom="1" selected>✏️ <?= htmlspecialchars($form['brand']) ?></option><?php endif; ?>
                             <?php foreach ($brands as $brand): ?>
                                 <option value="<?= htmlspecialchars($brand['name']) ?>" <?= $form['brand']==$brand['name']?'selected':'' ?>>
                                     <?= htmlspecialchars($brand['name']) ?>
@@ -581,6 +596,7 @@ input:focus, select:focus, textarea:focus { box-shadow: 0 0 0 2px #9333ea; }
                         <label><?= $t[$lang]['model'] ?></label>
                         <select id="model" name="model" required>
                             <option value=""><?= $t[$lang]['select_model'] ?></option>
+<?php if ($form['model'] !== '' && !in_array($form['model'], $carModels, true)): ?><option value="<?= htmlspecialchars($form['model']) ?>" data-custom="1" selected>✏️ <?= htmlspecialchars($form['model']) ?></option><?php endif; ?>
                             <?php foreach ($carModels as $m): ?>
                                 <option value="<?= htmlspecialchars($m) ?>" <?= $form['model']==$m?'selected':'' ?>>
                                     <?= htmlspecialchars($m) ?>
@@ -612,6 +628,7 @@ input:focus, select:focus, textarea:focus { box-shadow: 0 0 0 2px #9333ea; }
                         <label><?= $t[$lang]['trim'] ?></label>
                         <select id="trim" name="trim_name" required>
                             <option value=""><?= $t[$lang]['select_trim'] ?></option>
+<?php if ($form['trim_name'] !== '' && !in_array($form['trim_name'], $carTrims, true)): ?><option value="<?= htmlspecialchars($form['trim_name']) ?>" data-custom="1" selected>✏️ <?= htmlspecialchars($form['trim_name']) ?></option><?php endif; ?>
                             <?php foreach ($carTrims as $tr): ?>
                                 <option value="<?= htmlspecialchars($tr) ?>" <?= $form['trim_name']==$tr?'selected':'' ?>>
                                     <?= htmlspecialchars($tr) ?>
@@ -626,6 +643,7 @@ input:focus, select:focus, textarea:focus { box-shadow: 0 0 0 2px #9333ea; }
                         <label><?= $t[$lang]['color'] ?></label>
                         <select id="color" name="color" required>
                             <option value=""><?= $t[$lang]['select_color'] ?></option>
+<?php if ($form['color'] !== '' && !in_array($form['color'], array_column($colors, 'color_en'), true)): ?><option value="<?= htmlspecialchars($form['color']) ?>" data-custom="1" selected>✏️ <?= htmlspecialchars($form['color']) ?></option><?php endif; ?>
                             <?php foreach ($colors as $color): ?>
                                 <option value="<?= htmlspecialchars($color['color_en']) ?>"
                                     data-css="<?= htmlspecialchars(strtolower(str_replace(' ', '', $color['color_en']))) ?>"
@@ -818,6 +836,28 @@ document.addEventListener('DOMContentLoaded', function () {
     notes.addEventListener('input', refresh);
     refresh();
 });
+</script>
+<script src="other_option.js?v=1"></script>
+<script>
+/* «✏️ أخرى…» on the edit page: typed values are marked so the server accepts them for this car */
+(function () {
+    var g = function (id) { return document.getElementById(id); };
+    F1Other.attach(g('brand'));
+    F1Other.attach(g('model'), { needs: g('brand') });
+    F1Other.attach(g('trim'), { needs: g('model') });
+    F1Other.attach(g('car_year'), { numeric: true });
+    F1Other.attach(g('color'));
+    var form = g('brand').form;
+    form.addEventListener('submit', function () {
+        form.querySelectorAll('input[name="typed[]"]').forEach(function (x) { x.remove(); });
+        ['brand', 'model', 'trim', 'color'].forEach(function (id) {
+            var s = g(id), o = s.options[s.selectedIndex];
+            if (o && o.getAttribute('data-custom') === '1') {
+                var h = document.createElement('input'); h.type = 'hidden'; h.name = 'typed[]'; h.value = s.name; form.appendChild(h);
+            }
+        });
+    }, true);
+})();
 </script>
 
 <style>
