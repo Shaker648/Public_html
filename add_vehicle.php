@@ -183,6 +183,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $color      = trim($_POST['color']      ?? '');
     $branch     = trim($_POST['branch']     ?? '');
     $chassis    = strtoupper(trim($_POST['chassis'] ?? ''));
+    /* a value typed with «أخرى» is saved on this car only (the brands / models / colours lists are not touched) */
+    foreach (['brand', 'model', 'trim_name', 'color'] as $fld) $$fld = mb_substr($$fld, 0, 100);
+    $car_year   = mb_substr($car_year, 0, 20);
     $notes      = trim($_POST['notes']      ?? '');
     $created_by = $_SESSION['username'];
 
@@ -191,7 +194,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $error = $t[$lang]['token_expired'];
 
     } elseif (empty($brand) || empty($model) || empty($car_year) ||
-        empty($trim_name) || empty($color) || empty($branch) || empty($chassis)) {
+        empty($trim_name) || empty($color) || empty($branch) || empty($chassis) ||
+        in_array('__other__', [$brand, $model, $car_year, $trim_name, $color], true)) {
 
         $error = $t[$lang]['fill_required'];
 
@@ -1795,6 +1799,18 @@ html[dir="rtl"] .select-loading { left: 40px; }
 
 })();
 </script>
+<script src="other_option.js?v=1"></script>
+<script>
+/* «✏️ أخرى…» — a car that isn't in the lists: typed for this car only, the lists stay as they are */
+(function () {
+    var g = function (id) { return document.getElementById(id); };
+    F1Other.attach(g('brand'));
+    F1Other.attach(g('model'), { needs: g('brand') });
+    F1Other.attach(g('trim'), { needs: g('model') });
+    F1Other.attach(g('car_year'), { numeric: true });
+    F1Other.attach(g('color'));
+})();
+</script>
 
 <!-- ══ CHASSIS BARCODE SCANNER ══ -->
 <div class="scan-modal" id="scanModal">
@@ -2930,6 +2946,8 @@ a.avt-item:hover { border-color: rgba(59,130,246,.35); background: rgba(59,130,2
         if (!val) return false;
         for (let i = 0; i < 50; i++) {
             if (!el.disabled && Array.from(el.options).some(o => o.value === val)) { el.value = val; el.dispatchEvent(new Event('change', { bubbles: true })); return true; }
+            // not in the list once it has loaded: it was typed by hand («أخرى»)
+            if (i >= 8 && !el.disabled && window.F1Other && el.querySelector('option[value="' + F1Other.OTHER + '"]')) return F1Other.ensure(el, val);
             await sleep(100);
         }
         return false;

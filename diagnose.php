@@ -14,6 +14,9 @@ if (($_SESSION['role'] ?? '') !== 'admin') { http_response_code(403); exit('Admi
 
 /* the fingerprints of the files as they were sent (filled in when this page was made) */
 $EXPECTED = /*EXPECTED*/[
+    'other_option.js' => 'a49034c29d984b36705517dfeef04773',
+    'edit_vehicle.php' => 'c5b033a2a802ffa99dd1e175899df69c',
+    'add_vehicle.php' => 'd1718011bdbbedd2274bb50e92cf7e5b',
     'lockdown.php' => '85c1202599e3ac822cc121080db45f55',
     'notify_smart.php' => '3b9604cc2e195c18d0dfb3aa8c5bc356',
     'push_helpers.php' => 'e549fe35b856d64d9937833ad31cf79d',
