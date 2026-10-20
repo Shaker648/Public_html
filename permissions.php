@@ -546,8 +546,9 @@ function perm_role_overrides(PDO $pdo, string $role): array
     perm_ensure_tables($pdo);
     $out = [];
     try {
-        $stmt = $pdo->prepare("SELECT perm_key, allowed FROM role_permissions WHERE role = ?");
-        $stmt->execute([$role]);
+        // newest last, so if a row was ever saved twice the latest choice wins
+        try { $stmt = $pdo->prepare("SELECT perm_key, allowed FROM role_permissions WHERE role = ? ORDER BY updated_at, perm_key"); $stmt->execute([$role]); }
+        catch (Throwable $e) { $stmt = $pdo->prepare("SELECT perm_key, allowed FROM role_permissions WHERE role = ?"); $stmt->execute([$role]); }
         foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $r) {
             $out[$r['perm_key']] = (bool)$r['allowed'];
         }
@@ -563,8 +564,8 @@ function perm_user_overrides(PDO $pdo, int $userId): array
     perm_ensure_tables($pdo);
     $out = [];
     try {
-        $stmt = $pdo->prepare("SELECT perm_key, allowed FROM user_permissions WHERE user_id = ?");
-        $stmt->execute([$userId]);
+        try { $stmt = $pdo->prepare("SELECT perm_key, allowed FROM user_permissions WHERE user_id = ? ORDER BY updated_at, perm_key"); $stmt->execute([$userId]); }
+        catch (Throwable $e) { $stmt = $pdo->prepare("SELECT perm_key, allowed FROM user_permissions WHERE user_id = ?"); $stmt->execute([$userId]); }
         foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $r) {
             $out[$r['perm_key']] = (bool)$r['allowed'];
         }

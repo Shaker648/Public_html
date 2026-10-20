@@ -6,11 +6,44 @@
  * (fingerprint), the PHP version and settings, the database columns the new
  * features need, what the server really sends for lockdown.php, and — in the
  * browser — loads the main pages and reports any script error on them.
- * Safe: it reads only, it changes nothing.
+ * Safe: it reads only, it changes nothing — except the «إصلاح» button of the
+ * permissions section, which only removes duplicate permission rows and adds
+ * the one-row-per-permission rule (asked for, admins only).
  */
 require 'auth.php';
 require 'config.php';
 if (($_SESSION['role'] ?? '') !== 'admin') { http_response_code(403); exit('Admins only'); }
+if (empty($_SESSION['csrf_token'])) $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+$csrf = $_SESSION['csrf_token'];
+
+/* ── repair the permission tables (only when asked) ── */
+$repairMsg = '';
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['do'] ?? '') === 'fix_perms' && hash_equals($csrf, (string)($_POST['csrf'] ?? ''))) {
+    $done = [];
+    foreach (['role_permissions' => 'role', 'user_permissions' => 'user_id'] as $tbl => $who) {
+        try {
+            // keep only the newest row of every (who, permission)
+            $all = $pdo->query("SELECT * FROM $tbl")->fetchAll(PDO::FETCH_ASSOC);
+            $keep = [];
+            foreach ($all as $r) {
+                $k = $r[$who] . '|' . $r['perm_key'];
+                if (!isset($keep[$k]) || (string)($r['updated_at'] ?? '') >= (string)($keep[$k]['updated_at'] ?? '')) $keep[$k] = $r;
+            }
+            $pdo->beginTransaction();
+            $pdo->exec("DELETE FROM $tbl");
+            $ins = $pdo->prepare("INSERT INTO $tbl ($who, perm_key, allowed) VALUES (?, ?, ?)");
+            foreach ($keep as $r) $ins->execute([$r[$who], $r['perm_key'], (int)$r['allowed']]);
+            $pdo->commit();
+            $done[] = $tbl . ': ' . count($all) . ' → ' . count($keep) . ' صف';
+            $hasPk = (bool)$pdo->query("SHOW INDEX FROM $tbl WHERE Key_name = 'PRIMARY'")->fetch();
+            if (!$hasPk) { $pdo->exec("ALTER TABLE $tbl ADD PRIMARY KEY ($who, perm_key)"); $done[] = $tbl . ': + PRIMARY KEY'; }
+        } catch (Throwable $e) {
+            if ($pdo->inTransaction()) $pdo->rollBack();
+            $done[] = $tbl . ': ❌ ' . $e->getMessage();
+        }
+    }
+    $repairMsg = implode(' · ', $done);
+}
 
 /* the fingerprints of the files as they were sent (filled in when this page was made) */
 $EXPECTED = /*EXPECTED*/[
@@ -24,7 +57,7 @@ $EXPECTED = /*EXPECTED*/[
     'push_helpers.php' => 'e549fe35b856d64d9937833ad31cf79d',
     'notify_act.php' => 'da7427e7817ad9a7e99505760739d88d',
     'auth.php' => '2c76b8218182cb5424c959a4afa8b32b',
-    'permissions.php' => '7270fc697447852ab8fe184089e28591',
+    'permissions.php' => '73b73e9d659bb698b80ed22ee6bc2d61',
     'permissions_admin.php' => '0566724d0bc00f7742d1ea2c4d0cb6ef',
     'incoming_cars.php' => 'b67960b37ae61dd4dd86be6b49b8ac1b',
     'receive_shipment.php' => 'a435693a7ae41ac7773e52cb807df536',
@@ -101,6 +134,82 @@ if (function_exists('curl_init')) {
     }
 }
 
+/* 6. permissions: the tables, a write test, and — for one person — why each card button is on or off */
+$G = '🔐 الصلاحيات';
+$permTblOk = true;
+foreach (['role_permissions' => 'role', 'user_permissions' => 'user_id'] as $tbl => $who) {
+    try {
+        $cols = array_column($pdo->query("SHOW COLUMNS FROM $tbl")->fetchAll(PDO::FETCH_ASSOC), 'Type', 'Field');
+        $need = [$who, 'perm_key', 'allowed'];
+        $miss = array_diff($need, array_keys($cols));
+        $add($G, "$tbl — الأعمدة", !$miss, $miss ? 'ناقص: ' . implode(', ', $miss) . ' — الموجود: ' . implode(', ', array_keys($cols)) : implode(', ', array_map(fn($c, $t) => "$c ($t)", array_keys($cols), $cols)));
+        if ($miss) { $permTblOk = false; continue; }
+        $pk = $pdo->query("SHOW INDEX FROM $tbl WHERE Key_name = 'PRIMARY'")->fetchAll(PDO::FETCH_ASSOC);
+        $add($G, "$tbl — صف واحد لكل صلاحية", (bool)$pk, $pk ? 'نعم (' . implode('+', array_column($pk, 'Column_name')) . ')' : 'لا — كل حفظ يضيف صفاً جديداً، وصف قديم قد يغلب. اضغط «إصلاح» بالأسفل');
+        if (!$pk) $permTblOk = false;
+        $dup = (int)$pdo->query("SELECT COUNT(*) FROM (SELECT $who, perm_key FROM $tbl GROUP BY $who, perm_key HAVING COUNT(*) > 1) d")->fetchColumn();
+        $add($G, "$tbl — صفوف مكررة", $dup === 0, $dup ? "$dup صلاحية محفوظة أكثر من مرة — اضغط «إصلاح»" : 'لا يوجد');
+        if ($dup) $permTblOk = false;
+        if (preg_match('/\((\d+)\)/', (string)$cols['perm_key'], $mm)) {
+            $longest = max(array_map('strlen', perm_all_keys()));
+            $add($G, "$tbl — طول اسم الصلاحية", (int)$mm[1] >= $longest, 'المسموح ' . $mm[1] . ' حرف، أطول صلاحية ' . $longest . ' حرف');
+        }
+    } catch (Throwable $e) { $add($G, $tbl, false, 'الجدول غير موجود أو لا يُقرأ: ' . $e->getMessage()); $permTblOk = false; }
+}
+// write test (undone straight away): does saving a permission really stick?
+try {
+    $pdo->beginTransaction();
+    $pdo->prepare("REPLACE INTO user_permissions (user_id, perm_key, allowed) VALUES (0, 'diag.test', 1)")->execute();
+    $pdo->prepare("REPLACE INTO user_permissions (user_id, perm_key, allowed) VALUES (0, 'diag.test', 0)")->execute();
+    $rd = $pdo->query("SELECT allowed FROM user_permissions WHERE user_id = 0 AND perm_key = 'diag.test'")->fetchAll(PDO::FETCH_COLUMN);
+    $pdo->rollBack();
+    $pdo->exec("DELETE FROM user_permissions WHERE user_id = 0 AND perm_key = 'diag.test'");   // in case the table can't undo
+    $add($G, 'تجربة حفظ صلاحية', $rd === ['0'] || $rd === [0], $rd === ['0'] || $rd === [0] ? 'تُحفظ وتُقرأ صحيحاً' : 'بعد حفظ «سماح» ثم «منع» قُرئ: ' . json_encode($rd) . ' — الحفظ لا يستبدل القديم');
+} catch (Throwable $e) { if ($pdo->inTransaction()) $pdo->rollBack(); $add($G, 'تجربة حفظ صلاحية', false, $e->getMessage()); try { $pdo->exec("DELETE FROM user_permissions WHERE user_id = 0 AND perm_key = 'diag.test'"); } catch (Throwable $e2) {} }
+$add($G, 'محرك الصلاحيات الجديد', function_exists('perm_button_pages'), function_exists('perm_button_pages') ? 'موجود' : 'permissions.php قديم — ارفعه مرة أخرى');
+
+// one person: every card button — role, saved choice, result
+$diagUid = (int)($_GET['u'] ?? 0);
+$people = $pdo->query("SELECT id, username, role FROM users WHERE active = 1 ORDER BY FIELD(role,'admin','manager','sales'), username")->fetchAll(PDO::FETCH_ASSOC);
+$personRows = [];
+if ($diagUid) {
+    $pu = null; foreach ($people as $pp) if ((int)$pp['id'] === $diagUid) $pu = $pp;
+    if ($pu) {
+        $defs = perm_defaults()[$pu['role']] ?? [];
+        $roleOv = perm_role_overrides($pdo, $pu['role']);
+        $rawUser = [];
+        try { $st = $pdo->prepare("SELECT perm_key, allowed FROM user_permissions WHERE user_id = ?"); $st->execute([$diagUid]); foreach ($st->fetchAll(PDO::FETCH_ASSOC) as $r) $rawUser[$r['perm_key']][] = (int)$r['allowed']; } catch (Throwable $e) {}
+        $eff = perm_effective($pdo, $diagUid, $pu['role']);
+        $catalogNames = [];
+        foreach (perm_catalog() as $g) foreach ($g['perms'] as $k => $pp) $catalogNames[$k] = $pp['ar'];
+        $keys = ['dash.btn_edit' => 'page.edit_vehicle', 'dash.btn_transfer' => 'page.transfer_vehicle', 'dash.btn_sell' => 'page.sold_vehicle',
+                 'dash.amana_actions' => 'page.consignment_return', 'reserve.create' => '', 'reserve.cancel' => '', 'dash.wa_customer' => '', 'dash.wa_dealer' => '', 'page.vehicle_timeline' => ''];
+        $yn = fn($v) => $v === null ? '—' : ($v ? '✓' : '✕');
+        foreach ($keys as $k => $pg) {
+            $line = function ($key) use ($defs, $roleOv, $rawUser, $eff, $yn, $catalogNames) {
+                $u = $rawUser[$key] ?? null;
+                return ['name' => ($catalogNames[$key] ?? $key), 'key' => $key, 'def' => $yn($defs[$key] ?? null), 'role' => $yn(array_key_exists($key, $roleOv) ? $roleOv[$key] : null),
+                        'user' => $u === null ? '—' : implode(' / ', array_map(fn($x) => $x ? '✓' : '✕', $u)) . (count($u) > 1 ? ' ⚠️ مكرر' : ''), 'eff' => !empty($eff[$key])];
+            };
+            $a = $line($k); $b = $pg ? $line($pg) : null;
+            $works = $a['eff'] && (!$b || $b['eff']);
+            $personRows[] = [$a, $b, $works];
+        }
+    }
+}
+
+/* 7. is the dashboard served from a cache? (an old copy would hide permission changes) */
+if (function_exists('curl_init')) {
+    $durl = (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off' ? 'https' : 'http') . '://' . $_SERVER['HTTP_HOST'] . rtrim(dirname($_SERVER['SCRIPT_NAME']), '/\\') . '/dashboard.php?lang=ar&diag=' . time();
+    $ch = curl_init($durl);
+    curl_setopt_array($ch, [CURLOPT_RETURNTRANSFER => true, CURLOPT_HEADER => true, CURLOPT_NOBODY => false, CURLOPT_TIMEOUT => 15, CURLOPT_COOKIE => session_name() . '=' . session_id(), CURLOPT_SSL_VERIFYPEER => false]);
+    $dr = @curl_exec($ch); $dh = (int)curl_getinfo($ch, CURLINFO_HEADER_SIZE); curl_close($ch);
+    if ($dr !== false) {
+        $hdr = substr($dr, 0, $dh); $cached = preg_match('/x-litespeed-cache:\s*hit|x-cache:\s*hit|cf-cache-status:\s*hit|^age:\s*[1-9]/mi', $hdr);
+        $add('🌐 التخزين المؤقت (Cache)', 'الرئيسية تُبنى من جديد في كل مرة', !$cached, $cached ? 'الاستضافة ترسل نسخة محفوظة قديمة — أوقف LiteSpeed Cache لهذه الصفحات من hPanel' : 'نعم');
+    }
+}
+
 $bad = count(array_filter($rows, fn($r) => !$r[2]));
 ?>
 <!DOCTYPE html>
@@ -130,6 +239,35 @@ iframe{position:absolute;width:390px;height:700px;left:-9999px;top:0;border:0}
 <?php $g = ''; foreach ($rows as [$group, $name, $ok, $detail]): if ($group !== $g): $g = $group; ?><h2><?= $group ?></h2><?php endif; ?>
 <div class="r <?= $ok ? '' : 'no' ?>"><span class="i"><?= $ok ? '✅' : '❌' ?></span><b><?= htmlspecialchars($name) ?></b><span><?= $detail ?></span></div>
 <?php endforeach; ?>
+<h2>👤 صلاحيات شخص معيّن — لماذا يظهر الزر أو لا يعمل</h2>
+<form method="get" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">
+    <select name="u" style="height:42px;border-radius:10px;background:#0b1426;color:#e2e8f0;border:1px solid #334155;padding:0 10px;font:inherit">
+        <option value="">— اختر الشخص —</option>
+        <?php foreach ($people as $pp): ?><option value="<?= (int)$pp['id'] ?>" <?= (int)$pp['id'] === $diagUid ? 'selected' : '' ?>><?= htmlspecialchars($pp['username'] . ' — ' . $pp['role']) ?></option><?php endforeach; ?>
+    </select>
+    <button style="height:42px;padding:0 16px;border-radius:10px;border:0;background:#7c3aed;color:#fff;font:inherit;font-weight:800">افحص</button>
+</form>
+<?php if ($personRows): ?>
+<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12.5px;min-width:560px">
+<tr style="color:#c4b5fd;text-align:start"><th style="padding:6px;text-align:start">الصلاحية</th><th>الافتراضي للدور</th><th>محفوظ للدور</th><th>محفوظ لهذا الشخص</th><th>النتيجة</th><th>الزر يعمل؟</th></tr>
+<?php foreach ($personRows as [$a, $b, $works]): foreach (array_filter([$a, $b]) as $i => $r): ?>
+<tr style="border-top:1px solid #1e293b<?= $i ? ';color:#94a3b8' : '' ?>">
+    <td style="padding:6px"><?= $i ? '↳ ' : '' ?><?= htmlspecialchars($r['name']) ?> <small style="color:#64748b;direction:ltr;display:inline-block"><?= $r['key'] ?></small></td>
+    <td style="text-align:center"><?= $r['def'] ?></td><td style="text-align:center"><?= $r['role'] ?></td><td style="text-align:center"><?= $r['user'] ?></td>
+    <td style="text-align:center"><?= $r['eff'] ? '✅' : '❌' ?></td>
+    <?php if (!$i): ?><td rowspan="<?= $b ? 2 : 1 ?>" style="text-align:center;font-weight:900;color:<?= $works ? '#4ade80' : '#f87171' ?>"><?= $works ? 'نعم' : 'لا' ?></td><?php endif; ?>
+</tr>
+<?php endforeach; endforeach; ?>
+</table></div>
+<div style="font-size:12px;color:#94a3b8;margin-top:6px">✓ مسموح · ✕ ممنوع · — غير محفوظ (يأخذ الافتراضي). ↳ = الصفحة التي يفتحها الزر.</div>
+<?php endif; ?>
+<?php if ($repairMsg): ?><div class="sum ok" style="margin-top:12px">🛠️ <?= htmlspecialchars($repairMsg) ?></div><?php endif; ?>
+<?php if (!$permTblOk): ?>
+<form method="post" style="margin-top:12px" onsubmit="return confirm('إصلاح جداول الصلاحيات؟ يحتفظ بآخر اختيار لكل صلاحية ويحذف المكرر فقط.')">
+    <input type="hidden" name="csrf" value="<?= htmlspecialchars($csrf) ?>"><input type="hidden" name="do" value="fix_perms">
+    <button style="height:46px;padding:0 18px;border-radius:12px;border:0;background:linear-gradient(90deg,#f59e0b,#dc2626);color:#fff;font:inherit;font-weight:900">🛠️ إصلاح جداول الصلاحيات</button>
+</form>
+<?php endif; ?>
 <h2>🖱️ الصفحات في هذا المتصفح (أخطاء السكربت)</h2>
 <div id="pages"></div>
 <div style="margin-top:16px;color:#64748b;font-size:12px;direction:ltr">UA: <span id="ua"></span></div>
