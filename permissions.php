@@ -605,6 +605,17 @@ function perm_button_pages(): array
     ];
 }
 
+/** The other way round: the card button that belongs to each page. */
+function perm_page_buttons(): array
+{
+    return [
+        'page.edit_vehicle'        => 'dash.btn_edit',
+        'page.transfer_vehicle'    => 'dash.btn_transfer',
+        'page.sold_vehicle'        => 'dash.btn_sell',
+        'page.consignment_return'  => 'dash.amana_actions',
+    ];
+}
+
 function perm_effective(PDO $pdo, int $userId, string $role): array
 {
     $defaults = perm_defaults();
@@ -616,10 +627,15 @@ function perm_effective(PDO $pdo, int $userId, string $role): array
     foreach ($userOv as $k => $v) {
         if (array_key_exists($k, $eff)) $eff[$k] = $v;
     }
-    // a button allowed for this person opens its page too — unless that page was denied for them on purpose
+    // button and page go together for this person: allowing either one gives both
+    // (unless the other one was denied for them on purpose)
     foreach (perm_button_pages() as $btn => $pages) {
-        if (empty($userOv[$btn])) continue;
-        foreach ($pages as $pg) if (!array_key_exists($pg, $userOv) && array_key_exists($pg, $eff)) $eff[$pg] = true;
+        if (!empty($userOv[$btn])) {
+            foreach ($pages as $pg) if (!array_key_exists($pg, $userOv) && array_key_exists($pg, $eff)) $eff[$pg] = true;
+        }
+    }
+    foreach (perm_page_buttons() as $pg => $btn) {
+        if (!empty($userOv[$pg]) && !array_key_exists($btn, $userOv) && array_key_exists($btn, $eff)) $eff[$btn] = true;
     }
     return perm_apply_locks($eff, $role);
 }

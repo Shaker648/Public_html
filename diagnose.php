@@ -57,8 +57,8 @@ $EXPECTED = /*EXPECTED*/[
     'push_helpers.php' => 'e549fe35b856d64d9937833ad31cf79d',
     'notify_act.php' => 'da7427e7817ad9a7e99505760739d88d',
     'auth.php' => '2c76b8218182cb5424c959a4afa8b32b',
-    'permissions.php' => '73b73e9d659bb698b80ed22ee6bc2d61',
-    'permissions_admin.php' => '0566724d0bc00f7742d1ea2c4d0cb6ef',
+    'permissions.php' => '646bb3b8d30d754958bbe289043e6e42',
+    'permissions_admin.php' => '8f00c197b0159c9cc3f5542f2fbc4a78',
     'incoming_cars.php' => 'b67960b37ae61dd4dd86be6b49b8ac1b',
     'receive_shipment.php' => 'a435693a7ae41ac7773e52cb807df536',
     'transfer_lock.php' => '12b4abe4a6ea914438e6ea75fbfb6986',
@@ -128,7 +128,8 @@ if (function_exists('curl_init')) {
         $add('🌐 صفحة الإيقاف كما يرسلها السيرفر', 'أخطاء PHP داخل الصفحة', !$m[0], $m[0] ? implode(' | ', array_slice(array_unique($m[0]), 0, 4)) : 'لا يوجد');
         $hdr = [];
         foreach (explode("\n", $head) as $l) if (preg_match('~^(content-security-policy|x-litespeed-cache|server|cf-|x-hcdn|content-encoding|x-turbo|x-cache)~i', trim($l))) $hdr[] = trim($l);
-        $add('🌐 صفحة الإيقاف كما يرسلها السيرفر', 'رؤوس الاستجابة', !preg_grep('~content-security-policy~i', $hdr), $hdr ? implode(' · ', $hdr) : '—');
+        // only a policy that limits scripts can break buttons («upgrade-insecure-requests» is harmless)
+        $add('🌐 صفحة الإيقاف كما يرسلها السيرفر', 'رؤوس الاستجابة', !preg_grep('~content-security-policy:.*(script-src|default-src)~i', $hdr), $hdr ? implode(' · ', $hdr) : '—');
         $scripts = preg_match_all('~<script\b~i', $html); $rocket = stripos($html, 'rocket') !== false || stripos($html, 'text/rocketscript') !== false;
         $add('🌐 صفحة الإيقاف كما يرسلها السيرفر', 'تعديل السكربتات من الاستضافة', !$rocket, $rocket ? 'الاستضافة تعيد كتابة السكربتات (Rocket Loader / تحسين JS) — أوقفها' : 'لا (' . $scripts . ' سكربت)');
     }
