@@ -3,6 +3,7 @@
 require 'auth.php';
 require 'config.php';
 require 'reserve_helpers.php';
+require_once __DIR__ . '/color_helpers.php';
 require_once __DIR__ . '/pricing_helpers.php';
 pricing_fix_duplicates($pdo);
 
@@ -1035,6 +1036,112 @@ function arDate($dt, $lang) {
             .som-card, .som-glow, .som-trophy { animation:none !important; opacity:1 !important; transform:none !important; }
         }
     </style>
+<style>
+/* ═══════════ cards v2: shorter, clearer, one-glance ═══════════ */
+.vehicle-card.vc2 { position:relative; gap:12px; padding:16px 16px 14px; border-inline-start:4px solid rgba(255,255,255,.08); }
+.vehicle-card.vc2.age-new { border-inline-start-color:#22c55e; }
+.vehicle-card.vc2.age-mid { border-inline-start-color:#f59e0b; }
+.vehicle-card.vc2.age-old { border-inline-start-color:#ef4444; box-shadow:inset -6px 0 18px -10px rgba(239,68,68,.55); }
+html[dir="ltr"] .vehicle-card.vc2.age-old { box-shadow:inset 6px 0 18px -10px rgba(239,68,68,.55); }
+.vehicle-card.vc2.reserved-card { border-inline-start-color:#eab308; overflow:visible; }
+/* the gold sheen moves inside the card (so the «⋯» menu can stick out of a reserved card) */
+.vehicle-card.vc2.reserved-card::after { transform:none; border-radius:inherit; background-size:300% 100%; background-position:120% 0; animation:goldSweep2 5.5s ease-in-out infinite; }
+@keyframes goldSweep2 { 0%,100% { background-position:120% 0; } 50% { background-position:-20% 0; } }
+/* while a «⋯» menu is open nothing floats over it */
+body:has(.vc-more[open]) #f1c-chat-bubble, body:has(.vc-more[open]) #f1c-bot-say, body:has(.vc-more[open]) #f1c-brief, body:has(.vc-more[open]) .scroll-top { opacity:0 !important; pointer-events:none !important; }
+.vehicle-card.vc2.is-new { animation:vcNew 2.6s ease-in-out 3; }
+@keyframes vcNew { 50% { box-shadow:0 0 0 2px rgba(34,197,94,.55), 0 0 34px rgba(34,197,94,.28); } }
+.vc2 .vehicle-header { gap:12px; }
+.vc2 .vc-titles { flex:1; min-width:0; }
+.vc2 .vehicle-title { font-size:18px; }
+.vc2 .vc-sub { display:flex; gap:6px; align-items:center; margin-top:5px; flex-wrap:wrap; }
+.vc-new { font-size:11px; font-weight:900; padding:3px 9px; border-radius:999px; background:linear-gradient(90deg,#16a34a,#22c55e); color:#fff; box-shadow:0 0 14px rgba(34,197,94,.45); }
+.vc-chips { display:flex; flex-wrap:wrap; gap:6px; }
+.vc-chip { display:inline-flex; align-items:center; gap:6px; height:30px; padding:0 11px; border-radius:10px; background:rgba(255,255,255,.045); border:1px solid rgba(255,255,255,.07); font-size:12.5px; font-weight:800; color:#e2e8f0; max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.vc-chip.vc-ch { font-family:'Courier New',monospace; color:#a3e635; letter-spacing:.4px; font-size:12px; }
+.vc-dot { width:13px; height:13px; border-radius:50%; flex-shrink:0; border:1.5px solid rgba(255,255,255,.45); box-shadow:0 0 0 1px rgba(0,0,0,.35); }
+.vc-deal { font-size:11px; font-weight:900; padding:3px 9px; border-radius:999px; background:rgba(56,189,248,.12); color:#7dd3fc; border:1px solid rgba(56,189,248,.3); }
+.vc-plink { text-decoration:none; font-size:14px; width:28px; height:28px; display:inline-grid; place-items:center; border-radius:8px; background:rgba(255,255,255,.05); border:1px solid rgba(255,255,255,.08); }
+.vc-plink:hover { background:rgba(56,189,248,.15); }
+.vc-note { font-size:12.5px; font-weight:700; color:#fcd34d; background:rgba(217,119,6,.08); border:1px solid rgba(217,119,6,.22); border-radius:10px; padding:7px 10px; line-height:1.6; white-space:pre-wrap; word-break:break-word; }
+/* actions: two big buttons + «⋯» — pinned to the bottom so rows of cards line up */
+.vc-acts { display:flex; gap:8px; align-items:stretch; margin-top:auto; }
+.vc-acts > .btn, .vc-acts > .reserve-form { flex:1; min-width:0; }
+.vc2 .reserve-form { display:block; }
+.vc-acts > .reserve-form .btn { width:100%; }
+.vc2 .cs-price { align-items:center; }
+.vc-acts .btn { height:44px; font-size:13px; }
+.vc-more { position:relative; flex:0 0 48px; }
+.vehicle-card.vc2:has(.vc-more[open]) { z-index:80; }   /* the open menu stays above the next cards */
+.vc-more > summary { list-style:none; height:44px; border-radius:12px; display:grid; place-items:center; cursor:pointer; font-size:22px; font-weight:900; color:#e2e8f0; background:rgba(255,255,255,.06); border:1px solid rgba(255,255,255,.1); user-select:none; }
+.vc-more > summary::-webkit-details-marker { display:none; }
+.vc-more[open] > summary { background:rgba(147,51,234,.25); border-color:rgba(147,51,234,.6); }
+.vc-menu { position:absolute; bottom:calc(100% + 8px); inset-inline-end:0; z-index:60; min-width:220px; padding:8px; border-radius:16px; background:#0b1426; border:1px solid rgba(147,51,234,.45); box-shadow:0 18px 44px rgba(0,0,0,.6); display:flex; flex-direction:column; gap:4px; animation:vcMenu .16s ease-out; }
+@keyframes vcMenu { from { opacity:0; transform:translateY(6px); } }
+.vc-mhead { font-size:12.5px; font-weight:900; color:#cbd5e1; padding:4px 8px 8px; border-bottom:1px solid rgba(255,255,255,.07); margin-bottom:2px; }
+.vc-mhead small { display:block; font-size:11px; color:#64748b; font-weight:700; margin-top:2px; }
+.vc-mi { display:flex; align-items:center; gap:10px; width:100%; height:42px; padding:0 12px; border-radius:11px; border:0; background:transparent; color:#e2e8f0; font:inherit; font-size:13.5px; font-weight:800; text-decoration:none; cursor:pointer; text-align:start; }
+.vc-mi:hover { background:rgba(255,255,255,.07); }
+.vc-menu .reserve-form { margin:0; }
+.vc-mi.btn-sell, .vc-mi.btn-soldnow { color:#fca5a5; } .vc-mi.btn-transfer { color:#fcd34d; } .vc-mi.btn-edit { color:#d8b4fe; }
+.vc-mi.btn-journey { color:#93c5fd; } .vc-mi.btn-wa-cust { color:#86efac; } .vc-mi.btn-wa-deal { color:#67e8f9; } .vc-mi.btn-reserve, .vc-mi.btn-unreserve { color:#fde68a; }
+.vc2 .actions, .vc2 .mini-actions, .vc2 .vehicle-info { display:none; }
+
+/* ═══════════ view switch: cards / list / by model ═══════════ */
+.vw-switch { display:inline-flex; gap:3px; padding:3px; border-radius:12px; background:rgba(255,255,255,.05); border:1px solid rgba(255,255,255,.08); flex-shrink:0; }
+.vw-switch button { height:32px; padding:0 11px; border-radius:9px; border:0; background:transparent; color:#94a3b8; font:inherit; font-size:12.5px; font-weight:800; cursor:pointer; white-space:nowrap; }
+.vw-switch button.on { background:#9333ea; color:#fff; }
+/* list: one line per car */
+.inventory-grid.view-list { grid-template-columns:1fr; gap:8px; }
+.view-list .vehicle-card.vc2 { flex-direction:row; flex-wrap:wrap; align-items:center; gap:8px 12px; padding:10px 12px; border-radius:16px; }
+.view-list .vc2 .qr-sticker, .view-list .vc2 .status, .view-list .vc2 .vc-note, .view-list .vc2 .reserved-meta, .view-list .vc2 .vc-chip:not(.vc-c-color):not(.vc-c-branch), .view-list .vc2 .cs-price .lbl, .view-list .vc2 .vc-plink, .view-list .vc2 .vc-deal { display:none; }
+.view-list .vc2 .vehicle-header { flex:1 1 200px; min-width:0; gap:8px; }
+.view-list .vc2 .vehicle-title { font-size:15px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.view-list .vc2 .vc-sub { margin-top:2px; }
+.view-list .vc2 .vc-chips { flex:0 1 auto; }
+.view-list .vc2 .vc-chip { height:26px; font-size:11.5px; padding:0 8px; }
+.view-list .vc2 .card-strip { margin:0; flex:0 0 auto; gap:8px; }
+.view-list .vc2 .cs-price b { font-size:16px; }
+.view-list .vc2 .vc-acts { margin:0; flex:0 0 auto; }
+.view-list .vc2 .vc-acts > .btn, .view-list .vc2 .vc-acts > .reserve-form { display:none; }
+.view-list .vc2 .vc-more { flex-basis:44px; }
+.view-list .vc2 .vc-acts:not(:has(.vc-more)) > :first-child { display:flex; flex:0 0 auto; }
+.view-list .vc2 .vc-acts:not(:has(.vc-more)) > :first-child .btn, .view-list .vc2 .vc-acts:not(:has(.vc-more)) > .btn:first-child { padding:0 12px; height:38px; }
+/* by model */
+.grp-wrap { display:none; grid-template-columns:repeat(auto-fill,minmax(300px,1fr)); gap:12px; }
+.grp-wrap.on { display:grid; }
+.inventory-grid.view-groups { display:none; }
+.grp { text-align:start; padding:14px; border-radius:18px; background:rgba(15,23,42,.88); border:1px solid rgba(255,255,255,.08); cursor:pointer; font:inherit; color:#f1f5f9; display:flex; flex-direction:column; gap:10px; transition:border-color .2s, transform .2s; }
+.grp:hover { border-color:rgba(147,51,234,.5); transform:translateY(-2px); }
+.grp-top { display:flex; justify-content:space-between; align-items:center; gap:10px; }
+.grp-t { font-size:15.5px; font-weight:900; } .grp-t small { color:#94a3b8; font-weight:800; font-size:12px; margin-inline-start:6px; }
+.grp-n { font-size:22px; font-weight:900; color:#a78bfa; min-width:44px; text-align:center; padding:2px 10px; border-radius:12px; background:rgba(147,51,234,.12); }
+.grp-row { display:flex; flex-wrap:wrap; gap:6px; }
+.grp-c, .grp-b { display:inline-flex; align-items:center; gap:5px; height:26px; padding:0 9px; border-radius:8px; font-size:11.5px; font-weight:800; background:rgba(255,255,255,.045); border:1px solid rgba(255,255,255,.07); }
+.grp-meta { display:flex; gap:8px; flex-wrap:wrap; font-size:11.5px; font-weight:800; color:#94a3b8; }
+.grp-meta .old { color:#fca5a5; } .grp-meta .res { color:#fde68a; }
+
+/* ═══════════ phone: counts as one tidy row of equal boxes ═══════════ */
+@media (max-width:768px) {
+    .section-divider { flex-wrap:wrap; }
+    .vw-switch { order:5; width:100%; }
+    .vw-switch button { flex:1; }
+    .cb-pills { display:grid !important; grid-auto-flow:column; grid-auto-columns:minmax(0,1fr); overflow:visible !important; gap:5px !important; }
+    .pill { flex-direction:column; justify-content:center; gap:2px !important; height:50px !important; padding:0 4px !important; min-width:0; }
+    .pill-n { font-size:16px !important; }
+    .pill-l { font-size:9.5px !important; white-space:normal !important; text-align:center; line-height:1.15; overflow:hidden; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; }
+    .vehicle-card.vc2 { padding:14px 13px 12px; }
+    .vc2 .vehicle-title { font-size:16.5px; }
+    .view-list .vc2 .vc-chips { flex-basis:100%; order:3; }
+}
+
+/* ═══════════ one pop-up at a time; the robot steps aside while scrolling ═══════════ */
+#f1c-chat-bubble { transition:scale .3s ease, translate .3s ease, opacity .3s ease; }
+body.dash-scrolling #f1c-chat-bubble { scale:.62; translate:0 26px; opacity:.55; }
+body.dash-scrolling #f1c-bot-say, body.dash-scrolling #f1c-brief,
+body.pop-busy #f1c-bot-say, body.pop-busy #f1c-brief { opacity:0 !important; pointer-events:none !important; transition:opacity .2s; }
+body:has(#npCard.on) #f1c-chat-bubble { opacity:0; pointer-events:none; }
+</style>
 </head>
 
 <body>
@@ -1341,9 +1448,17 @@ function arDate($dt, $lang) {
         <h2>🚗 <?= $t[$lang]['available_section'] ?></h2>
         <div class="divider-line"></div>
         <span class="section-count"><?= count($availableCarsList) ?></span>
+        <?php if (!empty($availableCarsList)): ?>
+        <div class="vw-switch" id="vwSwitch" role="tablist">
+            <button type="button" data-v="cards" class="on">▦ <?= $lang === 'ar' ? 'كروت' : 'Cards' ?></button>
+            <button type="button" data-v="list">☰ <?= $lang === 'ar' ? 'قائمة' : 'List' ?></button>
+            <button type="button" data-v="groups">🗂 <?= $lang === 'ar' ? 'حسب الموديل' : 'By model' ?></button>
+        </div>
+        <?php endif; ?>
     </div>
 
-    <div class="inventory-grid">
+    <div class="grp-wrap" id="grpWrap"></div>
+    <div class="inventory-grid" id="invGrid">
 
         <?php if (empty($availableCarsList)): ?>
             <div class="empty-state">
@@ -1380,7 +1495,10 @@ function arDate($dt, $lang) {
                 $displayBranch.' '.($car['name_en'] ?? '').' '.($car['name_ar'] ?? '').' '.$car['chassis']
             ));
         ?>
-            <div class="vehicle-card <?= $isReserved ? 'reserved-card' : '' ?>"
+            <?php $colorHex = car_color_hex((string)(($car['color_en'] ?? '') ?: $car['color'])); ?>
+            <div class="vehicle-card vc2 <?= $isReserved ? 'reserved-card' : '' ?> <?= $ageCls ? 'age-' . $ageCls : '' ?> <?= $daysIn === 0 ? 'is-new' : '' ?>"
+                 data-hex="<?= $colorHex ?>" data-color-label="<?= htmlspecialchars((string)$displayColor, ENT_QUOTES) ?>" data-branch-label="<?= htmlspecialchars((string)$displayBranch, ENT_QUOTES) ?>"
+                 data-title="<?= htmlspecialchars($car['brand'] . ' ' . $car['model'] . ' ' . $car['trim_name'], ENT_QUOTES) ?>" data-year="<?= htmlspecialchars((string)$car['car_year'], ENT_QUOTES) ?>"
                  data-search="<?= htmlspecialchars($searchBlob) ?>"
                  data-status="<?= $isReserved ? 'reserved' : 'available' ?>"
                  data-branch="<?= htmlspecialchars((string)$car['branch'], ENT_QUOTES) ?>"
@@ -1389,14 +1507,26 @@ function arDate($dt, $lang) {
                  data-price="<?= (float)($officialNum ?? 0) ?>"
                  data-model="<?= htmlspecialchars(mb_strtolower($car['brand'] . ' ' . $car['model'] . ' ' . $car['trim_name']), ENT_QUOTES) ?>">
 
+                <?php
+                /* actions, most used first — only the ones this person can really use.
+                   The first two are big buttons, the rest open from «⋯». */
+                $acts = [];
+                if ($canBtnSell) $acts[] = 'sell';
+                if ((!$isReserved && $canReserve) || ($isReserved && $canUnreserve)) $acts[] = 'res';
+                if ($canBtnTransfer) $acts[] = 'tr';
+                if ($canBtnEdit) $acts[] = 'ed';
+                if ($canJourney) $acts[] = 'jr';
+                // WhatsApp buttons removed from the cards (asked for)
+                $ageTxt = $daysIn === null ? '' : ($daysIn === 0 ? ($lang === 'ar' ? 'اليوم' : 'today') : ($lang === 'ar' ? 'منذ ' . ($daysIn === 1 ? 'يوم واحد' : ($daysIn === 2 ? 'يومين' : $daysIn . ($daysIn <= 10 ? ' أيام' : ' يوماً'))) : $daysIn . ' days'));
+                ?>
                 <div class="vehicle-header">
                     <div class="qr-sticker" title="QR"
                          data-ch="<?= htmlspecialchars($car['chassis'], ENT_QUOTES) ?>"
                          data-name="<?= htmlspecialchars($car['brand'].' '.$car['model'], ENT_QUOTES) ?>"
                          data-id="<?= (int)$car['id'] ?>"><div class="qs qs-wait"></div></div>
-                    <div>
+                    <div class="vc-titles">
                         <div class="vehicle-title"><?= $isReserved ? '🔒' : '🚗' ?> <?= htmlspecialchars($car['brand']) ?> <?= htmlspecialchars($car['model']) ?></div>
-                        <div class="vehicle-year-badge">📅 <?= htmlspecialchars($car['car_year']) ?></div>
+                        <div class="vc-sub"><span class="vehicle-year-badge">📅 <?= htmlspecialchars($car['car_year']) ?></span><?php if ($daysIn === 0): ?><span class="vc-new">✨ <?= $lang === 'ar' ? 'جديدة' : 'New' ?></span><?php endif; ?></div>
                     </div>
                     <?php if ($isReserved): ?>
                         <div class="status status-reserved">🔒 <?= $t[$lang]['status_reserved'] ?></div>
@@ -1405,17 +1535,25 @@ function arDate($dt, $lang) {
                     <?php endif; ?>
                 </div>
 
+                <div class="vc-chips">
+                    <span class="vc-chip" title="<?= $t[$lang]['trim'] ?>">⭐ <?= htmlspecialchars($car['trim_name']) ?></span>
+                    <span class="vc-chip vc-c-color" title="<?= $t[$lang]['color'] ?>"><i class="vc-dot" style="background:<?= $colorHex ?>"></i><?= htmlspecialchars($displayColor) ?></span>
+                    <span class="vc-chip vc-c-branch" title="<?= $t[$lang]['branch'] ?>">📍 <?= htmlspecialchars($displayBranch) ?></span>
+                    <span class="vc-chip vc-ch" title="<?= $t[$lang]['chassis'] ?>">🔑 <?= htmlspecialchars($car['chassis']) ?></span>
+                </div>
+
                 <?php if (($canSeePrice && $officialNum) || $daysIn !== null): ?>
                 <div class="card-strip">
                     <?php if ($canSeePrice && $officialNum): ?>
                     <div class="cs-price">
                         <span class="lbl"><?= $lang === 'ar' ? 'السعر الرسمي' : 'Official price' ?></span>
                         <b><?= number_format((float)$officialNum) ?></b><small><?= $lang === 'ar' ? 'ج.م' : 'EGP' ?></small>
-                        <a class="sale-link" href="prices.php?lang=<?= $lang ?>&search=<?= urlencode($car['model']) ?>"><?= $lang === 'ar' ? 'لسعر البيع ادخل على صفحة الأسعار ←' : 'Selling price → prices page' ?></a>
+                        <?php if ($dealLabel !== ''): ?><span class="vc-deal"><?= htmlspecialchars($dealLabel) ?></span><?php endif; ?>
+                        <a class="vc-plink" href="prices.php?lang=<?= $lang ?>&search=<?= urlencode($car['model']) ?>" title="<?= $lang === 'ar' ? 'صفحة الأسعار (سعر البيع)' : 'Prices page (selling price)' ?>">💲</a>
                     </div>
                     <?php endif; ?>
                     <?php if ($daysIn !== null): ?>
-                    <span class="cs-age <?= $ageCls ?>" title="<?= $lang === 'ar' ? 'في المخزون منذ' : 'In stock for' ?>">🕒 <?= $daysIn === 0 ? ($lang === 'ar' ? 'اليوم' : 'today') : ($lang === 'ar' ? 'منذ ' . ($daysIn === 1 ? 'يوم واحد' : ($daysIn === 2 ? 'يومين' : $daysIn . ($daysIn <= 10 ? ' أيام' : ' يوماً'))) : $daysIn . ' days') ?></span>
+                    <span class="cs-age <?= $ageCls ?>" title="<?= $lang === 'ar' ? 'في المخزون منذ' : 'In stock for' ?>">🕒 <?= $ageTxt ?></span>
                     <?php endif; ?>
                 </div>
                 <?php endif; ?>
@@ -1427,109 +1565,51 @@ function arDate($dt, $lang) {
                 </div>
                 <?php endif; ?>
 
-                <div class="vehicle-info">
-                    <div class="info-row">
-                        <span class="info-label"><?= $t[$lang]['trim'] ?></span>
-                        <span class="info-value"><?= htmlspecialchars($car['trim_name']) ?></span>
-                    </div>
-                    <div class="info-row">
-                        <span class="info-label"><?= $t[$lang]['color'] ?></span>
-                        <span class="info-value"><?= htmlspecialchars($displayColor) ?></span>
-                    </div>
-                    <div class="info-row">
-                        <span class="info-label"><?= $t[$lang]['branch'] ?></span>
-                        <span class="info-value"><?= htmlspecialchars($displayBranch) ?></span>
-                    </div>
-                    <div class="info-row">
-                        <span class="info-label"><?= $t[$lang]['chassis'] ?></span>
-                        <span class="info-value chassis-value"><?= htmlspecialchars($car['chassis']) ?></span>
-                    </div>
-                    <div class="info-row">
-                        <span class="info-label"><?= $t[$lang]['created_by'] ?></span>
-                        <span class="info-value"><?= htmlspecialchars($car['created_by']) ?></span>
-                    </div>
-                    <?php if ($noteText !== ''): ?>
-                    <div class="info-row info-row-note">
-                        <span class="info-label">📝 <?= $t[$lang]['notes'] ?></span>
-                        <span class="note-value"><?= htmlspecialchars($noteText) ?></span>
-                    </div>
-                    <?php endif; ?>
-                </div>
+                <?php if ($noteText !== ''): ?>
+                <div class="vc-note">📝 <?= htmlspecialchars($noteText) ?></div>
+                <?php endif; ?>
 
-                <div class="actions">
-                    <?php if ($canJourney): ?>
-                    <a href="vehicle_timeline.php?id=<?= $car['id'] ?>&lang=<?= $lang ?>" class="btn btn-journey">
-                        👁 <?= $t[$lang]['journey'] ?>
-                    </a>
-                    <?php endif; ?>
-
-                    <?php if ($canBtnEdit): ?>
-                        <a href="edit_vehicle.php?id=<?= $car['id'] ?>&lang=<?= $lang ?>" class="btn btn-edit">
-                            ✏ <?= $t[$lang]['edit'] ?>
-                        </a>
-                    <?php else: ?>
-                        <div class="btn btn-disabled">✏ <?= $t[$lang]['edit'] ?></div>
-                    <?php endif; ?>
-                    <?php if ($canBtnTransfer): ?>
-                        <a href="transfer_vehicle.php?id=<?= $car['id'] ?>&lang=<?= $lang ?>" class="btn btn-transfer">
-                            🔄 <?= $t[$lang]['transfer'] ?>
-                        </a>
-                    <?php else: ?>
-                        <div class="btn btn-disabled">🔄 <?= $t[$lang]['transfer'] ?></div>
-                    <?php endif; ?>
-                    <?php if ($canBtnSell): ?>
-                        <?php /* On a reserved car the sell button reads "تم البيع" and opens the
-                                normal sale page — the sale itself follows the exact same steps. */ ?>
-                        <a href="sold_vehicle.php?id=<?= $car['id'] ?>&lang=<?= $lang ?>"
-                           class="btn <?= $isReserved ? 'btn-soldnow' : 'btn-sell' ?>">
-                            💰 <?= $isReserved ? $t[$lang]['sold_btn'] : $t[$lang]['sell'] ?>
-                        </a>
-                    <?php else: ?>
-                        <div class="btn btn-disabled">💰 <?= $isReserved ? $t[$lang]['sold_btn'] : $t[$lang]['sell'] ?></div>
-                    <?php endif; ?>
-
-                    <?php /* ── حجز السيارة / إلغاء الحجز — one click, no data entry ── */ ?>
-                    <?php if (!$isReserved && $canReserve): ?>
-                        <form method="POST" action="reserve_action.php" class="reserve-form">
+                <?php if ($acts): ?>
+                <div class="vc-acts">
+                <?php foreach ($acts as $ai => $ak):
+                    $inMenu = $ai >= 2;
+                    if ($ai === 2): ?>
+                    <details class="vc-more">
+                        <summary aria-label="<?= $lang === 'ar' ? 'المزيد' : 'More' ?>">⋯</summary>
+                        <div class="vc-menu">
+                            <div class="vc-mhead"><?= htmlspecialchars($car['brand'] . ' ' . $car['model']) ?><small><?= $t[$lang]['created_by'] ?>: <?= htmlspecialchars($car['created_by']) ?></small></div>
+                    <?php endif;
+                    $cls = $inMenu ? 'vc-mi' : 'btn';
+                    switch ($ak):
+                    case 'sell': ?>
+                        <a href="sold_vehicle.php?id=<?= $car['id'] ?>&lang=<?= $lang ?>" class="<?= $cls ?> <?= $isReserved ? 'btn-soldnow' : 'btn-sell' ?>">💰 <?= $isReserved ? $t[$lang]['sold_btn'] : $t[$lang]['sell'] ?></a>
+                    <?php break; case 'res': ?>
+                        <form method="POST" action="reserve_action.php" class="reserve-form"<?= $isReserved ? ' onsubmit="return confirm(' . htmlspecialchars(json_encode($t[$lang]['unreserve_confirm'], JSON_UNESCAPED_UNICODE), ENT_QUOTES) . ');"' : '' ?>>
                             <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken) ?>">
-                            <input type="hidden" name="action" value="reserve">
+                            <input type="hidden" name="action" value="<?= $isReserved ? 'cancel' : 'reserve' ?>">
                             <input type="hidden" name="car_id" value="<?= (int)$car['id'] ?>">
                             <input type="hidden" name="lang" value="<?= $lang ?>">
                             <input type="hidden" name="back" value="dashboard.php">
-                            <button type="submit" class="btn btn-reserve">🔒 <?= $t[$lang]['reserve_btn'] ?></button>
+                            <button type="submit" class="<?= $cls ?> <?= $isReserved ? 'btn-unreserve' : 'btn-reserve' ?>"><?= $isReserved ? '↩️ ' . $t[$lang]['unreserve_btn'] : '🔒 ' . $t[$lang]['reserve_btn'] ?></button>
                         </form>
-                    <?php elseif ($isReserved && $canUnreserve): ?>
-                        <form method="POST" action="reserve_action.php" class="reserve-form"
-                              onsubmit="return confirm(<?= htmlspecialchars(json_encode($t[$lang]['unreserve_confirm'], JSON_UNESCAPED_UNICODE), ENT_QUOTES) ?>);">
-                            <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken) ?>">
-                            <input type="hidden" name="action" value="cancel">
-                            <input type="hidden" name="car_id" value="<?= (int)$car['id'] ?>">
-                            <input type="hidden" name="lang" value="<?= $lang ?>">
-                            <input type="hidden" name="back" value="dashboard.php">
-                            <button type="submit" class="btn btn-unreserve">↩️ <?= $t[$lang]['unreserve_btn'] ?></button>
-                        </form>
-                    <?php endif; ?>
+                    <?php break; case 'wac': ?>
+                        <button type="button" class="<?= $cls ?> btn-wa-cust" data-wa="<?= htmlspecialchars($waCust, ENT_QUOTES) ?>" onclick="waCustomer.apply(null, JSON.parse(this.dataset.wa))">💬 <?= $canWaCustPrice ? $t[$lang]['wa_customer'] : $t[$lang]['wa_share'] ?></button>
+                    <?php break; case 'tr': ?>
+                        <a href="transfer_vehicle.php?id=<?= $car['id'] ?>&lang=<?= $lang ?>" class="<?= $cls ?> btn-transfer">🔄 <?= $t[$lang]['transfer'] ?></a>
+                    <?php break; case 'ed': ?>
+                        <a href="edit_vehicle.php?id=<?= $car['id'] ?>&lang=<?= $lang ?>" class="<?= $cls ?> btn-edit">✏ <?= $t[$lang]['edit'] ?></a>
+                    <?php break; case 'jr': ?>
+                        <a href="vehicle_timeline.php?id=<?= $car['id'] ?>&lang=<?= $lang ?>" class="<?= $cls ?> btn-journey">👁 <?= $t[$lang]['journey'] ?></a>
+                    <?php break; case 'wad': ?>
+                        <button type="button" class="<?= $cls ?> btn-wa-deal" data-wa="<?= htmlspecialchars($waDeal, ENT_QUOTES) ?>" onclick="waDealer.apply(null, JSON.parse(this.dataset.wa))">🤝 <?= $t[$lang]['wa_dealer'] ?></button>
+                    <?php break; endswitch;
+                endforeach;
+                if (count($acts) > 2): ?>
+                        </div>
+                    </details>
+                <?php endif; ?>
                 </div>
-
-                <!-- compact WhatsApp row (role-gated, same handlers) -->
-                <div class="mini-actions">
-                    <?php if ($canWaCustomer): ?>
-                        <button class="mini-btn mb-cust" data-wa="<?= htmlspecialchars($waCust, ENT_QUOTES) ?>"
-                            onclick="waCustomer.apply(null, JSON.parse(this.dataset.wa))">
-                            💬 <?= $canWaCustPrice ? $t[$lang]['wa_customer'] : $t[$lang]['wa_share'] ?>
-                        </button>
-                    <?php else: ?>
-                        <div class="mini-btn mb-locked">💬 <?= $t[$lang]['wa_customer'] ?></div>
-                    <?php endif; ?>
-                    <?php if ($canWaDealer): ?>
-                        <button class="mini-btn mb-deal" data-wa="<?= htmlspecialchars($waDeal, ENT_QUOTES) ?>"
-                            onclick="waDealer.apply(null, JSON.parse(this.dataset.wa))">
-                            🤝 <?= $t[$lang]['wa_dealer'] ?>
-                        </button>
-                    <?php else: ?>
-                        <div class="mini-btn mb-locked">🔒 <?= $t[$lang]['wa_dealer'] ?></div>
-                    <?php endif; ?>
-                </div>
+                <?php endif; ?>
 
             </div>
         <?php endforeach; ?>
@@ -2561,5 +2641,102 @@ priceLine + '\n' +
 </script>
 <?php include __DIR__ . '/notify_popup.php'; ?>
 <?php include __DIR__ . '/notify_prompt.php'; ?>
+
+<script>
+/* ═══ cards v2: «⋯» menus, view switch (cards / list / by model), calm pop-ups ═══ */
+(function () {
+    var AR = <?= json_encode($lang === 'ar') ?>;
+    /* «⋯» — one menu open at a time; a tap outside closes it */
+    document.addEventListener('toggle', function (e) {
+        var d = e.target; if (!d.classList || !d.classList.contains('vc-more') || !d.open) return;
+        document.querySelectorAll('.vc-more[open]').forEach(function (o) { if (o !== d) o.open = false; });
+        var m = d.querySelector('.vc-menu'); if (!m) return;
+        m.style.bottom = ''; m.style.top = '';
+        // up or down: whichever side has room between the sticky bar on top and the bottom menu
+        var r = d.getBoundingClientRect(), band = document.getElementById('controlBand'), nav = document.querySelector('.bottom-nav');
+        var topLimit = band ? band.getBoundingClientRect().bottom : 0, botLimit = nav ? nav.getBoundingClientRect().top : window.innerHeight;
+        var above = r.top - topLimit, below = botLimit - r.bottom, need = m.offsetHeight + 12;
+        if (above < need && below > above) { m.style.bottom = 'auto'; m.style.top = 'calc(100% + 8px)'; }
+        // still not enough room: bring the menu into view
+        var mr = m.getBoundingClientRect();
+        if (mr.top < topLimit) window.scrollBy({ top: mr.top - topLimit - 10, behavior: 'smooth' });
+        else if (mr.bottom > botLimit) window.scrollBy({ top: mr.bottom - botLimit + 10, behavior: 'smooth' });
+    }, true);
+    document.addEventListener('click', function (e) {
+        if (!e.target.closest('.vc-more')) document.querySelectorAll('.vc-more[open]').forEach(function (o) { o.open = false; });
+    });
+    document.addEventListener('keydown', function (e) { if (e.key === 'Escape') document.querySelectorAll('.vc-more[open]').forEach(function (o) { o.open = false; }); });
+
+    /* views */
+    var grid = document.getElementById('invGrid'), wrap = document.getElementById('grpWrap'), sw = document.getElementById('vwSwitch');
+    if (grid && sw) {
+        var KEY = 'f1cDashView', view = 'cards';
+        try { view = localStorage.getItem(KEY) || 'cards'; } catch (e) {}
+        var esc = function (t) { return String(t).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); };
+        function buildGroups() {
+            var g = {}, order = [];
+            grid.querySelectorAll('.vehicle-card[data-search]').forEach(function (c) {
+                if (c.style.display === 'none') return;   // follows the search, status and branch filters
+                var k = (c.dataset.title || '') + '|' + (c.dataset.year || '');
+                if (!g[k]) { g[k] = { t: c.dataset.title, y: c.dataset.year, n: 0, col: {}, br: {}, old: 0, res: 0, q: c.dataset.title }; order.push(k); }
+                var x = g[k]; x.n++;
+                var cl = c.dataset.colorLabel || '?'; (x.col[cl] = x.col[cl] || { n: 0, hex: c.dataset.hex }).n++;
+                var bl = c.dataset.branchLabel || '?'; x.br[bl] = (x.br[bl] || 0) + 1;
+                if (+c.dataset.days >= 60) x.old++;
+                if (c.dataset.status === 'reserved') x.res++;
+            });
+            order.sort(function (a, b) { return g[b].n - g[a].n || g[a].t.localeCompare(g[b].t); });
+            wrap.innerHTML = order.length ? order.map(function (k) {
+                var x = g[k];
+                return '<button type="button" class="grp" data-q="' + esc(x.q) + '">' +
+                    '<div class="grp-top"><div class="grp-t">🚗 ' + esc(x.t) + ' <small>· ' + esc(x.y) + '</small></div><div class="grp-n">' + x.n + '</div></div>' +
+                    '<div class="grp-row">' + Object.keys(x.col).map(function (c) { return '<span class="grp-c"><i class="vc-dot" style="background:' + x.col[c].hex + '"></i>' + esc(c) + ' ×' + x.col[c].n + '</span>'; }).join('') + '</div>' +
+                    '<div class="grp-row">' + Object.keys(x.br).map(function (b) { return '<span class="grp-b">📍 ' + esc(b) + ' · ' + x.br[b] + '</span>'; }).join('') + '</div>' +
+                    ((x.res || x.old) ? '<div class="grp-meta">' + (x.res ? '<span class="res">🔒 ' + x.res + (AR ? ' محجوزة' : ' reserved') + '</span>' : '') + (x.old ? '<span class="old">⏳ ' + x.old + (AR ? ' أكثر من 60 يوماً' : ' over 60 days') + '</span>' : '') + '</div>' : '') +
+                    '</button>';
+            }).join('') : '<div style="grid-column:1/-1;text-align:center;color:#64748b;padding:30px">🔍 ' + (AR ? 'لا توجد نتائج' : 'No results') + '</div>';
+        }
+        function setView(v) {
+            view = v;
+            try { localStorage.setItem(KEY, v); } catch (e) {}
+            sw.querySelectorAll('button').forEach(function (b) { b.classList.toggle('on', b.dataset.v === v); });
+            grid.classList.toggle('view-list', v === 'list');
+            grid.classList.toggle('view-groups', v === 'groups');
+            wrap.classList.toggle('on', v === 'groups');
+            if (v === 'groups') buildGroups();
+        }
+        sw.addEventListener('click', function (e) { var b = e.target.closest('button[data-v]'); if (b) setView(b.dataset.v); });
+        /* a model tapped in «by model» → its cars */
+        wrap.addEventListener('click', function (e) {
+            var b = e.target.closest('.grp'); if (!b) return;
+            var inp = document.getElementById('searchInput');
+            if (inp) { inp.value = b.dataset.q; inp.dispatchEvent(new Event('input', { bubbles: true })); }
+            setView('cards');
+            grid.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        });
+        /* the filters show / hide cards: keep «by model» in step */
+        var tmr = null;
+        new MutationObserver(function () { if (view !== 'groups') return; clearTimeout(tmr); tmr = setTimeout(buildGroups, 80); })
+            .observe(grid, { subtree: true, attributes: true, attributeFilter: ['style'] });
+        setView(view);
+    }
+
+    /* the robot steps aside while scrolling, and keeps quiet while another notice is on screen */
+    var st = null;
+    window.addEventListener('scroll', function () {
+        document.body.classList.add('dash-scrolling');
+        clearTimeout(st); st = setTimeout(function () { document.body.classList.remove('dash-scrolling'); }, 900);
+    }, { passive: true });
+    function busy() {
+        var ns = document.getElementById('ntStack'), np = document.getElementById('npCard');
+        document.body.classList.toggle('pop-busy', !!((ns && ns.children.length) || (np && np.classList.contains('on'))));
+    }
+    var ns = document.getElementById('ntStack'), np = document.getElementById('npCard');
+    if (ns) new MutationObserver(busy).observe(ns, { childList: true });
+    if (np) new MutationObserver(busy).observe(np, { attributes: true, attributeFilter: ['class'] });
+    busy();
+})();
+</script>
+
 </body>
 </html>

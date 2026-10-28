@@ -100,11 +100,14 @@ $NP = $lang === 'ar' ? [
   let timer = null, current = null;
 
   function open() { card.classList.add('on'); card.setAttribute('aria-hidden', 'false'); tab.classList.remove('on'); }
+  // notifications refused in the browser settings: asking every 20 minutes only covers the cards → once a day
+  const DAY = 24 * 60 * 60 * 1000;
+  function wait() { return current && current.permission === 'denied' ? DAY : EVERY; }
   function snooze() {
     card.classList.remove('on'); card.setAttribute('aria-hidden', 'true');
-    store.set(Date.now() + EVERY);
+    store.set(Date.now() + wait());
     tab.classList.add('on');
-    clearTimeout(timer); timer = setTimeout(maybeOpen, EVERY);   // comes back while the page stays open
+    clearTimeout(timer); timer = setTimeout(maybeOpen, wait());   // comes back while the page stays open
   }
   function finished() { card.classList.remove('on'); tab.classList.remove('on'); clearTimeout(timer); }
   function msg(t, ok) { const m = $('npMsg'); m.innerHTML = t; m.className = 'np-msg ' + (ok ? 'ok' : 'bad'); }
@@ -154,6 +157,9 @@ $NP = $lang === 'ar' ? [
     const s = await check();
     if (!s) { finished(); return; }
     render(s);
+    // one notice at a time: wait while the activity notices are on screen
+    const ns = document.getElementById('ntStack');
+    if (ns && ns.children.length) { tab.classList.add('on'); clearTimeout(timer); timer = setTimeout(maybeOpen, 15000); return; }
     if (Date.now() >= store.get()) open();
     else { tab.classList.add('on'); clearTimeout(timer); timer = setTimeout(maybeOpen, Math.max(1000, store.get() - Date.now())); }
   }

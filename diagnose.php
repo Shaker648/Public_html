@@ -47,6 +47,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['do'] ?? '') === 'fix_perms
 
 /* the fingerprints of the files as they were sent (filled in when this page was made) */
 $EXPECTED = /*EXPECTED*/[
+    'notify_prompt.php' => '14f46f7307b8e7cfbc2612cfb42daf1e',
+    'color_helpers.php' => '5784c8aae5a70a539e7eb2b3a295f8a2',
     'qr.php' => 'cf2dfd9d80238fcf35b4aedcc5f69969',
     'vehicle_timeline.php' => '91af998a77656069cf324e5ff72d0db8',
     'other_option.js' => 'a49034c29d984b36705517dfeef04773',
@@ -65,7 +67,7 @@ $EXPECTED = /*EXPECTED*/[
     'attendance.php' => '8e63cd1e2d4ed49bbc9179f1101756e8',
     'attendance_admin.php' => '7d54c40176024aa632437f25f77c15b6',
     'notifications_admin.php' => '79672f13d66dd1d0983713bf6d212e92',
-    'dashboard.php' => 'eb7f8f6690b0af06258a259601a0a4fc',
+    'dashboard.php' => 'cf124de3ce4af3363572cbd6e584d6c3',
     'prices.php' => '0a1e32c255c2bacab37f16fee0563a23',
     'pricing_helpers.php' => '8a07e7ac7fba1194fd3fce1df9b23d9b',
     'pwa_head.php' => '5bcf1664b82d3459279445d292fbed1f',
