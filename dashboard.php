@@ -1145,6 +1145,26 @@ body:has(.vc-more[open]) #f1c-chat-bubble, body:has(.vc-more[open]) #f1c-bot-say
 }
 @media (prefers-reduced-motion: reduce) { .nv2 .nav-icon, .nv2 .nv-fab { transition:none; } }
 
+
+/* ═══════════ tiny titles: each detail with a very small label above it ═══════════ */
+.vc2 .vc-line { gap:0; row-gap:8px; margin-top:-2px; }
+.vc2 .vc-line .vc-chip { display:inline-flex; flex-direction:column; align-items:flex-start; justify-content:flex-start; gap:2px; height:auto; padding:0 11px; margin:0;
+  border-inline-start:1px solid rgba(255,255,255,.09); border-radius:0; background:none; overflow:visible; }
+.vc2 .vc-line .vc-chip:first-child { padding-inline-start:0; border-inline-start:0; }
+.vc2 .vc-line .vc-chip + .vc-chip::before, .vc2 .vc-line .vc-chip.vc-ch::before { content:none; }
+.vc2 .vc-line .vc-chip::after { content:attr(data-l); order:-1; font-family:inherit; font-size:9.5px; font-weight:800; color:#64748b; letter-spacing:.2px; line-height:1; }
+.vc2 .vc-line .vc-chip .v { display:inline-flex; align-items:center; gap:5px; font-size:12.5px; font-weight:800; color:#e2e8f0; line-height:1.2; white-space:nowrap; }
+.vc2 .vc-line .vc-ch { margin:0; padding:0 11px; background:none; }
+.vc2 .vc-line .vc-ch .v { font-family:'Courier New',monospace; font-size:12px; color:#a3e635; letter-spacing:.5px; padding:1px 6px; border-radius:5px; background:rgba(163,230,53,.08); }
+/* the price: its title small above the number */
+.vc2 .cs-price .lbl { flex-basis:100%; font-size:9.5px; font-weight:800; color:#64748b; line-height:1; margin-bottom:-2px; }
+@media (max-width:420px) { .vc2 .cs-price .lbl { display:block !important; } .vc2 .vc-line .vc-chip { padding:0 8px; } }
+.vc2 .vc-note { padding:6px 10px; font-size:12px; }
+/* list view: values only, no titles */
+.view-list .vc2 .vc-line .vc-chip::after { content:none; }
+.view-list .vc2 .vc-line .vc-chip { border:0; padding:0 4px; }
+.view-list .vc2 .cs-price .lbl { display:none !important; }
+
 /* ═══════════ view switch: cards / list / by model ═══════════ */
 .vw-switch { display:inline-flex; gap:3px; padding:3px; border-radius:12px; background:rgba(255,255,255,.05); border:1px solid rgba(255,255,255,.08); flex-shrink:0; }
 .vw-switch button { height:32px; padding:0 11px; border-radius:9px; border:0; background:transparent; color:#94a3b8; font:inherit; font-size:12.5px; font-weight:800; cursor:pointer; white-space:nowrap; }
@@ -1594,10 +1614,10 @@ body:has(#npCard.on) #f1c-chat-bubble { opacity:0; pointer-events:none; }
                 </div>
 
                 <div class="vc-chips vc-line">
-                    <span class="vc-chip vc-c-trim" title="<?= $t[$lang]['trim'] ?>"><?= htmlspecialchars($car['trim_name']) ?></span>
-                    <span class="vc-chip vc-c-color" title="<?= $t[$lang]['color'] ?>"><i class="vc-dot" style="background:<?= $colorHex ?>"></i><?= htmlspecialchars($displayColor) ?></span>
-                    <span class="vc-chip vc-c-branch" title="<?= $t[$lang]['branch'] ?>">📍 <?= htmlspecialchars($displayBranch) ?></span>
-                    <span class="vc-chip vc-ch" title="<?= $t[$lang]['chassis'] ?>"><?= htmlspecialchars($car['chassis']) ?></span>
+                    <span class="vc-chip vc-c-trim" data-l="<?= $t[$lang]['trim'] ?>"><span class="v"><?= htmlspecialchars($car['trim_name']) ?></span></span>
+                    <span class="vc-chip vc-c-color" data-l="<?= $t[$lang]['color'] ?>"><span class="v"><i class="vc-dot" style="background:<?= $colorHex ?>"></i><?= htmlspecialchars($displayColor) ?></span></span>
+                    <span class="vc-chip vc-c-branch" data-l="<?= $t[$lang]['branch'] ?>"><span class="v"><?= htmlspecialchars($displayBranch) ?></span></span>
+                    <span class="vc-chip vc-ch" data-l="<?= $t[$lang]['chassis'] ?>"><span class="v"><?= htmlspecialchars($car['chassis']) ?></span></span>
                 </div>
 
                 <?php if ($canSeePrice && $officialNum): ?>

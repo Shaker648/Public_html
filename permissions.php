@@ -282,7 +282,7 @@ function perm_catalog(): array
                     'ar' => 'النشاط المباشر ومين أونلاين', 'en' => 'Live activity & who is online',
                     'dar' => 'شريط «اللي بيحصل دلوقتي» ومين فاتح النظام حالياً (البيع يظهر بدون اسم البائع)',
                     'den' => 'The "happening now" strip and who has the system open (sales show without the seller name)',
-                    'd' => [1, 1, 0],
+                    'd' => [1, 1, 1],   // everyone (asked for)
                 ],
                 'dash.nav_attendance' => [
                     'ar' => 'زر البصمة في الشريط السفلي', 'en' => 'Attendance button in bottom nav',
@@ -534,6 +534,12 @@ function perm_ensure_tables(PDO $pdo): void
                 PRIMARY KEY (user_id, perm_key)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
         ");
+        // once: the live activity strip is for everyone now — switch it on for roles saved before
+        $mk = $pdo->query("SELECT 1 FROM role_permissions WHERE role = '_sys' AND perm_key = 'mig.activity_all'")->fetchColumn();
+        if (!$mk) {
+            $pdo->exec("UPDATE role_permissions SET allowed = 1 WHERE perm_key = 'dash.activity'");
+            $pdo->exec("INSERT INTO role_permissions (role, perm_key, allowed) VALUES ('_sys', 'mig.activity_all', 1)");
+        }
     } catch (Exception $e) {
         // If table creation fails, the site still runs on built-in defaults.
         error_log('permissions: table create failed: ' . $e->getMessage());
