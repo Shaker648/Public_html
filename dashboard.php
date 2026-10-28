@@ -1087,6 +1087,64 @@ body:has(.vc-more[open]) #f1c-chat-bubble, body:has(.vc-more[open]) #f1c-bot-say
 .vc-mi.btn-journey { color:#93c5fd; } .vc-mi.btn-wa-cust { color:#86efac; } .vc-mi.btn-wa-deal { color:#67e8f9; } .vc-mi.btn-reserve, .vc-mi.btn-unreserve { color:#fde68a; }
 .vc2 .actions, .vc2 .mini-actions, .vc2 .vehicle-info { display:none; }
 
+
+/* ═══════════ compact info line: trim · colour · branch · chassis ═══════════ */
+.vc2 .vc-line { gap:0; row-gap:4px; align-items:center; margin-top:-4px; }
+.vc2 .vc-line .vc-chip { height:auto; padding:0; border:0; background:none; border-radius:0; font-size:12.5px; font-weight:800; color:#cbd5e1; gap:5px; }
+.vc2 .vc-line .vc-chip + .vc-chip::before { content:'·'; color:#475569; font-weight:900; margin:0 7px; }
+.vc2 .vc-line .vc-c-trim { color:#f1f5f9; }
+.vc2 .vc-line .vc-dot { width:10px; height:10px; border-width:1px; }
+.vc2 .vc-line .vc-ch { font-family:'Courier New',monospace; font-size:12px; color:#a3e635; letter-spacing:.5px; padding:2px 7px; border-radius:6px; background:rgba(163,230,53,.08); }
+.vc2 .vc-line .vc-chip.vc-ch::before { content:none; }
+.vc2 .vc-line .vc-ch { margin-inline-start:9px; }
+.vc2 .vc-sub .cs-age { font-size:11px; padding:2px 8px; }
+.vc2 .card-strip { flex-wrap:nowrap; }
+.vc2 .cs-price { flex-wrap:wrap; min-width:0; row-gap:4px; }
+.vc-mi.vc-mi-price { color:#7dd3fc; border-top:1px solid rgba(255,255,255,.06); border-radius:0 0 11px 11px; margin-top:2px; }
+.vc2 .cs-price .vc-plink { margin-inline-start:auto; flex-shrink:0; }
+@media (max-width:420px) { .vc2 .cs-price .lbl { display:none; } }
+.vehicle-card.vc2 { gap:10px; padding:13px 14px 12px; }
+.vc2 .qr-sticker { width:42px; height:42px; padding:3px; border-radius:8px; }
+.vc2 .qr-sticker .qs, .vc2 .qr-sticker .qs-wait { width:36px; height:36px; }
+.vc2 .vehicle-title { font-size:16.5px; }
+.vc2 .vc-sub { margin-top:3px; }
+.vc2 .vehicle-year-badge { font-size:11px; padding:2px 8px; }
+.vc2 .status { font-size:11px; padding:4px 10px; }
+.vc2 .card-strip { margin-top:0; gap:8px; }
+.vc2 .cs-price b { font-size:19px; }
+.vc2 .vc-acts .btn { height:42px; }
+.vc2 .vc-more > summary { height:42px; }
+@media (max-width:768px) { .vc2 .vehicle-title { font-size:15.5px; } .vc2 .vc-line .vc-chip { font-size:12px; } }
+/* list view keeps colour + branch only */
+.view-list .vc2 .vc-line .vc-chip + .vc-chip::before { margin:0 5px; }
+
+
+/* ═══════════ bottom bar v2: line icons, raised «إضافة سيارة», active glow ═══════════ */
+.bottom-nav.nv2 { height:auto; min-height:70px; padding:6px 6px calc(6px + env(safe-area-inset-bottom)); align-items:flex-end; justify-content:space-around; gap:2px;
+  background:linear-gradient(180deg,rgba(15,23,42,.92),rgba(2,6,23,.98)); border-top:1px solid rgba(148,163,184,.12); box-shadow:0 -10px 30px rgba(0,0,0,.35); }
+.nv2 .nav-link { flex:1 1 0; min-width:0; gap:4px; padding:6px 2px 4px; border-radius:14px; color:#7c8aa5; font-size:10.5px; font-weight:800; position:relative; -webkit-tap-highlight-color:transparent; transition:color .2s; }
+.nv2 .nav-link:hover { transform:none; color:#e2e8f0; }
+.nv2 .nav-icon { width:44px; height:30px; display:grid; place-items:center; border-radius:999px; transition:background .25s, transform .25s cubic-bezier(.2,1.6,.4,1); font-size:0; }
+.nv2 .nv-svg { width:23px; height:23px; }
+.nv2 .nv-lbl { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:100%; line-height:1.2; }
+.nv2 .nav-link.nav-active { color:#4ade80 !important; }
+.nv2 .nav-active .nav-icon { background:rgba(34,197,94,.16); box-shadow:0 0 18px rgba(34,197,94,.25); }
+.nv2 .nav-active::before { content:''; position:absolute; top:-7px; width:26px; height:3px; border-radius:0 0 4px 4px; background:#22c55e; box-shadow:0 0 12px #22c55e; }
+.nv2 .nav-link:active .nav-icon, .nv2 .nav-link.nv-tap .nav-icon { transform:scale(.86); }
+/* the main action: a raised round button in the middle */
+.nv2 .nv-add { color:#cbd5e1; }
+.nv2 .nv-fab { width:54px; height:54px; margin-top:-26px; border-radius:50%; display:grid; place-items:center; color:#fff;
+  background:linear-gradient(135deg,#22c55e,#16a34a 55%,#9333ea); border:4px solid #020617;
+  box-shadow:0 10px 24px rgba(34,197,94,.35), 0 0 0 1px rgba(255,255,255,.06); transition:transform .25s cubic-bezier(.2,1.6,.4,1), box-shadow .25s; }
+.nv2 .nv-fab .nv-svg { width:26px; height:26px; stroke-width:2.6; }
+.nv2 .nv-add:hover .nv-fab { box-shadow:0 14px 30px rgba(34,197,94,.5), 0 0 0 1px rgba(255,255,255,.1); }
+.nv2 .nv-add:active .nv-fab, .nv2 .nv-add.nv-tap .nv-fab { transform:scale(.9) rotate(90deg); }
+@media (min-width:900px) {
+  .bottom-nav.nv2 { left:50%; right:auto; transform:translateX(-50%); width:min(640px, calc(100% - 32px)); bottom:14px; border-radius:24px; border:1px solid rgba(148,163,184,.14); padding-bottom:6px; }
+  .nv2 .nav-active::before { top:-6px; }
+}
+@media (prefers-reduced-motion: reduce) { .nv2 .nav-icon, .nv2 .nv-fab { transition:none; } }
+
 /* ═══════════ view switch: cards / list / by model ═══════════ */
 .vw-switch { display:inline-flex; gap:3px; padding:3px; border-radius:12px; background:rgba(255,255,255,.05); border:1px solid rgba(255,255,255,.08); flex-shrink:0; }
 .vw-switch button { height:32px; padding:0 11px; border-radius:9px; border:0; background:transparent; color:#94a3b8; font:inherit; font-size:12.5px; font-weight:800; cursor:pointer; white-space:nowrap; }
@@ -1526,7 +1584,7 @@ body:has(#npCard.on) #f1c-chat-bubble { opacity:0; pointer-events:none; }
                          data-id="<?= (int)$car['id'] ?>"><div class="qs qs-wait"></div></div>
                     <div class="vc-titles">
                         <div class="vehicle-title"><?= $isReserved ? '🔒' : '🚗' ?> <?= htmlspecialchars($car['brand']) ?> <?= htmlspecialchars($car['model']) ?></div>
-                        <div class="vc-sub"><span class="vehicle-year-badge">📅 <?= htmlspecialchars($car['car_year']) ?></span><?php if ($daysIn === 0): ?><span class="vc-new">✨ <?= $lang === 'ar' ? 'جديدة' : 'New' ?></span><?php endif; ?></div>
+                        <div class="vc-sub"><span class="vehicle-year-badge">📅 <?= htmlspecialchars($car['car_year']) ?></span><?php if ($daysIn === 0): ?><span class="vc-new">✨ <?= $lang === 'ar' ? 'جديدة' : 'New' ?></span><?php elseif ($daysIn !== null): ?><span class="cs-age <?= $ageCls ?>" title="<?= $lang === 'ar' ? 'في المخزون منذ' : 'In stock for' ?>">🕒 <?= $ageTxt ?></span><?php endif; ?></div>
                     </div>
                     <?php if ($isReserved): ?>
                         <div class="status status-reserved">🔒 <?= $t[$lang]['status_reserved'] ?></div>
@@ -1535,25 +1593,21 @@ body:has(#npCard.on) #f1c-chat-bubble { opacity:0; pointer-events:none; }
                     <?php endif; ?>
                 </div>
 
-                <div class="vc-chips">
-                    <span class="vc-chip" title="<?= $t[$lang]['trim'] ?>">⭐ <?= htmlspecialchars($car['trim_name']) ?></span>
+                <div class="vc-chips vc-line">
+                    <span class="vc-chip vc-c-trim" title="<?= $t[$lang]['trim'] ?>"><?= htmlspecialchars($car['trim_name']) ?></span>
                     <span class="vc-chip vc-c-color" title="<?= $t[$lang]['color'] ?>"><i class="vc-dot" style="background:<?= $colorHex ?>"></i><?= htmlspecialchars($displayColor) ?></span>
                     <span class="vc-chip vc-c-branch" title="<?= $t[$lang]['branch'] ?>">📍 <?= htmlspecialchars($displayBranch) ?></span>
-                    <span class="vc-chip vc-ch" title="<?= $t[$lang]['chassis'] ?>">🔑 <?= htmlspecialchars($car['chassis']) ?></span>
+                    <span class="vc-chip vc-ch" title="<?= $t[$lang]['chassis'] ?>"><?= htmlspecialchars($car['chassis']) ?></span>
                 </div>
 
-                <?php if (($canSeePrice && $officialNum) || $daysIn !== null): ?>
+                <?php if ($canSeePrice && $officialNum): ?>
                 <div class="card-strip">
                     <?php if ($canSeePrice && $officialNum): ?>
                     <div class="cs-price">
                         <span class="lbl"><?= $lang === 'ar' ? 'السعر الرسمي' : 'Official price' ?></span>
                         <b><?= number_format((float)$officialNum) ?></b><small><?= $lang === 'ar' ? 'ج.م' : 'EGP' ?></small>
                         <?php if ($dealLabel !== ''): ?><span class="vc-deal"><?= htmlspecialchars($dealLabel) ?></span><?php endif; ?>
-                        <a class="vc-plink" href="prices.php?lang=<?= $lang ?>&search=<?= urlencode($car['model']) ?>" title="<?= $lang === 'ar' ? 'صفحة الأسعار (سعر البيع)' : 'Prices page (selling price)' ?>">💲</a>
                     </div>
-                    <?php endif; ?>
-                    <?php if ($daysIn !== null): ?>
-                    <span class="cs-age <?= $ageCls ?>" title="<?= $lang === 'ar' ? 'في المخزون منذ' : 'In stock for' ?>">🕒 <?= $ageTxt ?></span>
                     <?php endif; ?>
                 </div>
                 <?php endif; ?>
@@ -1569,11 +1623,17 @@ body:has(#npCard.on) #f1c-chat-bubble { opacity:0; pointer-events:none; }
                 <div class="vc-note">📝 <?= htmlspecialchars($noteText) ?></div>
                 <?php endif; ?>
 
-                <?php if ($acts): ?>
+                <?php
+                /* the first two actions are big buttons; the rest — and the prices page link — open from «⋯» */
+                $menuStart = min(2, count($acts));
+                $items = $acts;
+                if ($canSeePrice && $officialNum) $items[] = 'pr';
+                ?>
+                <?php if ($items): ?>
                 <div class="vc-acts">
-                <?php foreach ($acts as $ai => $ak):
-                    $inMenu = $ai >= 2;
-                    if ($ai === 2): ?>
+                <?php foreach ($items as $ai => $ak):
+                    $inMenu = $ai >= $menuStart;
+                    if ($ai === $menuStart): ?>
                     <details class="vc-more">
                         <summary aria-label="<?= $lang === 'ar' ? 'المزيد' : 'More' ?>">⋯</summary>
                         <div class="vc-menu">
@@ -1602,9 +1662,11 @@ body:has(#npCard.on) #f1c-chat-bubble { opacity:0; pointer-events:none; }
                         <a href="vehicle_timeline.php?id=<?= $car['id'] ?>&lang=<?= $lang ?>" class="<?= $cls ?> btn-journey">👁 <?= $t[$lang]['journey'] ?></a>
                     <?php break; case 'wad': ?>
                         <button type="button" class="<?= $cls ?> btn-wa-deal" data-wa="<?= htmlspecialchars($waDeal, ENT_QUOTES) ?>" onclick="waDealer.apply(null, JSON.parse(this.dataset.wa))">🤝 <?= $t[$lang]['wa_dealer'] ?></button>
+                    <?php break; case 'pr': ?>
+                        <a href="prices.php?lang=<?= $lang ?>&search=<?= urlencode($car['model']) ?>" class="vc-mi vc-mi-price">💲 <?= $lang === 'ar' ? 'صفحة الأسعار (سعر البيع)' : 'Prices page (selling price)' ?></a>
                     <?php break; endswitch;
                 endforeach;
-                if (count($acts) > 2): ?>
+                if (count($items) > $menuStart): ?>
                         </div>
                     </details>
                 <?php endif; ?>
@@ -1627,38 +1689,33 @@ body:has(#npCard.on) #f1c-chat-bubble { opacity:0; pointer-events:none; }
 </button>
 
 <!-- Bottom Nav -->
-<nav class="bottom-nav" role="navigation">
-    <a href="dashboard.php?lang=<?= $lang ?>" class="nav-link">
-        <span class="nav-icon">🏠</span><?= $t[$lang]['dashboard'] ?>
+<nav class="bottom-nav nv2" role="navigation">
+    <a href="dashboard.php?lang=<?= $lang ?>" class="nav-link nav-active" aria-current="page">
+        <span class="nav-icon"><svg class="nv-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V20a1 1 0 0 0 1 1h4v-6h4v6h4a1 1 0 0 0 1-1V9.5"/></svg></span><span class="nv-lbl"><?= $t[$lang]['dashboard'] ?></span>
     </a>
     <?php if (can('page.stock_report')): ?>
     <a href="stock_report.php?lang=<?= $lang ?>" class="nav-link">
-        <span class="nav-icon">📄</span><?= $t[$lang]['stock_report'] ?>
+        <span class="nav-icon"><svg class="nv-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M9 17v-3M12 17v-6M15 17v-2"/></svg></span><span class="nv-lbl"><?= $t[$lang]['stock_report'] ?></span>
+    </a>
+    <?php endif; ?>
+    <?php if (can('page.add_vehicle')): ?>
+    <a href="add_vehicle.php?lang=<?= $lang ?>" class="nav-link nv-add" aria-label="<?= htmlspecialchars($t[$lang]['add_vehicle']) ?>">
+        <span class="nv-fab"><svg class="nv-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></span><span class="nv-lbl"><?= $t[$lang]['add_vehicle'] ?></span>
     </a>
     <?php endif; ?>
     <?php if (can('page.prices')): ?>
     <a href="prices.php?lang=<?= $lang ?>" class="nav-link">
-        <span class="nav-icon">💲</span><?= $t[$lang]['Prices'] ?>
+        <span class="nav-icon"><svg class="nv-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0L3 13V3h10l7.6 7.6a2 2 0 0 1 0 2.8z"/><circle cx="7.5" cy="7.5" r="1.5"/></svg></span><span class="nv-lbl"><?= $t[$lang]['Prices'] ?></span>
     </a>
-    <?php endif; ?>
-    <?php if (can('page.add_vehicle')): ?>
-        <a href="add_vehicle.php?lang=<?= $lang ?>" class="nav-link">
-            <span class="nav-icon">➕</span><?= $t[$lang]['add_vehicle'] ?>
-        </a>
-    <?php else: ?>
-        <div class="nav-link nav-link-disabled">
-            <span class="nav-icon">➕</span><?= $t[$lang]['add_vehicle'] ?>
-        </div>
     <?php endif; ?>
     <?php if (can('dash.nav_attendance') && can('page.attendance')): ?>
     <a href="attendance.php?lang=<?= $lang ?>" class="nav-link">
-        <span class="nav-icon">🕐</span><?= $lang === 'ar' ? 'بصمة' : 'Basma' ?>
+        <span class="nav-icon"><svg class="nv-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 11v4a7 7 0 0 1-1.3 4"/><path d="M8.5 7.5A5 5 0 0 1 17 11v2.5a12 12 0 0 1-.6 3.8"/><path d="M6.3 10A6.6 6.6 0 0 1 7 8"/><path d="M5 15.5a9 9 0 0 0 1-4.5"/><path d="M9 13.5v1.5a9 9 0 0 1-1.6 5"/><path d="M5.6 5.5A9 9 0 0 1 21 11v1"/></svg></span><span class="nv-lbl"><?= $lang === 'ar' ? 'بصمة' : 'Basma' ?></span>
     </a>
     <?php endif; ?>
     <button type="button" class="nav-link nav-more-btn" onclick="openMore()">
-        <span class="nav-icon">⋯</span><?= $lang === 'ar' ? 'المزيد' : 'More' ?>
+        <span class="nav-icon"><svg class="nv-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="4" width="6.5" height="6.5" rx="1.8"/><rect x="13.5" y="4" width="6.5" height="6.5" rx="1.8"/><rect x="4" y="13.5" width="6.5" height="6.5" rx="1.8"/><circle cx="16.75" cy="16.75" r="3.25"/></svg></span><span class="nv-lbl"><?= $lang === 'ar' ? 'المزيد' : 'More' ?></span>
     </button>
-
 </nav>
 
 <!-- More menu (extra pages) -->
@@ -2721,6 +2778,9 @@ priceLine + '\n' +
         setView(view);
     }
 
+    document.querySelectorAll('.nv2 .nav-link').forEach(function (l) {
+        l.addEventListener('pointerdown', function () { l.classList.add('nv-tap'); setTimeout(function () { l.classList.remove('nv-tap'); }, 220); });
+    });
     /* the robot steps aside while scrolling, and keeps quiet while another notice is on screen */
     var st = null;
     window.addEventListener('scroll', function () {
