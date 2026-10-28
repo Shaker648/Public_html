@@ -56,6 +56,7 @@ if (!function_exists('att_settings')) {
         return [
             'off'   => array_values(array_unique(array_intersect(array_map('intval', (array)($s['off'] ?? [])), range(0, 6)))),   // 0 = Sunday … 6 = Saturday
             'fence' => max(10, min(5000, (int)($s['fence'] ?? 50))),
+            'target' => max(1, min(16, (float)($s['target'] ?? 10))),   // daily hours: the ring fills to this, then turns gold
         ];
     }
     function att_settings_save(PDO $pdo, array $in, string $by): void
@@ -66,6 +67,7 @@ if (!function_exists('att_settings')) {
             ->execute([json_encode([
                 'off'   => array_values(array_unique(array_intersect(array_map('intval', (array)($in['off'] ?? [])), range(0, 6)))),
                 'fence' => max(10, min(5000, (int)($in['fence'] ?? 50))),
+                'target' => max(1, min(16, (float)($in['target'] ?? 10))),
             ]), $by]);
     }
     /** Is this date (Y-m-d) one of the weekly days off? */
@@ -93,6 +95,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'setti
         att_settings_save($pdo, [
             'off'   => $_POST['off'] ?? [],
             'fence' => $_POST['fence'] ?? 50,
+            'target' => $_POST['target'] ?? 10,
         ], (string)$_SESSION['username']);
         $_SESSION['att_flash'] = 'saved';
     }
@@ -725,6 +728,11 @@ $wdNames = $isRTL ? [6 => 'السبت', 0 => 'الأحد', 1 => 'الاثنين'
       <label><?= $isRTL ? 'المسافة المسموحة من الفرع (متر)' : 'Allowed distance from branch (metres)' ?></label>
       <input type="number" name="fence" min="10" max="5000" value="<?= (int)$set['fence'] ?>">
       <small><?= $isRTL ? 'البصمة أبعد من ذلك تظهر بعلامة 🛑' : 'Punches farther than this get a 🛑 flag' ?></small>
+    </div>
+    <div class="fl">
+      <label><?= $isRTL ? 'ساعات العمل اليومية' : 'Daily working hours' ?></label>
+      <input type="number" name="target" min="1" max="16" step="0.5" value="<?= htmlspecialchars((string)($set['target'] ?? 10)) ?>">
+      <small><?= $isRTL ? 'دائرة البصمة تمتلئ حتى هذا العدد ثم تصبح ذهبية' : 'The attendance ring fills to this, then turns gold' ?></small>
     </div>
     <div class="sheet-acts">
       <button type="submit" class="ok">💾 <?= $isRTL ? 'حفظ' : 'Save' ?></button>

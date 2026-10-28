@@ -2116,6 +2116,8 @@ body:has(#npCard.on) #f1c-chat-bubble { opacity:0; pointer-events:none; }
     function openMore() {
         document.getElementById('moreOverlay').classList.add('open');
     }
+    // arriving from another page's «المزيد» (…dashboard.php?more=1): open the sheet straight away
+    if (/[?&]more=1\b/.test(location.search)) document.addEventListener('DOMContentLoaded', function () { openMore(); history.replaceState(null, '', location.pathname + location.search.replace(/[?&]more=1\b/, '').replace(/^&/, '?')); });
     function closeMore(e) {
         // close only when tapping the dark overlay (not the sheet itself)
         document.getElementById('moreOverlay').classList.remove('open');
