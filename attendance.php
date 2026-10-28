@@ -584,6 +584,13 @@ if ($isClockedIn && $active['branch_name']) {
   .done-sheet .where{ font-size:14px; color:#94a3b8; font-weight:700; margin-top:4px; }
   .done-sheet .dur{ display:inline-block; margin-top:10px; font-size:14px; font-weight:800; color:#a3e635; background:rgba(163,230,53,.1); border:1px solid rgba(163,230,53,.25); padding:6px 14px; border-radius:999px; }
   .done-sheet .dur.gold{ color:#fcd34d; background:rgba(245,158,11,.12); border-color:rgba(245,158,11,.35); margin-inline-start:6px; }
+  .cf-box{ position:relative; overflow:visible; }
+  .done-sheet{ animation:up .35s cubic-bezier(.22,1,.36,1), sheetGlow 1.6s .2s ease; }
+  .done-sheet.out{ animation:up .35s cubic-bezier(.22,1,.36,1), sheetGlowOut 1.6s .2s ease; }
+  @keyframes sheetGlow{ 30%{ box-shadow:0 0 0 4px rgba(34,197,94,.45), 0 0 70px rgba(34,197,94,.45); } }
+  @keyframes sheetGlowOut{ 30%{ box-shadow:0 0 0 4px rgba(250,204,21,.5), 0 0 70px rgba(250,204,21,.45); } }
+  .cf{ position:absolute; left:50%; top:70px; width:9px; height:14px; border-radius:2px; pointer-events:none; opacity:0; animation:cf 1.9s cubic-bezier(.15,.7,.3,1) forwards; }
+  @keyframes cf{ 0%{ opacity:1; transform:translate(-50%,0) rotate(0) scale(.6); } 70%{ opacity:1; } 100%{ opacity:0; transform:translate(calc(-50% + var(--x)), calc(var(--y) + 160px)) rotate(var(--r)) scale(1); } }
   .done-sheet .ok{ width:100%; height:50px; border-radius:15px; border:0; margin-top:18px; font:inherit; font-size:16px; font-weight:800; cursor:pointer; background:rgba(255,255,255,.08); color:#e2e8f0; }
   @keyframes draw{ to{ stroke-dashoffset:0; } }
   @keyframes fadeIn{ from{ opacity:0; } }
@@ -836,6 +843,7 @@ const lang = <?= json_encode($lang) ?>;
 const AR = lang === 'ar';
 const todayBase = <?= (int)($todayTotal - $elapsedSecs) ?>, weekBase = <?= (int)($weekTotal - ($isClockedIn ? $elapsedSecs : 0)) ?>;
 const TARGET = <?= (int)$targetSecs ?>, FENCE = <?= (int)$attSet['fence'] ?>;
+const SHOW_DIST = <?= $role === 'admin' ? 'true' : 'false' ?>;   // how far from the branch: admins only
 const BRANCHES = <?= json_encode($branchGeo, JSON_UNESCAPED_UNICODE) ?>;
 const WEEK = <?= json_encode($weekView, JSON_UNESCAPED_UNICODE) ?>;
 
@@ -883,6 +891,19 @@ function celebrate(msg){
   if (navigator.vibrate) navigator.vibrate([40, 60, 40, 60, 90]);
   card.classList.remove('party'); void card.offsetWidth; card.classList.add('party');
   if (msg) toast(msg);
+}
+function confetti(box, colors){
+  if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  box.classList.add('cf-box');
+  for (let i = 0; i < 46; i++) {
+    const c = document.createElement('i');
+    c.className = 'cf';
+    const a = Math.random() * Math.PI * 2, r = 90 + Math.random() * 170;
+    c.style.cssText = '--x:' + Math.round(Math.cos(a) * r) + 'px;--y:' + Math.round(Math.sin(a) * r - 60) + 'px;--r:' + Math.round(Math.random() * 720 - 360) + 'deg;background:' + colors[i % colors.length] +
+      ';animation-delay:' + Math.round(Math.random() * 180) + 'ms;' + (i % 3 ? '' : 'border-radius:50%;');
+    box.appendChild(c);
+  }
+  setTimeout(() => box.querySelectorAll('.cf').forEach(c => c.remove()), 2600);
 }
 function toast(msg){
   const t = document.getElementById('toast');
@@ -959,8 +980,8 @@ function showHere(){
   here.classList.remove('ok', 'far');
   if (!sel.value) { hereMain.textContent = AR ? '📍 اختر الفرع' : '📍 Choose the branch'; document.getElementById('branchField').hidden = false; }
   else if (d === null) hereMain.innerHTML = '📍 ' + esc(opt.text) + ' <small>· ' + (AR ? 'موقع الفرع غير محدد' : 'branch location not set') + '</small>';
-  else if (d <= FENCE) { here.classList.add('ok'); hereMain.innerHTML = '📍 ' + (AR ? 'أنت في ' : 'You are at ') + '<b>' + esc(opt.text) + '</b> · ' + (AR ? 'على بعد ' : '') + fmtDist(d) + ' ✓'; }
-  else { here.classList.add('far'); hereMain.innerHTML = '⚠️ ' + (AR ? 'أنت بعيد عن ' : 'You are far from ') + '<b>' + esc(opt.text) + '</b> · ' + fmtDist(d); }
+  else if (d <= FENCE) { here.classList.add('ok'); hereMain.innerHTML = '📍 ' + (AR ? 'أنت في ' : 'You are at ') + '<b>' + esc(opt.text) + '</b>' + (SHOW_DIST ? ' · ' + (AR ? 'على بعد ' : '') + fmtDist(d) : '') + ' ✓'; }
+  else { here.classList.add('far'); hereMain.innerHTML = '⚠️ ' + (AR ? 'أنت بعيد عن ' : 'You are far from ') + '<b>' + esc(opt.text) + '</b>' + (SHOW_DIST ? ' · ' + fmtDist(d) : ''); }
   hereAcc.textContent = pos.acc ? (AR ? 'دقة الموقع ±' + fmtDist(pos.acc) : 'Accuracy ±' + fmtDist(pos.acc)) : '';
   hereAcc.className = pos.acc > 100 ? 'weak' : '';
 }
@@ -1038,8 +1059,8 @@ function start(){
     const d = distTo(sel.value);
     if (d !== null && d > FENCE) {
       document.getElementById('farTxt').textContent = AR
-        ? 'أنت على بعد ' + fmtDist(d) + ' من فرع ' + sel.options[sel.selectedIndex].text + '. سيظهر هذا للإدارة. هل تريد التسجيل رغم ذلك؟'
-        : 'You are ' + fmtDist(d) + ' from ' + sel.options[sel.selectedIndex].text + '. Management will see this. Punch anyway?';
+        ? (SHOW_DIST ? 'أنت على بعد ' + fmtDist(d) + ' من' : 'أنت خارج نطاق') + ' فرع ' + sel.options[sel.selectedIndex].text + '. سيظهر هذا للإدارة. هل تريد التسجيل رغم ذلك؟'
+        : (SHOW_DIST ? 'You are ' + fmtDist(d) + ' from ' : 'You are outside ') + sel.options[sel.selectedIndex].text + '. Management will see this. Punch anyway?';
       document.getElementById('farOv').classList.add('on');
       return;
     }
@@ -1058,7 +1079,9 @@ if (doneOv) {
   const close = () => doneOv.classList.remove('on');
   document.getElementById('doneOk').addEventListener('click', close);
   doneOv.addEventListener('click', e => { if (e.target === doneOv) close(); });
+  confetti(doneOv.querySelector('.sheet'), doneOv.querySelector('.done-sheet.out') ? ['#fde68a', '#f59e0b', '#38bdf8', '#a855f7', '#fff'] : ['#22c55e', '#4ade80', '#a855f7', '#fde68a', '#fff']);
   celebrate();
+  doneOv.addEventListener('pointerdown', () => { if (navigator.vibrate) navigator.vibrate([30, 40, 30]); }, { once: true });
   setTimeout(close, 6000);
 }
 </script>
