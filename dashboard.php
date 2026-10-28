@@ -1165,6 +1165,10 @@ body:has(.vc-more[open]) #f1c-chat-bubble, body:has(.vc-more[open]) #f1c-bot-say
 .view-list .vc2 .vc-line .vc-chip { border:0; padding:0 4px; }
 .view-list .vc2 .cs-price .lbl { display:none !important; }
 
+.vc-pbtn { display:inline-flex; align-items:center; gap:5px; height:28px; padding:0 11px; border-radius:999px; text-decoration:none; font-size:11.5px; font-weight:900; white-space:nowrap;
+  color:#7dd3fc; background:rgba(56,189,248,.1); border:1px solid rgba(56,189,248,.35); margin-inline-start:auto; transition:background .2s, transform .15s; }
+.vc-pbtn:hover { background:rgba(56,189,248,.2); transform:translateY(-1px); }
+.view-list .vc2 .vc-pbtn { display:none; }
 /* ═══════════ view switch: cards / list / by model ═══════════ */
 .vw-switch { display:inline-flex; gap:3px; padding:3px; border-radius:12px; background:rgba(255,255,255,.05); border:1px solid rgba(255,255,255,.08); flex-shrink:0; }
 .vw-switch button { height:32px; padding:0 11px; border-radius:9px; border:0; background:transparent; color:#94a3b8; font:inherit; font-size:12.5px; font-weight:800; cursor:pointer; white-space:nowrap; }
@@ -1626,7 +1630,7 @@ body:has(#npCard.on) #f1c-chat-bubble { opacity:0; pointer-events:none; }
                     <div class="cs-price">
                         <span class="lbl"><?= $lang === 'ar' ? 'السعر الرسمي' : 'Official price' ?></span>
                         <b><?= number_format((float)$officialNum) ?></b><small><?= $lang === 'ar' ? 'ج.م' : 'EGP' ?></small>
-                        <?php if ($dealLabel !== ''): ?><span class="vc-deal"><?= htmlspecialchars($dealLabel) ?></span><?php endif; ?>
+                        <a class="vc-pbtn" href="prices.php?lang=<?= $lang ?>&search=<?= urlencode($car['model']) ?>">💲 <?= $lang === 'ar' ? 'سعر البيع' : 'Selling price' ?> ‹</a>
                     </div>
                     <?php endif; ?>
                 </div>
@@ -1647,7 +1651,6 @@ body:has(#npCard.on) #f1c-chat-bubble { opacity:0; pointer-events:none; }
                 /* the first two actions are big buttons; the rest — and the prices page link — open from «⋯» */
                 $menuStart = min(2, count($acts));
                 $items = $acts;
-                if ($canSeePrice && $officialNum) $items[] = 'pr';
                 ?>
                 <?php if ($items): ?>
                 <div class="vc-acts">
