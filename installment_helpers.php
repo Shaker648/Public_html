@@ -32,6 +32,8 @@ function inst_banks(): array
         'cairo'    => ['ar' => 'بنك القاهرة',                     'en' => 'Banque du Caire'],
         'enbd'     => ['ar' => 'بنك الإمارات دبي الوطني',          'en' => 'Emirates NBD'],
         'abc'      => ['ar' => 'بنك ABC',                         'en' => 'Bank ABC'],
+        'nbe'      => ['ar' => 'البنك الأهلي المصري',              'en' => 'National Bank of Egypt (NBE)'],
+        'qnb'      => ['ar' => 'بنك QNB',                         'en' => 'QNB'],
     ];
 }
 
