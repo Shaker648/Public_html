@@ -29,6 +29,9 @@ function inst_banks(): array
         'agricole' => ['ar' => 'كريدي أجريكول',                   'en' => 'Crédit Agricole'],
         'contact'  => ['ar' => 'كونتكت',                          'en' => 'Contact'],
         'sky'      => ['ar' => 'سكاي',                            'en' => 'Sky'],
+        'cairo'    => ['ar' => 'بنك القاهرة',                     'en' => 'Banque du Caire'],
+        'enbd'     => ['ar' => 'بنك الإمارات دبي الوطني',          'en' => 'Emirates NBD'],
+        'abc'      => ['ar' => 'بنك ABC',                         'en' => 'Bank ABC'],
     ];
 }
 
