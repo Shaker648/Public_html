@@ -25,7 +25,8 @@ try {
             PDO::ATTR_EMULATE_PREPARES   => false,
         ]
     );
-    $pdo->exec("SET time_zone = '+03:00'");
+    // the database clock follows Cairo time, summer (+03:00) and winter (+02:00) alike
+    $pdo->exec("SET time_zone = '" . date('P') . "'");
 
 } catch (PDOException $e) {
     // Log the real error server-side — never expose it to the browser
