@@ -1778,6 +1778,9 @@ body:has(#npCard.on) #f1c-chat-bubble { opacity:0; pointer-events:none; }
                 <span class="mi-icon">👥</span><?= $lang === 'ar' ? 'المستخدمون' : 'Users' ?>
             </a>
             <?php endif; ?>
+            <a href="#" class="more-item" id="moreTextSize" onclick="event.preventDefault(); if (window.F1App) { F1App.textSize(F1App.isBig() ? 'normal' : 'big'); this.querySelector('b').textContent = F1App.isBig() ? '<?= $lang === 'ar' ? 'كبير' : 'Large' ?>' : '<?= $lang === 'ar' ? 'عادي' : 'Normal' ?>'; }">
+                <span class="mi-icon">🔠</span><?= $lang === 'ar' ? 'حجم الخط' : 'Text size' ?>: <b><?= $lang === 'ar' ? 'عادي' : 'Normal' ?></b>
+            </a>
             <a href="logout.php" class="more-item more-item-logout">
                 <span class="mi-icon">🚪</span><?= $t[$lang]['logout'] ?>
             </a>
@@ -2116,6 +2119,8 @@ body:has(#npCard.on) #f1c-chat-bubble { opacity:0; pointer-events:none; }
 
     // ── "More" menu sheet ──
     function openMore() {
+        var ts = document.querySelector('#moreTextSize b');
+        if (ts && window.F1App && F1App.isBig()) ts.textContent = '<?= $lang === 'ar' ? 'كبير' : 'Large' ?>';
         document.getElementById('moreOverlay').classList.add('open');
     }
     // arriving from another page's «المزيد» (…dashboard.php?more=1): open the sheet straight away

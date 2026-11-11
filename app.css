@@ -1,0 +1,69 @@
+/*
+ * app.css — the look every page shares (added by app_shell.php).
+ * One Arabic font (Cairo) for the whole system, the bottom bar, the search sheet,
+ * the text-size setting and the "no connection" notice.
+ */
+
+/* ── one font everywhere (numbers and codes keep their own monospace where a page sets it) ── */
+html[lang] body, html body { font-family: 'Cairo', 'Segoe UI', Tahoma, Arial, sans-serif; }
+button, input, select, textarea { font-family: 'Cairo', 'Segoe UI', Tahoma, Arial, sans-serif; }
+
+/* ── text size: «كبير» ── */
+html.f1c-big body { zoom: 1.12; }
+
+/* ── bottom bar (same as the dashboard's) ── */
+.bn2-space { height: calc(92px + env(safe-area-inset-bottom)); }
+.bn2 { position:fixed; bottom:0; left:0; right:0; z-index:999; display:flex; justify-content:space-around; align-items:flex-end; gap:2px;
+  min-height:70px; padding:6px 6px calc(6px + env(safe-area-inset-bottom)); direction:inherit;
+  background:linear-gradient(180deg,rgba(15,23,42,.92),rgba(2,6,23,.98)); border-top:1px solid rgba(148,163,184,.12);
+  box-shadow:0 -10px 30px rgba(0,0,0,.35); backdrop-filter:blur(20px); -webkit-backdrop-filter:blur(20px); }
+.bn2 .bn-link { flex:1 1 0; min-width:0; display:flex; flex-direction:column; align-items:center; gap:4px; padding:6px 2px 4px; border-radius:14px;
+  color:#7c8aa5; font-size:10.5px; font-weight:800; text-decoration:none; position:relative; -webkit-tap-highlight-color:transparent; transition:color .2s; }
+.bn2 .bn-link:hover { color:#e2e8f0; }
+.bn2 .bn-ic { width:44px; height:30px; display:grid; place-items:center; border-radius:999px; transition:background .25s, transform .25s cubic-bezier(.2,1.6,.4,1); }
+.bn2 .bn-svg { width:23px; height:23px; }
+.bn2 .bn-lbl { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:100%; line-height:1.2; }
+.bn2 .bn-link.on { color:#4ade80; }
+.bn2 .bn-link.on .bn-ic { background:rgba(34,197,94,.16); box-shadow:0 0 18px rgba(34,197,94,.25); }
+.bn2 .bn-link.on::before { content:''; position:absolute; top:-7px; width:26px; height:3px; border-radius:0 0 4px 4px; background:#22c55e; box-shadow:0 0 12px #22c55e; }
+.bn2 .bn-link:active .bn-ic { transform:scale(.86); }
+.bn2 .bn-add { color:#cbd5e1; }
+.bn2 .bn-fab { width:54px; height:54px; margin-top:-26px; border-radius:50%; display:grid; place-items:center; color:#fff;
+  background:linear-gradient(135deg,#22c55e,#16a34a 55%,#9333ea); border:4px solid #020617; box-shadow:0 10px 24px rgba(34,197,94,.35); transition:transform .25s cubic-bezier(.2,1.6,.4,1); }
+.bn2 .bn-fab .bn-svg { width:26px; height:26px; stroke-width:2.6; }
+.bn2 .bn-add:active .bn-fab { transform:scale(.9) rotate(90deg); }
+@media (min-width:900px) { .bn2 { left:50%; right:auto; transform:translateX(-50%); width:min(640px, calc(100% - 32px)); bottom:14px; border-radius:24px; border:1px solid rgba(148,163,184,.14); padding-bottom:6px; } }
+
+/* ── search from any page ── */
+.f1s-fab { position:fixed; z-index:998; inset-inline-end:14px; bottom:calc(86px + env(safe-area-inset-bottom)); width:48px; height:48px; border-radius:50%; border:1px solid rgba(148,163,184,.25);
+  background:linear-gradient(135deg,#1e293b,#0f172a); color:#e2e8f0; display:grid; place-items:center; cursor:pointer; box-shadow:0 10px 26px rgba(0,0,0,.45); -webkit-tap-highlight-color:transparent; }
+.f1s-fab svg { width:22px; height:22px; }
+.f1s-fab:active { transform:scale(.92); }
+body:not(.f1c-has-bn) .f1s-fab { bottom:calc(18px + env(safe-area-inset-bottom)); }
+.f1s-ov { position:fixed; inset:0; z-index:1300; background:rgba(2,6,23,.82); backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px); display:none; justify-content:center; align-items:flex-start; padding:calc(14px + env(safe-area-inset-top)) 12px 12px; }
+.f1s-ov.on { display:flex; }
+.f1s-box { width:100%; max-width:560px; max-height:calc(100vh - 28px); display:flex; flex-direction:column; border-radius:22px; overflow:hidden; background:linear-gradient(170deg,#141c35,#0a1122); border:1px solid rgba(255,255,255,.1); box-shadow:0 30px 70px rgba(0,0,0,.6); color:#f1f5f9; }
+.f1s-top { display:flex; gap:8px; padding:12px; border-bottom:1px solid rgba(255,255,255,.07); }
+.f1s-in { flex:1; min-width:0; height:48px; border-radius:14px; border:1.5px solid rgba(147,51,234,.5); background:#070d1c; color:#f1f5f9; font-size:16px; font-weight:700; padding:0 14px; outline:none; }
+.f1s-x { width:48px; height:48px; border-radius:14px; border:0; background:rgba(255,255,255,.07); color:#e2e8f0; font-size:18px; cursor:pointer; }
+.f1s-list { overflow:auto; padding:8px; }
+.f1s-it { display:flex; align-items:center; gap:10px; padding:11px 12px; border-radius:14px; text-decoration:none; color:inherit; border:1px solid transparent; }
+.f1s-it:hover, .f1s-it:focus { background:rgba(255,255,255,.05); border-color:rgba(255,255,255,.08); outline:none; }
+.f1s-it .t { flex:1; min-width:0; }
+.f1s-it b { display:block; font-size:14.5px; font-weight:800; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.f1s-it small { display:block; font-size:12px; color:#94a3b8; font-weight:700; margin-top:2px; }
+.f1s-it .ch { font-family:Inter,'Courier New',monospace; color:#a3e635; direction:ltr; unicode-bidi:isolate; }
+.f1s-st { font-size:11px; font-weight:900; padding:4px 9px; border-radius:999px; white-space:nowrap; background:rgba(34,197,94,.14); color:#86efac; }
+.f1s-st.reserved { background:rgba(245,158,11,.16); color:#fcd34d; } .f1s-st.sold { background:rgba(148,163,184,.16); color:#cbd5e1; } .f1s-st.consignment { background:rgba(56,189,248,.16); color:#7dd3fc; }
+.f1s-msg { text-align:center; color:#94a3b8; font-size:13.5px; font-weight:700; padding:22px 12px; line-height:1.8; }
+.f1s-foot { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:10px 14px; border-top:1px solid rgba(255,255,255,.07); font-size:12.5px; color:#94a3b8; font-weight:800; }
+.f1s-seg { display:inline-flex; background:rgba(255,255,255,.05); border:1px solid rgba(255,255,255,.08); border-radius:999px; padding:3px; }
+.f1s-seg button { border:0; background:transparent; color:#94a3b8; font:inherit; font-size:12.5px; font-weight:800; padding:5px 12px; border-radius:999px; cursor:pointer; }
+.f1s-seg button.on { background:rgba(147,51,234,.3); color:#f3e8ff; }
+
+/* ── no connection ── */
+.f1c-off { position:fixed; z-index:1400; top:calc(10px + env(safe-area-inset-top)); left:50%; transform:translateX(-50%); max-width:calc(100% - 24px); padding:10px 16px; border-radius:14px;
+  background:linear-gradient(135deg,#b91c1c,#7f1d1d); color:#fff; font-size:13.5px; font-weight:800; box-shadow:0 14px 34px rgba(0,0,0,.5); text-align:center; }
+.f1c-off.back { background:linear-gradient(135deg,#15803d,#14532d); }
+
+@media print { .bn2, .bn2-space, .f1s-fab, .f1s-ov, .f1c-off { display:none !important; } }

@@ -2,15 +2,23 @@
  * sw.js — First 1 Car service worker (phone notifications).
  *
  * Shows every push as a normal phone notification (lock screen, sound,
- * app icon) and opens the right page when it is tapped. It does no caching
- * on purpose, so the site always shows live data.
+ * app icon) and opens the right page when it is tapped. Pages are never cached, so
+ * the site always shows live data — only a "no connection" screen is kept.
  *
  * iPhone rule: every push MUST show a notification, so one is always shown.
  */
 const APP_NAME = 'First 1 Car';
 
-self.addEventListener('install', () => self.skipWaiting());
+/* the only thing kept on the phone: the "no connection" screen */
+const OFFLINE = 'f1c-offline-v1';
+self.addEventListener('install', (event) => { self.skipWaiting(); event.waitUntil(caches.open(OFFLINE).then(c => c.add(new Request('offline.html', { cache: 'reload' }))).catch(() => {})); });
 self.addEventListener('activate', (event) => event.waitUntil(self.clients.claim()));
+
+// pages always come from the server (live data); only when the phone has no connection the saved "no connection" screen is shown instead of the browser's error
+self.addEventListener('fetch', (event) => {
+  if (event.request.mode !== 'navigate') return;
+  event.respondWith(fetch(event.request).catch(async () => (await caches.match('offline.html', { cacheName: OFFLINE })) || Response.error()));
+});
 
 self.addEventListener('push', (event) => {
   let d = {};

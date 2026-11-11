@@ -99,3 +99,6 @@ if ($currentUser['role'] !== 'admin') {
         } catch (Throwable $e) {}
     }
 }
+
+// Step 6: the shared shell — one font, one style file, the bottom bar and search on every page
+if (is_file(__DIR__ . '/app_shell.php')) { require_once __DIR__ . '/app_shell.php'; app_shell_start(); }
