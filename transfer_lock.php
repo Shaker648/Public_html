@@ -51,19 +51,34 @@ if (isset($_GET['check'])) {
 if (!$lock) { header('Location: dashboard.php?lang=' . $lang); exit; }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && hash_equals($csrf, (string)($_POST['csrf_token'] ?? ''))) {
-    if (($_POST['act'] ?? '') === 'missing') smart_report_missing($pdo, (int)($_POST['mid'] ?? 0), (string)$_SESSION['username'], (string)($_POST['note'] ?? ''));
-    else smart_receive($pdo, (array)($_POST['mids'] ?? []), (string)$_SESSION['username']);
+    if (chassis_locked($pdo, $uid)) { /* stopped for wrong chassis numbers: nothing is confirmed until the admin opens the system */ }
+    elseif (($_POST['act'] ?? '') === 'missing') smart_report_missing($pdo, (int)($_POST['mid'] ?? 0), (string)$_SESSION['username'], (string)($_POST['note'] ?? ''));
+    else {
+        // the chassis is typed off the car — it is not shown here
+        $mid = (int)($_POST['mid'] ?? 0); $cands = []; $place = '';
+        foreach (smart_my_duties($pdo, $uid) as $d) {
+            $cands[(int)$d['mid']] = ['car_id' => (int)$d['car_id'], 'chassis' => (string)$d['chassis'], 'label' => trim($d['brand'] . ' ' . $d['model'] . ' ' . $d['trim_name'])];
+            if ((int)$d['mid'] === $mid) $place = (string)$d['to_branch'];
+        }
+        if (isset($cands[$mid])) {
+            $t = chassis_try($pdo, $uid, (string)$_SESSION['username'], 'receive', $cands, $mid, (string)($_POST['chassis'] ?? ''), $place);
+            if ($t['ok']) { smart_receive($pdo, [$t['ref']], (string)$_SESSION['username']); $_SESSION['lk_flash'] = ['ok', $ar ? '✅ رقم الشاسيه صحيح — تم تأكيد الاستلام' : '✅ Chassis correct — received']; }
+            elseif (!$t['locked'] && !$t['empty']) $_SESSION['lk_flash'] = ['bad', $ar ? '❌ رقم الشاسيه غير صحيح. راجع الرقم على السيارة نفسها — إذا أُدخل رقم غير صحيح مرة أخرى يتوقف النظام بقرار نهائي من الإدارة.' : '❌ Wrong chassis number. Check the number on the car — one more wrong number and only management can open your system.'];
+        }
+    }
     header('Location: transfer_lock.php?lang=' . $lang);
     exit;
 }
 
-$left = smart_my_duties($pdo, $uid);
-$checks = smart_checks_for_user($pdo, $uid);
+$lkFlash = $_SESSION['lk_flash'] ?? null; unset($_SESSION['lk_flash']);
+$chStop = chassis_locked($pdo, $uid);   // wrong chassis numbers: only the admin opens the system, nothing more can be confirmed
+$left = $chStop ? [] : smart_my_duties($pdo, $uid);
+$checks = $chStop ? [] : smart_checks_for_user($pdo, $uid);
 $rules = transfer_rules($pdo);
 $locks = $pdo->prepare("SELECT * FROM user_locks WHERE user_id = ? AND unlocked_at IS NULL ORDER BY id");
 $locks->execute([$uid]);
 $locks = $locks->fetchAll(PDO::FETCH_ASSOC);
-$manual = array_values(array_filter($locks, fn($l) => ($l['kind'] ?? '') === 'manual'));
+$manual = array_values(array_filter($locks, fn($l) => in_array($l['kind'] ?? '', ['manual', 'chassis'], true)));
 $ls = $lockState();
 $cdLeft = $ls['left'];
 $cdMsg  = $ls['msg'];
@@ -133,6 +148,12 @@ body{min-height:100vh;background:radial-gradient(120% 70% at 50% 0%,#3b0a0a 0%,#
 .lk-cd.hot .n{color:#fca5a5;animation:lkBlink .5s steps(2) infinite}
 @keyframes lkPulse{50%{box-shadow:0 0 0 12px rgba(239,68,68,.04),0 18px 54px rgba(239,68,68,.5)}}
 @keyframes lkBlink{50%{opacity:.35}}
+.lk-chf{display:flex;gap:8px;width:100%}
+.lk-chin{flex:1;min-width:0;height:44px;border-radius:13px;border:1.5px solid rgba(163,230,53,.45);background:#070d1c;color:#f1f5f9;font-family:Inter,monospace;font-size:16px;font-weight:800;letter-spacing:1px;padding:0 12px;outline:none;text-transform:uppercase;direction:ltr;text-align:center}
+.lk-chin::placeholder{font-family:Tajawal,sans-serif;font-size:13px;font-weight:700;letter-spacing:0;text-transform:none;color:#64748b}
+.lk-how{margin:0 0 12px;padding:12px 14px;border-radius:14px;background:rgba(163,230,53,.07);border:1px solid rgba(163,230,53,.35);color:#d9f99d;font-size:13.5px;font-weight:700;line-height:1.8;text-align:start}
+.lk-fl{margin:0 0 12px;padding:12px 14px;border-radius:14px;font-weight:800;font-size:14px;line-height:1.7}
+.lk-fl.ok{background:rgba(34,197,94,.12);border:1px solid rgba(34,197,94,.4);color:#86efac}.lk-fl.bad{background:rgba(239,68,68,.14);border:1px solid rgba(239,68,68,.5);color:#fecaca}
 .lk-why{margin-top:18px;font-size:12.5px;color:#94a3b8;font-weight:700;line-height:1.7}
 </style>
 </head>
@@ -153,7 +174,7 @@ body{min-height:100vh;background:radial-gradient(120% 70% at 50% 0%,#3b0a0a 0%,#
     $reasons = function () use ($locks, $ar, $kindTxt) {
         $h = '<div class="lk-rs">';
         foreach ($locks as $l) {
-            $why = $l['kind'] === 'manual' ? ((string)$l['reason'] !== '' ? $l['reason'] : ($ar ? 'لم تُكتب ملاحظة' : 'no note given')) : ($kindTxt[$l['kind']] ?? '');
+            $why = in_array($l['kind'], ['manual', 'chassis'], true) ? ((string)$l['reason'] !== '' ? $l['reason'] : ($ar ? 'لم تُكتب ملاحظة' : 'no note given')) : ($kindTxt[$l['kind']] ?? '');
             $h .= '<div>📝 ' . htmlspecialchars(($ar ? 'السبب: ' : 'Reason: ') . $why) . '</div>'
                 . '<small>🕐 ' . htmlspecialchars(date('Y-m-d', strtotime($l['locked_at'])) . ' ' . smart_time_label(strtotime($l['locked_at']), $ar ? 'ar' : 'en')) . '</small>';
         }
@@ -162,7 +183,7 @@ body{min-height:100vh;background:radial-gradient(120% 70% at 50% 0%,#3b0a0a 0%,#
     ?>
     <?php if ($manual): ?>
     <div class="lk-ic">🔒</div>
-    <h1><?= $ar ? 'تم إيقاف النظام من الإدارة' : 'Your system was stopped by management' ?></h1>
+    <h1><?= $chStop ? ($ar ? 'تم إيقاف النظام — رقم شاسيه غير صحيح' : 'System stopped — wrong chassis number') : ($ar ? 'تم إيقاف النظام من الإدارة' : 'Your system was stopped by management') ?></h1>
     <?= $reasons() ?>
     <div class="lk-call">📞 <?= $ar ? 'للاستفسار تواصل مع مديرك أو الإدارة' : 'Please contact your manager or the management' ?></div>
     <?= $basmaBox() ?>
@@ -183,24 +204,22 @@ body{min-height:100vh;background:radial-gradient(120% 70% at 50% 0%,#3b0a0a 0%,#
         <span class="go"><?= $ar ? 'إكمال الجرد ←' : 'Finish →' ?></span>
     </a>
     <?php endforeach; ?>
+    <?php if ($lkFlash): ?><div class="lk-fl <?= $lkFlash[0] ?>"><?= htmlspecialchars($lkFlash[1]) ?></div><?php endif; ?>
+    <?php if ($left): ?><div class="lk-how">🔑 <?= $ar ? 'اقرأ رقم الشاسيه من السيارة نفسها واكتبه. إذا كان يبدأ بأصفار فتجاوزها واكتب الأرقام التي بعدها فقط (مثال: 000482 تُكتب 482).' : 'Read the chassis off the car and type it. If it starts with zeros, skip them (000482 → 482).' ?></div><?php endif; ?>
     <?php if ($left): ?><h3 class="lk-h3">🚚 <?= $ar ? 'سيارات بانتظار تأكيد الاستلام' : 'Cars waiting for "Received"' ?></h3><?php endif; ?>
     <div class="lk-list">
         <?php foreach ($left as $c): ?>
         <div class="lk-car">
             <div class="i"><b>🚗 <?= htmlspecialchars(trim($c['brand'] . ' ' . $c['model'] . ' ' . $c['trim_name'])) ?></b>
-                <small><?= htmlspecialchars($col($c['color'])) ?> · <span class="ch"><?= htmlspecialchars((string)$c['chassis']) ?></span> · <?= htmlspecialchars($br($c['from_branch'])) ?> ← <?= htmlspecialchars($br($c['to_branch'])) ?></small></div>
-            <form method="post"><input type="hidden" name="csrf_token" value="<?= $csrf ?>"><input type="hidden" name="mids[]" value="<?= (int)$c['mid'] ?>">
-                <button class="lk-ok" type="submit">✅ <?= $ar ? 'تم الاستلام' : 'Received' ?></button></form>
+                <small><?= htmlspecialchars($col($c['color'])) ?> · <?= htmlspecialchars($br($c['from_branch'])) ?> ← <?= htmlspecialchars($br($c['to_branch'])) ?></small></div>
+            <form method="post" class="lk-chf" autocomplete="off"><input type="hidden" name="csrf_token" value="<?= $csrf ?>"><input type="hidden" name="mid" value="<?= (int)$c['mid'] ?>">
+                <input class="lk-chin" name="chassis" autocapitalize="characters" autocomplete="off" autocorrect="off" spellcheck="false" maxlength="40" required placeholder="<?= $ar ? 'اكتب رقم الشاسيه من السيارة' : 'Type the chassis from the car' ?>">
+                <button class="lk-ok" type="submit">✅ <?= $ar ? 'تأكيد' : 'Confirm' ?></button></form>
             <form method="post" class="lk-missf"><input type="hidden" name="csrf_token" value="<?= $csrf ?>"><input type="hidden" name="act" value="missing"><input type="hidden" name="mid" value="<?= (int)$c['mid'] ?>"><input type="hidden" name="note" value="">
                 <button class="lk-miss" type="submit">❌ <?= $ar ? 'لم تصل' : 'Not here' ?></button></form>
         </div>
         <?php endforeach; ?>
     </div>
-    <?php if (count($left) > 1): ?>
-    <form method="post"><input type="hidden" name="csrf_token" value="<?= $csrf ?>">
-        <?php foreach ($left as $c): ?><input type="hidden" name="mids[]" value="<?= (int)$c['mid'] ?>"><?php endforeach; ?>
-        <button class="lk-all" type="submit">✅ <?= $ar ? 'تأكيد استلام الكل (' . count($left) . ')' : 'Received all (' . count($left) . ')' ?></button></form>
-    <?php endif; ?>
     <?php endif; ?>
     <?php if (!$manual && !$left && !$checks): ?>
     <div class="lk-ic ok">⏳</div>

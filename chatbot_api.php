@@ -632,7 +632,9 @@ function fetchStock($pdo, $brand, $model, $color = null, $branch = null, $year =
     if ($year)   { $sql .= " AND cars.car_year = ?"; $p[] = $year; }
     $sql .= " ORDER BY cars.brand, cars.model, cars.color LIMIT 40";
     $st = $pdo->prepare($sql); $st->execute($p);
-    return $st->fetchAll(PDO::FETCH_ASSOC);
+    $rows = $st->fetchAll(PDO::FETCH_ASSOC);
+    if (is_file(__DIR__ . '/chassis_gate.php')) { require_once __DIR__ . '/chassis_gate.php'; chassis_mask_rows($pdo, $rows); }   // not before it is typed off the car
+    return $rows;
 }
 
 function fetchPricing($pdo, $brand, $model) {

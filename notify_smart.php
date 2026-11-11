@@ -19,6 +19,7 @@
  * transfer. Every reminder is sent once (notify_once).
  */
 require_once __DIR__ . '/push_helpers.php';
+require_once __DIR__ . '/chassis_gate.php';   // cars are confirmed by typing the chassis: it is never sent to the receiving branch
 
 /* ════════════════════════ helpers ════════════════════════ */
 function smart_line(array $c): string
@@ -67,8 +68,8 @@ function smart_transfer(PDO $pdo, array $moved, string $to): void
         $mids  = array_values(array_filter(array_map(fn($c) => (int)($c['mid'] ?? 0), $moved)));
         $froms = array_values(array_unique(array_column($moved, 'from')));
         $data  = ['owners' => $staff, 'to' => $to, 'from' => count($froms) === 1 ? $froms[0] : '', 'ref' => 'mv:' . implode(',', $mids)];
-        if (count($moved) === 1) $data['car'] = $moved[0] + ['branch' => $to];
-        else { $data['count'] = count($moved); $data['names'] = array_map(fn($c) => trim($c['brand'] . ' ' . $c['model']) . ' (' . $c['chassis'] . ')', $moved); }
+        if (count($moved) === 1) $data['car'] = array_diff_key($moved[0], ['chassis' => 1]) + ['branch' => $to];
+        else { $data['count'] = count($moved); $data['names'] = array_map(fn($c) => trim($c['brand'] . ' ' . $c['model']), $moved); }
         notify_event($pdo, 'transfer_incoming', $data);
         smart_duty_scan($pdo);   // whoever is already clocked in there: their time starts now
     } catch (Throwable $e) { error_log('smart_transfer: ' . $e->getMessage()); }
@@ -168,7 +169,7 @@ function smart_duty_scan(PDO $pdo): array
         $rules = transfer_rules($pdo);
         $lang  = notify_options($pdo)['lang'];
         $fmt   = fn($ts) => date('h:i', $ts) . ($lang === 'ar' ? (date('A', $ts) === 'AM' ? ' ص' : ' م') : ' ' . date('A', $ts));
-        $names = fn($rows) => array_map(fn($c) => trim($c['brand'] . ' ' . $c['model']) . ' (' . $c['chassis'] . ')', $rows);
+        $names = fn($rows) => array_map(fn($c) => trim($c['brand'] . ' ' . $c['model']), $rows);   // no chassis: it has to be typed from the car
         $roles = [];
         foreach ($pdo->query("SELECT id, username, role FROM users") as $u) $roles[(int)$u['id']] = [$u['username'], $u['role']];
 
@@ -223,7 +224,7 @@ function smart_duty_scan(PDO $pdo): array
                 if (($roles[$uid][1] ?? '') === 'admin') continue;           // an admin is never locked out
                 if (!user_lock_active($pdo, $uid)) {
                     $why = $lang === 'ar'
-                        ? 'لم يؤكد استلام ' . push_ar_cars(count($rows)) . ' منقولة إلى فرع ' . push_branch_label($pdo, (string)$rows[0]['to_branch'], 'ar') . ' في الوقت المحدد (' . implode('، ', array_map(fn($r) => $r['chassis'], $rows)) . ')'
+                        ? 'لم يؤكد استلام ' . push_ar_cars(count($rows)) . ' منقولة إلى فرع ' . push_branch_label($pdo, (string)$rows[0]['to_branch'], 'ar') . ' في الوقت المحدد (' . implode('، ', array_map(fn($r) => trim($r['brand'] . ' ' . $r['model']), $rows)) . ')'
                         : 'Did not confirm ' . count($rows) . ' transferred car(s) at ' . $rows[0]['to_branch'] . ' in time';
                     smart_lock_user($pdo, $uid, 'transfer', $why, '');
                     $log[] = 'locked(transfer) ' . ($roles[$uid][0] ?? $uid);
@@ -232,7 +233,7 @@ function smart_duty_scan(PDO $pdo): array
         }
 
         /* 4 — a locked person confirmed every car and finished every stock check */
-        foreach ($pdo->query("SELECT * FROM user_locks WHERE unlocked_at IS NULL AND done_at IS NULL AND kind <> 'manual'")->fetchAll(PDO::FETCH_ASSOC) as $lk) {
+        foreach ($pdo->query("SELECT * FROM user_locks WHERE unlocked_at IS NULL AND done_at IS NULL AND kind NOT IN ('manual', 'chassis')")->fetchAll(PDO::FETCH_ASSOC) as $lk) {
             $uid = (int)$lk['user_id'];
             if (smart_my_duties($pdo, $uid) || smart_checks_for_user($pdo, $uid)) continue;
             $pdo->prepare("UPDATE user_locks SET done_at = NOW() WHERE id = ?")->execute([(int)$lk['id']]);

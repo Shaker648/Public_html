@@ -16,6 +16,7 @@ try {
     if (can('dash.amana_section')) $statuses[] = "'consignment'";
     $rows = $pdo->query("SELECT id, status, branch, color, trim_name, model, car_year, chassis FROM cars WHERE status IN (" . implode(',', $statuses) . ")")
                 ->fetchAll(PDO::FETCH_ASSOC);
+    if (is_file(__DIR__ . '/chassis_gate.php')) { require_once __DIR__ . '/chassis_gate.php'; chassis_mask_rows($pdo, $rows); }   // same hidden chassis as the dashboard, so the fingerprints agree
     $sig = [];
     foreach ($rows as $c) {
         $sig[(int)$c['id']] = crc32(implode('|', [$c['status'], $c['branch'], $c['color'], $c['trim_name'], $c['model'], $c['car_year'], $c['chassis']]));

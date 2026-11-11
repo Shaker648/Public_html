@@ -81,5 +81,21 @@ if ($currentUser['role'] !== 'admin') {
                 exit;
             }
         } catch (Throwable $e) {}   // table not created yet → nobody is locked
+        // a surprise stock check in progress: the system is closed for whoever is doing it — only the
+        // check itself — until it is finished, so the chassis numbers can only come from the cars
+        try {
+            $__ck = $pdo->prepare("SELECT c.id FROM stock_checks c JOIN stock_check_users u ON u.check_id = c.id WHERE u.user_id = ? AND c.status IN ('active', 'expired') ORDER BY c.deadline LIMIT 1");
+            $__ck->execute([$currentUser['id']]);
+            if ($__cid = (int)$__ck->fetchColumn()) {
+                $lang = ($_GET['lang'] ?? 'ar') === 'en' ? 'en' : 'ar';
+                if (stripos($_SERVER['HTTP_ACCEPT'] ?? '', 'text/html') === false) {
+                    http_response_code(423);
+                    header('Content-Type: application/json; charset=utf-8');
+                    exit(json_encode(['ok' => false, 'error' => 'stock_check']));
+                }
+                header('Location: stock_check.php?lang=' . $lang . '&id=' . $__cid);
+                exit;
+            }
+        } catch (Throwable $e) {}
     }
 }

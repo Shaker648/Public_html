@@ -86,7 +86,26 @@ $active = $pdo->query("SELECT l.*, u.username, TIMESTAMPDIFF(SECOND, l.locked_at
 $lockedIds = array_map('intval', array_column($active, 'user_id'));
 $history = $pdo->query("SELECT l.*, u.username FROM user_locks l JOIN users u ON u.id = l.user_id WHERE l.unlocked_at IS NOT NULL ORDER BY l.locked_at DESC LIMIT 20")->fetchAll(PDO::FETCH_ASSOC);
 
-$kindLbl = $ar ? ['manual' => '✋ يدوي', 'check' => '📋 جرد مفاجئ', 'transfer' => '🚚 استلام'] : ['manual' => '✋ Manual', 'check' => '📋 Stock check', 'transfer' => '🚚 Receiving'];
+$kindLbl = $ar ? ['manual' => '✋ يدوي', 'check' => '📋 جرد مفاجئ', 'transfer' => '🚚 استلام', 'chassis' => '🔑 رقم شاسيه غير صحيح'] : ['manual' => '✋ Manual', 'check' => '📋 Stock check', 'transfer' => '🚚 Receiving', 'chassis' => '🔑 Wrong chassis'];
+/* admins only: what was typed against the real chassis number */
+$ctxLbl = $ar ? ['receive' => '🚚 استلام', 'check' => '📋 جرد'] : ['receive' => '🚚 Receiving', 'check' => '📋 Stock check'];
+$chTries = function (array $rows) use ($ar, $ctxLbl, $pdo, $lang) {
+    if (!$rows) return '';
+    $h = '<div class="ld-ch"><div class="ld-ch-t">🔑 ' . ($ar ? 'ما أدخله مقابل الرقم الحقيقي (يظهر للإدارة فقط)' : 'What was typed against the real number (admins only)') . '</div>';
+    foreach ($rows as $t) {
+        $h .= '<div class="ld-ch-r' . ((int)$t['ok'] ? ' ok' : '') . '"><div class="c">🚗 ' . htmlspecialchars((string)$t['label']) . ' <small>' . htmlspecialchars(($ctxLbl[$t['ctx']] ?? $t['ctx'])
+            . ((string)$t['place'] !== '' ? ' · 📍 ' . push_branch_label($pdo, (string)$t['place'], $lang) : '') . ' · ' . date('Y-m-d', strtotime($t['created_at'])) . ' ' . smart_time_label(strtotime($t['created_at']), $lang)
+            . (isset($t['username']) ? ' · 👤 ' . $t['username'] : '')) . '</small></div>'
+            . '<div class="v"><span>' . ($ar ? 'أدخل' : 'Typed') . '</span><b class="bad">' . htmlspecialchars((string)$t['typed']) . '</b></div>'
+            . '<div class="v"><span>' . ($ar ? 'الحقيقي' : 'Real') . '</span><b class="good">' . htmlspecialchars((string)$t['real_chassis']) . '</b></div></div>';
+    }
+    return $h . '</div>';
+};
+$looseTries = [];
+if ($isAdmin) try {
+    chassis_tables($pdo);
+    $looseTries = $pdo->query("SELECT * FROM chassis_tries WHERE ok = 0 AND lock_id IS NULL ORDER BY id DESC LIMIT 15")->fetchAll(PDO::FETCH_ASSOC);
+} catch (Throwable $e) {}
 $basmaLbl = $ar ? ['stopped' => '⏹ أُوقفت البصمة', 'running' => '▶ البصمة مستمرة', 'pending' => '❓ بانتظار قرارك', 'none' => '— لم يكن حاضراً']
                 : ['stopped' => '⏹ Clock-in stopped', 'running' => '▶ Clock-in running', 'pending' => '❓ Waiting for you', 'none' => '— not clocked in'];
 $ago = function ($s) use ($ar): string {
@@ -146,6 +165,13 @@ window.addEventListener('error', function (e) {
 .ld-acts button{height:36px;padding:0 12px;border-radius:10px;border:1px solid var(--line);background:rgba(255,255,255,.05);color:var(--txt);font:inherit;font-size:12.5px;font-weight:900;cursor:pointer}
 .ld-acts .cd{border-color:rgba(250,204,21,.55);color:#fde68a;background:rgba(250,204,21,.08)}
 .ld-cd{font-size:12.5px;font-weight:900;padding:5px 11px;border-radius:999px;background:rgba(250,204,21,.14);color:#fde68a;border:1px solid rgba(250,204,21,.4)}
+.ld-ch{flex-basis:100%;padding:10px 12px;border-radius:12px;background:rgba(2,6,23,.5);border:1px solid rgba(163,230,53,.35)}
+.ld-ch-t{font-size:12.5px;font-weight:900;color:#d9f99d;margin-bottom:6px}
+.ld-ch-r{display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center;padding:8px 0;border-top:1px solid rgba(255,255,255,.07)}
+.ld-ch-r .c{flex:1;min-width:180px;font-size:13.5px;font-weight:800}.ld-ch-r .c small{display:block;color:#94a3b8;font-size:11.5px;font-weight:700;margin-top:2px}
+.ld-ch-r .v{display:flex;flex-direction:column;gap:2px;min-width:110px}.ld-ch-r .v span{font-size:10.5px;color:#94a3b8;font-weight:800}
+.ld-ch-r .v b{font-family:Inter,monospace;font-size:16px;letter-spacing:1px;direction:ltr;text-align:start}
+.ld-ch-r .v b.bad{color:#fca5a5}.ld-ch-r .v b.good{color:#a3e635}
 .ld-cdm{flex-basis:100%;padding:8px 12px;border-radius:12px;background:rgba(250,204,21,.07);border:1px dashed rgba(250,204,21,.4);color:#fde68a;font-size:13px;font-weight:800;line-height:1.7}
 .ld-cd b{font-family:Inter,monospace;font-size:14px}
 .ld-cdp{display:none;margin-top:10px;padding:12px;border-radius:14px;border:1px solid rgba(250,204,21,.4);background:rgba(250,204,21,.06)}
@@ -200,6 +226,7 @@ window.addEventListener('error', function (e) {
                 <?php if ($l['kind'] === 'manual'): ?><button type="button" onclick="ldEditReason(this)" data-reason="<?= (int)$l['id'] ?>" data-cur="<?= htmlspecialchars((string)$l['reason']) ?>">✏️ <?= $ar ? 'تعديل السبب' : 'Edit reason' ?></button><?php endif; ?>
                 <button type="button" class="un" data-unlock="<?= (int)$l['user_id'] ?>" data-name="<?= htmlspecialchars($l['username']) ?>">🔓 <?= $ar ? 'فتح النظام' : 'Unlock' ?></button>
             </div>
+            <?php if ($isAdmin && $l['kind'] === 'chassis') echo $chTries(chassis_tries_for_lock($pdo, (int)$l['id'])); ?>
         </div>
         <?php endforeach; ?>
     </section>
@@ -267,6 +294,15 @@ window.addEventListener('error', function (e) {
         <div class="na-save" style="position:static;display:flex;gap:10px;align-items:center;justify-content:flex-end;margin-top:12px"><div class="nf-msg" id="rMsg"></div><button type="button" class="nf-btn grn" id="rSave">💾 <?= $ar ? 'حفظ' : 'Save' ?></button></div>
     </section>
 
+    <?php if ($looseTries): ?>
+    <!-- wrong chassis numbers that did not stop anyone (the first mistake) — admins only -->
+    <section class="nf-card">
+        <h2>🔑 <?= $ar ? 'أرقام شاسيه غير صحيحة لم توقف النظام' : 'Wrong chassis numbers that did not stop the system' ?> <span class="nf-count"><?= count($looseTries) ?></span></h2>
+        <p class="nf-note"><?= $ar ? 'المحاولة الأولى غير الصحيحة تُسجَّل هنا فقط؛ الثانية توقف النظام.' : 'A first wrong number is only recorded here; the second one stops the system.' ?></p>
+        <?= $chTries($looseTries) ?>
+    </section>
+    <?php endif; ?>
+
     <!-- history -->
     <section class="nf-card">
         <h2>🗂️ <?= $ar ? 'سجل الإيقافات' : 'Stop history' ?></h2>
@@ -277,6 +313,7 @@ window.addEventListener('error', function (e) {
                 <small>📝 <?= htmlspecialchars((string)$h['reason'] !== '' ? $h['reason'] : ($ar ? 'بدون سبب' : 'no reason')) ?></small>
                 <small>🔒 <?= htmlspecialchars($fmt($h['locked_at'])) ?> → 🔓 <?= htmlspecialchars($fmt($h['unlocked_at'])) ?> · <?= htmlspecialchars((string)$h['unlocked_by']) ?></small></div>
             <span class="ld-b <?= $h['basma'] ?: 'none' ?>"><?= $basmaLbl[$h['basma'] ?: 'none'] ?? '' ?></span>
+            <?php if ($isAdmin && $h['kind'] === 'chassis') echo $chTries(chassis_tries_for_lock($pdo, (int)$h['id'])); ?>
         </div>
         <?php endforeach; ?>
     </section>

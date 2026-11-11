@@ -22,6 +22,7 @@ $csrf = $_SESSION['csrf_token'];
 $uid  = (int)$_SESSION['user_id'];
 $me   = (string)$_SESSION['username'];
 $isBoss = can('page.stock_check');
+$isAdmin = ($_SESSION['role'] ?? '') === 'admin';   // admins see the chassis; everyone else types it off the car
 push_tables($pdo);
 smart_check_scan($pdo);
 
@@ -59,6 +60,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 if (!sc_access($pdo, $cid, $uid, false) && !$isBoss) break;
                 $state = in_array($in['state'] ?? '', ['present', 'missing'], true) ? $in['state'] : null;
                 $note  = mb_substr(trim((string)($in['note'] ?? '')), 0, 250);
+                if (!$isAdmin && chassis_locked($pdo, $uid)) { echo json_encode(['ok' => false, 'error' => 'locked', 'go' => 'transfer_lock.php?lang=' . $lang]); exit; }
+                if (!$isAdmin && $state === 'present') {
+                    // «موجودة» = the chassis typed off the car. It may be any car of this check that is not confirmed yet (two cars of the same model).
+                    $cs = $pdo->prepare("SELECT i.id, i.car_id, i.label, i.chassis, c.branch FROM stock_check_items i JOIN stock_checks c ON c.id = i.check_id
+                                         WHERE i.check_id = ? AND i.car_id > 0 AND c.status IN ('active', 'expired') AND (i.state IS NULL OR i.state <> 'present')");
+                    $cs->execute([$cid]);
+                    $cands = []; $place = '';
+                    foreach ($cs->fetchAll(PDO::FETCH_ASSOC) as $r) { $cands[(int)$r['id']] = ['car_id' => (int)$r['car_id'], 'chassis' => (string)$r['chassis'], 'label' => (string)$r['label']]; $place = (string)$r['branch']; }
+                    $row = (int)($in['item'] ?? 0);
+                    if (!isset($cands[$row])) { echo json_encode(['ok' => false, 'error' => 'gone']); exit; }
+                    $t = chassis_try($pdo, $uid, $me, 'check', $cands, $row, (string)($in['chassis'] ?? ''), $place);
+                    if (!$t['ok']) {
+                        echo json_encode(['ok' => false, 'error' => $t['empty'] ? 'empty' : 'chassis', 'locked' => $t['locked'], 'left' => $t['left'], 'go' => $t['locked'] ? 'transfer_lock.php?lang=' . $lang : '']); exit;
+                    }
+                    $in['item'] = $t['ref'];   // the car this number belongs to
+                    $shown = (string)$cands[$t['ref']]['chassis'];
+                }
                 $prev = $pdo->prepare("SELECT i.state, i.note, i.label, i.chassis, c.branch FROM stock_check_items i JOIN stock_checks c ON c.id = i.check_id WHERE i.id = ? AND i.check_id = ?");
                 $prev->execute([(int)($in['item'] ?? 0), $cid]);
                 $prev = $prev->fetch(PDO::FETCH_ASSOC);
@@ -68,11 +86,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $counts = smart_check_counts($pdo, $cid);
                 // the admin follows the check car by car (one notification per check on the phone, updated each time)
                 if ($prev && $state && ($prev['state'] !== $state || ($state === 'missing' && $note !== '' && $note !== (string)$prev['note']))) {
-                    notify_event($pdo, 'check_item', ['id' => $cid, 'branch' => $prev['branch'], 'label' => $prev['label'], 'chassis' => $prev['chassis'], 'state' => $state,
+                    notify_event($pdo, 'check_item', ['id' => $cid, 'branch' => $prev['branch'], 'label' => $prev['label'], 'chassis' => $state === 'present' ? $prev['chassis'] : '', 'state' => $state,
                         'note' => $note, 'done' => $counts[1], 'total' => $counts[0], 'missing' => $counts[3], 'actor' => $me, 'tag' => 'check-' . $cid]
                         + (($w = smart_check_watchers($pdo, $cid)) ? ['only' => $w] : []));
                 }
-                echo json_encode(['ok' => true, 'counts' => $counts]); exit;
+                echo json_encode(['ok' => true, 'counts' => $counts, 'item' => (int)($in['item'] ?? 0), 'chassis' => $shown ?? null]); exit;
             case 'extra':
                 if (!sc_access($pdo, $cid, $uid, false) && !$isBoss) break;
                 $txt = mb_substr(trim((string)($in['text'] ?? '')), 0, 200);
@@ -211,6 +229,15 @@ $ago = function ($s) use ($ar): string {
 .sc-it button.y.on{background:#16a34a;border-color:#16a34a;color:#fff}.sc-it button.n.on{background:#dc2626;border-color:#dc2626;color:#fff}
 .sc-it .nt{width:100%;display:none}.sc-it.missing .nt{display:block}
 .sc-it .by{font-size:11px;color:var(--mut);font-weight:700}
+.sc-how{margin-bottom:14px;padding:12px 16px;border-radius:14px;background:rgba(163,230,53,.07);border:1px solid rgba(163,230,53,.35);color:#d9f99d;font-size:13.5px;font-weight:700;line-height:1.8}
+.sc-how b{display:block;color:#fff;font-size:14.5px}
+.sc-it .chb{width:100%;display:none;flex-wrap:wrap;gap:8px}.sc-it.asking .chb{display:flex}
+.sc-it .chin{flex:1;min-width:0;height:44px;border-color:rgba(163,230,53,.45);font-family:Inter,monospace;font-size:16px;font-weight:800;letter-spacing:1px;text-transform:uppercase;direction:ltr;text-align:center}
+.sc-it .chin::placeholder{font-family:Tajawal,sans-serif;font-size:13px;font-weight:700;letter-spacing:0;text-transform:none}
+.sc-it .chok{height:44px;background:#16a34a;border-color:#16a34a;color:#fff}
+.sc-it .cherr{flex-basis:100%;font-size:13px;font-weight:800;color:#fca5a5;line-height:1.7}.sc-it .cherr:empty{display:none}
+.sc-it.shake{animation:scShake .4s}
+@keyframes scShake{25%{transform:translateX(-6px)}50%{transform:translateX(6px)}75%{transform:translateX(-3px)}}
 .sc-ex{display:flex;gap:8px;margin-top:6px}.sc-ex input{flex:1}
 .sc-exl span{display:inline-flex;align-items:center;gap:6px;margin:6px 6px 0 0;padding:5px 10px;border-radius:999px;background:rgba(250,204,21,.1);border:1px solid rgba(250,204,21,.35);color:#fde68a;font-size:12.5px;font-weight:800}
 .sc-exl span button{border:0;background:none;color:#fca5a5;cursor:pointer;font-size:13px}
@@ -228,7 +255,7 @@ $ago = function ($s) use ($ar): string {
         <div class="nf-nav">
             <?php if ($isBoss): ?><a class="nf-btn pur" href="permissions_admin.php?lang=<?= $lang ?>">🔐 <?= $ar ? 'الصلاحيات' : 'Permissions' ?></a><?php endif; ?>
             <?php if ($isBoss && $check): ?><a class="nf-btn" href="stock_check.php?lang=<?= $lang ?>">📋 <?= $ar ? 'كل عمليات الجرد' : 'All checks' ?></a><?php endif; ?>
-            <?php if (!user_lock_active($pdo, $uid)): ?><a class="nf-btn" href="dashboard.php?lang=<?= $lang ?>">🏠 <?= $ar ? 'الرئيسية' : 'Dashboard' ?></a><?php else: ?><a class="nf-btn" href="transfer_lock.php?lang=<?= $lang ?>">🔒 <?= $ar ? 'رجوع' : 'Back' ?></a><?php endif; ?>
+            <?php if ($myChecks && !$isAdmin && !user_lock_active($pdo, $uid)): /* the system is closed until the check is finished */ ?><?php elseif (!user_lock_active($pdo, $uid)): ?><a class="nf-btn" href="dashboard.php?lang=<?= $lang ?>">🏠 <?= $ar ? 'الرئيسية' : 'Dashboard' ?></a><?php else: ?><a class="nf-btn" href="transfer_lock.php?lang=<?= $lang ?>">🔒 <?= $ar ? 'رجوع' : 'Back' ?></a><?php endif; ?>
             <a class="nf-btn ghost" href="?lang=<?= $ar ? 'en' : 'ar' ?><?= $check ? '&id=' . (int)$check['id'] : '' ?>"><?= $ar ? 'English' : 'العربية' ?></a>
         </div>
     </header>
@@ -308,9 +335,14 @@ $ago = function ($s) use ($ar): string {
             <?php if (in_array($check['status'], ['active', 'expired'], true)): ?><div class="sc-cd" id="scCd" data-secs="<?= (int)$check['secs'] ?>">—</div><?php endif; ?>
         </div>
         <div class="sc-bar"><i id="scBar" style="width:<?= $cT ? round($cM * 100 / $cT) : 100 ?>%"></i></div>
-        <?php if ($doMode): ?><input class="sc-in sc-search" id="scQ" placeholder="🔍 <?= $ar ? 'ابحث بالشاسيه أو الموديل…' : 'Search chassis or model…' ?>"><?php endif; ?>
+        <?php if ($doMode): ?><input class="sc-in sc-search" id="scQ" placeholder="🔍 <?= $isAdmin ? ($ar ? 'ابحث بالشاسيه أو الموديل…' : 'Search chassis or model…') : ($ar ? 'ابحث بالموديل أو اللون…' : 'Search model or colour…') ?>"><?php endif; ?>
     </div>
 
+    <?php if ($doMode && !$isAdmin): ?>
+    <div class="sc-how">🔑 <b><?= $ar ? 'طريقة تأكيد وجود السيارة' : 'How to confirm a car' ?></b>
+        <?= $ar ? 'اضغط «موجودة» ثم اكتب رقم الشاسيه من السيارة نفسها. إذا كان الرقم يبدأ بأصفار فتجاوزها واكتب الأرقام التي بعدها فقط (مثال: 000482 تُكتب 482). الرقم غير الصحيح مرتين يوقف النظام.'
+                : 'Tap "Here", then type the chassis number off the car itself. If it starts with zeros, skip them (000482 → 482). Two wrong numbers stop your system.' ?></div>
+    <?php endif; ?>
     <?php if (!empty($check['note'])): ?><div class="nf-card" style="padding:12px 16px">📝 <?= htmlspecialchars($check['note']) ?></div><?php endif; ?>
 
     <?php if ($isBoss): ?>
@@ -329,11 +361,13 @@ $ago = function ($s) use ($ar): string {
 
     <section class="nf-card" id="scItems">
         <?php foreach ($items as $it): if ((int)$it['car_id'] === 0) continue; ?>
-        <div class="sc-it <?= htmlspecialchars((string)$it['state']) ?>" data-id="<?= (int)$it['id'] ?>" data-q="<?= htmlspecialchars(mb_strtolower($it['label'] . ' ' . $it['chassis'])) ?>">
-            <div class="i"><b>🚗 <?= htmlspecialchars($it['label']) ?></b><span class="ch"><?= htmlspecialchars((string)$it['chassis']) ?></span>
+        <?php $seeCh = $isAdmin || !$doMode && $isBoss || $it['state'] === 'present' || !in_array($check['status'], ['active', 'expired'], true);   // the number stays hidden from whoever is doing the check until they type it ?>
+        <div class="sc-it <?= htmlspecialchars((string)$it['state']) ?>" data-id="<?= (int)$it['id'] ?>" data-q="<?= htmlspecialchars(mb_strtolower($it['label'] . ($seeCh ? ' ' . $it['chassis'] : ''))) ?>">
+            <div class="i"><b>🚗 <?= htmlspecialchars($it['label']) ?></b><span class="ch"><?= $seeCh ? htmlspecialchars((string)$it['chassis']) : '🔑 ' . chassis_mask() ?></span>
                 <?php if ($it['marked_by']): ?><div class="by">✍️ <?= htmlspecialchars($it['marked_by']) ?><?= $it['note'] ? ' · 📝 ' . htmlspecialchars($it['note']) : '' ?></div><?php endif; ?></div>
             <?php if ($doMode): ?>
             <div class="bt"><button type="button" class="y<?= $it['state'] === 'present' ? ' on' : '' ?>">✅ <?= $ar ? 'موجودة' : 'Here' ?></button><button type="button" class="n<?= $it['state'] === 'missing' ? ' on' : '' ?>">❌ <?= $ar ? 'غير موجودة' : 'Missing' ?></button></div>
+            <?php if (!$isAdmin): ?><div class="chb"><input class="sc-in chin" autocapitalize="characters" autocomplete="off" autocorrect="off" spellcheck="false" maxlength="40" placeholder="<?= $ar ? 'اكتب رقم الشاسيه من السيارة' : 'Type the chassis from the car' ?>"><button type="button" class="chok">✅ <?= $ar ? 'تأكيد' : 'Confirm' ?></button><div class="cherr"></div></div><?php endif; ?>
             <input class="sc-in nt" maxlength="200" placeholder="<?= $ar ? 'ملاحظة: أين هي؟ (اختياري)' : 'Note: where is it? (optional)' ?>" value="<?= htmlspecialchars((string)$it['note']) ?>">
             <?php else: ?>
             <span class="sc-st <?= $it['state'] === 'present' ? 'done' : ($it['state'] === 'missing' ? 'expired' : '') ?>"><?= $it['state'] === 'present' ? ($ar ? '✅ موجودة' : '✅ here') : ($it['state'] === 'missing' ? ($ar ? '❌ غير موجودة' : '❌ missing') : ($ar ? '⏳ لم تُراجع' : '⏳ not checked')) ?></span>
@@ -408,14 +442,39 @@ $ago = function ($s) use ($ar): string {
     items.forEach(it => {
         const y = it.querySelector('.y'), n = it.querySelector('.n'), nt = it.querySelector('.nt');
         if (!y) return;
+        const paint = (el, state) => {
+            el.classList.remove('present', 'missing', 'asking'); el.classList.add(state);
+            el.querySelector('.y').classList.toggle('on', state === 'present'); el.querySelector('.n').classList.toggle('on', state === 'missing');
+        };
         const set = async (state) => {
-            it.classList.remove('present', 'missing'); it.classList.add(state);
-            y.classList.toggle('on', state === 'present'); n.classList.toggle('on', state === 'missing');
+            paint(it, state);
             const r = await post({ action: 'mark', item: +it.dataset.id, state, note: state === 'missing' ? nt.value : '' });
-            if (r.ok) counts(r.counts);
+            if (r.ok) counts(r.counts); else if (r.go) location.href = r.go;
             if (state === 'missing') nt.focus();
         };
-        y.addEventListener('click', () => set('present'));
+        /* «موجودة»: the chassis is typed off the car (admins confirm with one tap) */
+        const chin = it.querySelector('.chin'), cherr = it.querySelector('.cherr');
+        const ask = () => { if (it.classList.contains('present')) return; it.classList.add('asking'); cherr.textContent = ''; chin.focus(); };
+        const send = async () => {
+            if (!chin.value.trim()) { chin.focus(); return; }
+            const ok = it.querySelector('.chok'); ok.disabled = true;
+            const r = await post({ action: 'mark', item: +it.dataset.id, state: 'present', chassis: chin.value }).catch(() => ({ ok: false, error: 'net' }));
+            ok.disabled = false;
+            if (r.ok) {
+                const el = items.find(x => +x.dataset.id === r.item) || it;      // two cars of the same model: the number decides which one
+                paint(el, 'present'); it.classList.remove('asking'); chin.value = '';
+                if (r.chassis) el.querySelector('.ch').textContent = r.chassis;
+                if (el !== it) { el.scrollIntoView({ block: 'center', behavior: 'smooth' }); }
+                counts(r.counts);
+            } else if (r.go) { location.href = r.go; }
+            else {
+                cherr.textContent = r.error === 'chassis' ? (AR ? '❌ رقم الشاسيه غير صحيح. راجع الرقم على السيارة نفسها — إذا أُدخل رقم غير صحيح مرة أخرى يتوقف النظام.' : '❌ Wrong chassis number. Check the number on the car — one more wrong number stops your system.')
+                                : (AR ? 'تعذّر الحفظ — حاول مرة أخرى' : 'Could not save — try again');
+                it.classList.remove('shake'); void it.offsetWidth; it.classList.add('shake'); chin.select();
+            }
+        };
+        if (chin) { it.querySelector('.chok').addEventListener('click', send); chin.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); send(); } }); }
+        y.addEventListener('click', () => chin ? ask() : set('present'));
         n.addEventListener('click', () => set('missing'));
         nt.addEventListener('change', () => post({ action: 'mark', item: +it.dataset.id, state: 'missing', note: nt.value }));
     });
