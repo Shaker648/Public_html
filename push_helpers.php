@@ -1027,6 +1027,7 @@ function push_flush(): void
     if (!$jobs) return;
     // let the user go: the page is done, the phones get their message after
     if (session_status() === PHP_SESSION_ACTIVE) session_write_close();
+    while (ob_get_level() > 0) @ob_end_flush();   // the whole page first (app_shell.php buffers it)
     if (function_exists('fastcgi_finish_request')) fastcgi_finish_request();
     elseif (function_exists('litespeed_finish_request')) litespeed_finish_request();
     ignore_user_abort(true);
