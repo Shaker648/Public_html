@@ -97,6 +97,8 @@ try {
         $st = $pdo->prepare("SELECT l.ref FROM notify_inbox i JOIN notify_log l ON l.id = i.log_id WHERE i.id = ? AND i.user_id = ? AND l.event = 'transfer_incoming'");
         $st->execute([(int)($in['id'] ?? 0), $uid]);
         $ref = (string)$st->fetchColumn();
+        // everyone but an admin confirms by typing the chassis off the car, on the receiving page
+        if (($_SESSION['role'] ?? '') !== 'admin') feed_out(['ok' => true, 'n' => 0, 'go' => 'transfer_receive.php']);
         $n = strpos($ref, 'mv:') === 0 ? smart_receive($pdo, explode(',', substr($ref, 3)), (string)$_SESSION['username']) : 0;
         feed_out(['ok' => true, 'n' => $n]);
     }

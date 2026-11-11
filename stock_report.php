@@ -126,6 +126,8 @@ if ($dateTo         !== '') { $where[] = "created_at <= ?"; $params[] = $dateTo 
    $where / $params are kept for reference and are no longer executed. */
 $cars = $pdo->query("SELECT * FROM cars WHERE status IN ('available','reserved') ORDER BY branch, brand, model, trim_name")
             ->fetchAll(PDO::FETCH_ASSOC);
+// cars waiting to be confirmed by typing their chassis (on their way to a branch / in a stock check): hidden until then, admins see it
+if (is_file(__DIR__ . '/chassis_gate.php')) { require_once __DIR__ . '/chassis_gate.php'; chassis_mask_rows($pdo, $cars); }
 
 $totalCars   = count($cars);
 $branchCount = $pdo->query("SELECT COUNT(*) FROM branches")->fetchColumn();

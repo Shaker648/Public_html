@@ -45,7 +45,9 @@ try {
                 $ok = true;
                 $go = 'transfer_receive.php?lang=' . $lang;
             } elseif ($a === 'recv' && $row['event'] === 'transfer_incoming' && strpos((string)$row['ref'], 'mv:') === 0) {
-                smart_receive($pdo, explode(',', substr((string)$row['ref'], 3)), (string)$row['username']);
+                // receiving is confirmed by typing the chassis off the car: the button opens that page (admins keep the one tap)
+                $ru = $pdo->prepare("SELECT role FROM users WHERE username = ?"); $ru->execute([(string)$row['username']]);
+                if ($ru->fetchColumn() === 'admin') smart_receive($pdo, explode(',', substr((string)$row['ref'], 3)), (string)$row['username']);
                 $pdo->prepare("UPDATE notify_inbox SET seen_at = COALESCE(seen_at, NOW()), read_at = COALESCE(read_at, NOW()) WHERE id = ?")->execute([(int)$row['id']]);
                 $ok = true;
                 $go = 'transfer_receive.php?lang=' . $lang;

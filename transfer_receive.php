@@ -21,6 +21,7 @@ $me   = (string)$_SESSION['username'];
 $uid  = (int)$_SESSION['user_id'];
 push_tables($pdo);
 $canResolve = in_array($_SESSION['role'] ?? '', ['admin', 'manager'], true);
+$isAdmin = ($_SESSION['role'] ?? '') === 'admin';   // admins see the chassis and confirm with one tap; everyone else types it
 
 /* ─── confirm / report / decide ─── */
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -33,6 +34,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     } elseif (($_POST['act'] ?? '') === 'resolve' && $canResolve) {
         $ok = smart_resolve_issue($pdo, (int)($_POST['mid'] ?? 0), (string)($_POST['how'] ?? ''), $me, (string)($_POST['branch'] ?? ''));
         $_SESSION['tr_flash'] = $ok ? ['ok', $ar ? '✅ تم حفظ القرار وإبلاغ المعنيين' : '✅ Decision saved and people told'] : ['bad', $ar ? 'تعذّر حفظ القرار' : 'Could not save the decision'];
+    } elseif (!$isAdmin) {
+        // the receiving branch types the chassis off the car — it is not shown to them
+        $mid = (int)($_POST['mid'] ?? 0);
+        $cands = []; $place = '';
+        foreach (smart_pending_transfers($pdo, '', 7) as $p) if ((int)$p['mid'] === $mid) $place = (string)$p['to_branch'];
+        foreach (smart_pending_transfers($pdo, '', 7) as $p) if ($place !== '' && $p['to_branch'] === $place)
+            $cands[(int)$p['mid']] = ['car_id' => (int)$p['car_id'], 'chassis' => (string)$p['chassis'], 'label' => trim($p['brand'] . ' ' . $p['model'] . ' ' . $p['trim_name'])];
+        if (!isset($cands[$mid])) $_SESSION['tr_flash'] = ['bad', $ar ? 'تم تأكيد استلام هذه السيارة من قبل' : 'Already confirmed'];
+        else {
+            $t = chassis_try($pdo, $uid, $me, 'receive', $cands, $mid, (string)($_POST['chassis'] ?? ''), $place);
+            if ($t['ok']) {
+                smart_receive($pdo, [$t['ref']], $me);
+                $_SESSION['tr_flash'] = ['ok', $ar ? '✅ رقم الشاسيه صحيح — تم تأكيد استلام ' . $cands[$t['ref']]['label'] . ' وأُبلغ من قام بنقلها' : '✅ Chassis correct — ' . $cands[$t['ref']]['label'] . ' received, the sender was told'];
+            } elseif ($t['locked']) { header('Location: transfer_lock.php?lang=' . $lang); exit; }
+            elseif ($t['empty']) $_SESSION['tr_flash'] = ['bad', $ar ? 'اكتب رقم الشاسيه الموجود على السيارة أولاً' : 'Type the chassis number on the car first'];
+            else $_SESSION['tr_flash'] = ['bad', $ar ? '❌ رقم الشاسيه غير صحيح. راجع الرقم على السيارة نفسها وأعد المحاولة — إذا أُدخل رقم غير صحيح مرة أخرى يتوقف النظام.' : '❌ Wrong chassis number. Check the number on the car and try again — one more wrong number stops your system.'];
+        }
     } else {
         $n = smart_receive($pdo, (array)($_POST['mids'] ?? []), $me);
         $_SESSION['tr_flash'] = $n ? ['ok', $ar ? '✅ تم تأكيد استلام ' . push_ar_cars($n) . ' — وأُبلغ من قام بنقلها' : '✅ ' . $n . ' received — the sender was told']
@@ -121,6 +139,12 @@ $col = fn($c) => push_color_label($pdo, (string)$c, $lang);
 @keyframes trBob{50%{transform:translateY(-6px)}}
 .tr-empty b{display:block;font-size:18px;margin-bottom:4px}
 .tr-rec .nf-item{cursor:default}
+.ch-form{display:flex;gap:8px}
+.ch-in{flex:1;min-width:0;height:44px;border-radius:12px;border:1.5px solid rgba(163,230,53,.45);background:#070d1c;color:#f1f5f9;font-family:Inter,monospace;font-size:16px;font-weight:800;letter-spacing:1px;padding:0 12px;outline:none;text-transform:uppercase;direction:ltr;text-align:center}
+.ch-in::placeholder{font-family:Tajawal,sans-serif;font-size:13px;font-weight:700;letter-spacing:0;text-transform:none;color:#64748b}
+.ch-in:focus{border-color:#a3e635;box-shadow:0 0 0 3px rgba(163,230,53,.15)}
+.ch-how{margin-bottom:14px;padding:12px 16px;border-radius:14px;background:rgba(163,230,53,.07);border:1px solid rgba(163,230,53,.35);color:#d9f99d;font-size:13.5px;font-weight:700;line-height:1.8}
+.ch-how b{display:block;color:#fff;font-size:14.5px}
 .tr-flash{padding:12px 16px;border-radius:14px;font-weight:800;margin-bottom:14px}
 .tr-flash.ok{background:rgba(34,197,94,.12);border:1px solid rgba(34,197,94,.4);color:#86efac}
 .tr-flash.bad{background:rgba(239,68,68,.12);border:1px solid rgba(239,68,68,.4);color:#fca5a5}
@@ -130,7 +154,8 @@ $col = fn($c) => push_color_label($pdo, (string)$c, $lang);
 <div class="nf-wrap">
     <header class="nf-head">
         <div><h1>🚚 <?= $ar ? 'سيارات في الطريق إلى الفروع' : 'Cars on their way' ?></h1>
-            <p><?= $ar ? 'اضغط «تم الاستلام» فور وصول السيارة إلى الفرع — ويصل إشعار لمن قام بنقلها' : 'Tap "Received" when the car reaches the branch — whoever sent it is told' ?></p></div>
+            <p><?= $isAdmin ? ($ar ? 'اضغط «تم الاستلام» فور وصول السيارة إلى الفرع — ويصل إشعار لمن قام بنقلها' : 'Tap "Received" when the car reaches the branch — whoever sent it is told')
+                         : ($ar ? 'عند وصول السيارة اكتب رقم الشاسيه الموجود عليها لتأكيد الاستلام — ويصل إشعار لمن قام بنقلها' : 'When the car arrives, type the chassis number on it to confirm — whoever sent it is told') ?></p></div>
         <div class="nf-nav">
             <a class="nf-btn" href="dashboard.php?lang=<?= $lang ?>">🏠 <?= $ar ? 'الرئيسية' : 'Dashboard' ?></a>
             <a class="nf-btn ghost" href="?lang=<?= $ar ? 'en' : 'ar' ?>"><?= $ar ? 'English' : 'العربية' ?></a>
@@ -144,7 +169,7 @@ $col = fn($c) => push_color_label($pdo, (string)$c, $lang);
         <h2>❗ <?= $ar ? 'بلاغات «لم تصل» — بانتظار قرار الإدارة' : '"Did not arrive" reports — waiting for a decision' ?> <span class="nf-count"><?= count($issues) ?></span></h2>
         <?php foreach ($issues as $is): ?>
         <div class="tr-i">
-            <div class="i"><b>🚗 <?= htmlspecialchars(trim($is['brand'] . ' ' . $is['model'] . ' ' . $is['trim_name'])) ?> · <?= htmlspecialchars($col($is['color'])) ?> · <span class="ch"><?= htmlspecialchars((string)$is['chassis']) ?></span></b>
+            <div class="i"><b>🚗 <?= htmlspecialchars(trim($is['brand'] . ' ' . $is['model'] . ' ' . $is['trim_name'])) ?> · <?= htmlspecialchars($col($is['color'])) ?> <?php if ($isAdmin): ?> · <span class="ch"><?= htmlspecialchars((string)$is['chassis']) ?></span><?php endif; ?></b>
                 <small>📍 <?= htmlspecialchars($br($is['from_branch'])) ?> ← <?= htmlspecialchars($br($is['to_branch'])) ?> · <?= $ar ? 'نقلها' : 'moved by' ?> <?= htmlspecialchars((string)$is['moved_by']) ?></small>
                 <small class="w">❗ <?= $ar ? 'أبلغ' : 'reported by' ?> <?= htmlspecialchars((string)$is['reported_by']) ?> · <?= htmlspecialchars($ago($is['age'])) ?><?= $is['note'] ? ' · 📝 ' . htmlspecialchars($is['note']) : '' ?></small></div>
             <?php if ($canResolve): ?>
@@ -168,12 +193,17 @@ $col = fn($c) => push_color_label($pdo, (string)$c, $lang);
     </section>
     <?php endif; ?>
 
+    <?php if ($groups && !$isAdmin): ?>
+    <div class="ch-how">🔑 <b><?= $ar ? 'طريقة تأكيد الاستلام' : 'How to confirm' ?></b>
+        <?= $ar ? 'اقرأ رقم الشاسيه من السيارة نفسها واكتبه في الخانة. إذا كان الرقم يبدأ بأصفار فتجاوزها واكتب الأرقام التي بعدها فقط (مثال: 000482 تُكتب 482). الرقم غير الصحيح مرتين يوقف النظام.'
+                : 'Read the chassis number off the car itself and type it. If it starts with zeros, skip them and type the rest (000482 → 482). Two wrong numbers stop your system.' ?></div>
+    <?php endif; ?>
     <?php foreach ($groups as $to => $cars): $isMine = in_array($to, $mine, true); ?>
     <section class="nf-card tr-br">
         <div class="tr-bh">
             <h2>📍 <?= htmlspecialchars($br($to)) ?> <span class="nf-count"><?= count($cars) ?></span></h2>
             <?php if ($isMine): ?><span class="tr-you"><?= $ar ? 'فرعك' : 'Your branch' ?></span><?php endif; ?>
-            <?php if (count($cars) > 1): ?>
+            <?php if ($isAdmin && count($cars) > 1): ?>
             <form method="post"><input type="hidden" name="csrf_token" value="<?= $csrf ?>">
                 <?php foreach ($cars as $c): ?><input type="hidden" name="mids[]" value="<?= (int)$c['mid'] ?>"><?php endforeach; ?>
                 <button type="submit" class="tr-all">✅ <?= $ar ? 'تأكيد استلام الكل (' . count($cars) . ')' : 'Received all (' . count($cars) . ')' ?></button></form>
@@ -183,14 +213,19 @@ $col = fn($c) => push_color_label($pdo, (string)$c, $lang);
             <?php foreach ($cars as $c): $late = (int)$c['hours'] >= 24; ?>
             <div class="tr-car<?= $late ? ' late' : '' ?>">
                 <div class="nm">🚗 <?= htmlspecialchars(trim($c['brand'] . ' ' . $c['model'] . ' ' . $c['trim_name'])) ?></div>
-                <div class="mt"><span><?= htmlspecialchars($col($c['color'])) ?></span><span><?= htmlspecialchars((string)$c['car_year']) ?></span><span class="ch"><?= htmlspecialchars((string)$c['chassis']) ?></span></div>
+                <div class="mt"><span><?= htmlspecialchars($col($c['color'])) ?></span><span><?= htmlspecialchars((string)$c['car_year']) ?></span><span class="ch"><?= $isAdmin ? htmlspecialchars((string)$c['chassis']) : '🔑 ' . chassis_mask() ?></span></div>
                 <div class="tr-road"><span><?= htmlspecialchars($br($c['from_branch'])) ?></span><span class="ln"></span><span><?= htmlspecialchars($br($to)) ?></span></div>
                 <?php if (isset($myDl[(int)$c['mid']])): ?><div class="tr-cd" data-secs="<?= $myDl[(int)$c['mid']] ?>">⏱️ <?= $ar ? 'متبقٍّ' : 'Left' ?> <b>—</b> <?= $ar ? 'لتأكيد الاستلام' : 'to confirm' ?></div><?php endif; ?>
                 <div class="ft">
                     <small class="<?= $late ? 'late' : '' ?>"><?= $late ? '⏳ ' : '🕐 ' ?><?= htmlspecialchars($ago((int)$c['hours'] * 3600 + 60)) ?> · <?= $ar ? 'نقلها' : 'by' ?> <?= htmlspecialchars((string)$c['moved_by']) ?></small>
-                    <form method="post"><input type="hidden" name="csrf_token" value="<?= $csrf ?>"><input type="hidden" name="mids[]" value="<?= (int)$c['mid'] ?>">
-                        <button type="submit" class="tr-ok">✅ <?= $ar ? 'تم الاستلام' : 'Received' ?></button></form>
+                    <?php if ($isAdmin): ?><form method="post"><input type="hidden" name="csrf_token" value="<?= $csrf ?>"><input type="hidden" name="mids[]" value="<?= (int)$c['mid'] ?>">
+                        <button type="submit" class="tr-ok">✅ <?= $ar ? 'تم الاستلام' : 'Received' ?></button></form><?php endif; ?>
                 </div>
+                <?php if (!$isAdmin): ?>
+                <form method="post" class="ch-form" autocomplete="off"><input type="hidden" name="csrf_token" value="<?= $csrf ?>"><input type="hidden" name="mid" value="<?= (int)$c['mid'] ?>">
+                    <input class="ch-in" name="chassis" inputmode="text" autocapitalize="characters" autocomplete="off" autocorrect="off" spellcheck="false" maxlength="40" required placeholder="<?= $ar ? 'اكتب رقم الشاسيه من السيارة' : 'Type the chassis from the car' ?>">
+                    <button type="submit" class="tr-ok">✅ <?= $ar ? 'تأكيد الاستلام' : 'Confirm' ?></button></form>
+                <?php endif; ?>
                 <form method="post" class="tr-missf"><input type="hidden" name="csrf_token" value="<?= $csrf ?>"><input type="hidden" name="act" value="missing"><input type="hidden" name="mid" value="<?= (int)$c['mid'] ?>"><input type="hidden" name="note" value="">
                     <button type="submit" class="tr-miss">❌ <?= $ar ? 'لم تصل' : 'Did not arrive' ?></button></form>
             </div>

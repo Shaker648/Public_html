@@ -292,6 +292,8 @@ $query = "
 $stmt = $pdo->prepare($query);
 $stmt->execute($params);
 $cars = $stmt->fetchAll(PDO::FETCH_ASSOC);
+// a car on its way to a branch, or being counted in a stock check, is confirmed by typing its chassis off the car — so it is hidden until then (admins see it)
+if (is_file(__DIR__ . '/chassis_gate.php')) { require_once __DIR__ . '/chassis_gate.php'; chassis_mask_rows($pdo, $cars); }
 
 $availableCarsList = [];
 $soldCarsList      = [];

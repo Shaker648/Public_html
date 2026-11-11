@@ -768,7 +768,7 @@ function notify_message(PDO $pdo, string $event, array $d, string $lang): array
                 $title = $ev[2] . ' ' . ($ar ? 'سيارة في الطريق إلى فرعك: ' : 'Car on its way to you: ') . $line;
                 $body[] = ($from !== '' ? ($ar ? 'من ' : 'from ') . $from . ' · ' : '') . ($col !== '' ? $col : '') . (!empty($car['chassis']) ? ' · 🔑 ' . $car['chassis'] : '');
             }
-            $body[] = $ar ? '👇 اضغط «تم الاستلام» فور وصولها' : '👇 Tap "Received" as soon as it arrives';
+            $body[] = $ar ? '🔑 عند وصولها اكتب رقم الشاسيه من السيارة لتأكيد الاستلام' : '🔑 When it arrives, type the chassis number off the car to confirm';
             $url = 'transfer_receive.php?lang=' . $lang;
             break;
         case 'transfer_received':
@@ -1121,7 +1121,8 @@ function notify_deliver(PDO $pdo, int $logId, string $event, array $msg, array $
         $acts = [];
         if ($t !== '') {
             if ($event === 'message' && $needAck)       $acts['ack']  = [$ar ? '👍 تم الاطلاع' : '👍 OK', 'notify_act.php?a=ack&t=' . $t];
-            if ($event === 'transfer_incoming')       { $acts['recv'] = [$ar ? '✅ تم الاستلام' : '✅ Received', 'notify_act.php?a=recv&t=' . $t];
+            if ($event === 'transfer_incoming')       { if (($roleOf[$uid] ?? '') === 'admin') $acts['recv'] = [$ar ? '✅ تم الاستلام' : '✅ Received', 'notify_act.php?a=recv&t=' . $t];
+                                                        else $acts['open'] = [$ar ? '🔑 تأكيد الاستلام' : '🔑 Confirm', $msg['url']];   // everyone else types the chassis on the page
                                                         $acts['miss'] = [$ar ? '❌ لم تصل' : '❌ Did not arrive', 'notify_act.php?a=miss&t=' . $t]; }
             if ($event === 'clockout_forgot')           $acts['open'] = [$ar ? '🔵 تسجيل الانصراف' : '🔵 Clock out', $msg['url']];
             if ($event === 'user_locked' && !empty($opts['ask_basma']) && ($roleOf[$uid] ?? '') === 'admin') {

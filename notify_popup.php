@@ -149,7 +149,8 @@ $NT = $ntLang === 'ar' ? [
       b.addEventListener('click', async e => {
         e.preventDefault(); e.stopPropagation(); if (b.classList.contains('done')) return;
         b.disabled = true;
-        try { await post({ action: 'recv', id: item.id }); b.textContent = NT.recvd; b.classList.add('done'); setTimeout(() => remove(el), 2200); }
+        try { const r = await post({ action: 'recv', id: item.id }); if (r && r.go) { location.href = r.go + '?lang=' + (document.documentElement.lang === 'en' ? 'en' : 'ar'); return; }
+              b.textContent = NT.recvd; b.classList.add('done'); setTimeout(() => remove(el), 2200); }
         catch (x) { b.disabled = false; }
       });
       el.querySelector('.tx').appendChild(b);
