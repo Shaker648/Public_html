@@ -628,6 +628,50 @@ function arDate($dt, $lang) {
         .chip:hover { background:rgba(255,255,255,.09); color:#e2e8f0; }
         .chip.on { background:#9333ea; border-color:transparent; color:#fff; }
         .chip-n { font-size:10.5px; font-weight:800; opacity:.75; }
+        .chip[hidden] { display:none !important; }
+        /* «يحتاج انتباهك» */
+        .att-strip { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin:0 0 12px; padding:10px 12px; border-radius:16px; background:linear-gradient(120deg,rgba(245,158,11,.10),rgba(15,23,42,.6)); border:1px solid rgba(245,158,11,.3); }
+        .att-h { font-size:12.5px; font-weight:900; color:#fcd34d; white-space:nowrap; }
+        .att-i { display:inline-flex; align-items:center; gap:6px; border:1px solid rgba(245,158,11,.4); background:rgba(245,158,11,.08); color:#fde68a; font:inherit; font-size:12.5px; font-weight:800; padding:7px 11px; border-radius:999px; cursor:pointer; text-align:start; }
+        .att-i b { font-size:14px; color:#fff; font-variant-numeric:tabular-nums; }
+        .att-i i { font-style:normal; opacity:.7; }
+        .att-i.res { border-color:rgba(168,85,247,.45); background:rgba(168,85,247,.1); color:#e9d5ff; }
+        .att-i.on { background:#f59e0b; border-color:#f59e0b; color:#1c1002; } .att-i.on b { color:#1c1002; }
+        .att-i.res.on { background:#a855f7; border-color:#a855f7; color:#fff; } .att-i.res.on b { color:#fff; }
+        [dir="ltr"] .att-i i { transform:scaleX(-1); }
+        /* nothing matches */
+        .dash-empty { grid-column:1/-1; display:flex; flex-direction:column; align-items:center; gap:6px; text-align:center; padding:38px 16px; border-radius:20px; border:1px dashed rgba(148,163,184,.25); background:rgba(15,23,42,.5); }
+        .dash-empty .de-ic { font-size:40px; opacity:.8; }
+        .dash-empty b { font-size:16px; color:#e2e8f0; }
+        .dash-empty span { font-size:13px; color:#94a3b8; font-weight:700; }
+        .dash-empty button { margin-top:10px; height:44px; padding:0 18px; border-radius:13px; border:1px solid rgba(147,51,234,.5); background:rgba(147,51,234,.18); color:#f3e8ff; font:inherit; font-size:14px; font-weight:800; cursor:pointer; }
+        /* a card that just changed (after the page refreshed itself) */
+        .vehicle-card.just-changed { animation:justChanged 2.4s ease 2; }
+        @keyframes justChanged { 0%,100% { box-shadow:0 0 0 0 rgba(56,189,248,0); } 30% { box-shadow:0 0 0 3px rgba(56,189,248,.8), 0 0 34px rgba(56,189,248,.45); } }
+        /* quick look */
+        .vc-titles { cursor:pointer; }
+        .pk-ov { position:fixed; inset:0; z-index:1200; background:rgba(2,6,23,.8); backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px); display:none; align-items:flex-end; justify-content:center; padding:12px; padding-bottom:calc(12px + env(safe-area-inset-bottom)); }
+        .pk-ov.on { display:flex; }
+        .pk { width:100%; max-width:520px; max-height:calc(100vh - 40px); overflow:auto; border-radius:26px; padding:10px 18px 18px; background:linear-gradient(170deg,#141c35,#0a1122); border:1px solid rgba(255,255,255,.1); box-shadow:0 30px 70px rgba(0,0,0,.55); animation:pkUp .3s cubic-bezier(.22,1,.36,1); }
+        @keyframes pkUp { from { opacity:0; transform:translateY(30px); } }
+        .pk-handle { width:44px; height:5px; border-radius:5px; background:rgba(255,255,255,.18); margin:0 auto 12px; }
+        .pk-head { display:flex; align-items:flex-start; justify-content:space-between; gap:10px; }
+        .pk-head h3 { font-size:19px; font-weight:900; line-height:1.4; }
+        .pk-head small { display:block; font-size:12.5px; color:#94a3b8; font-weight:700; margin-top:2px; }
+        .pk-x { width:38px; height:38px; flex-shrink:0; border-radius:12px; border:0; background:rgba(255,255,255,.07); color:#e2e8f0; font-size:16px; cursor:pointer; }
+        .pk-grid { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:14px; }
+        .pk-f { background:rgba(0,0,0,.25); border:1px solid rgba(255,255,255,.06); border-radius:14px; padding:9px 12px; min-width:0; }
+        .pk-f.wide { grid-column:1/-1; }
+        .pk-f label { display:block; font-size:10.5px; color:#94a3b8; font-weight:800; margin-bottom:3px; }
+        .pk-f div { font-size:14.5px; font-weight:800; color:#f1f5f9; overflow-wrap:anywhere; }
+        .pk-f .ch { font-family:'Courier New',monospace; color:#a3e635; letter-spacing:.5px; direction:ltr; unicode-bidi:isolate; }
+        .pk-h4 { font-size:13px; font-weight:900; color:#cbd5e1; margin:16px 0 8px; }
+        .pk-ev { display:flex; justify-content:space-between; gap:10px; padding:8px 0; border-top:1px solid rgba(255,255,255,.06); font-size:13px; }
+        .pk-ev b { font-weight:800; color:#e2e8f0; } .pk-ev small { color:#94a3b8; font-weight:700; white-space:nowrap; text-align:end; }
+        .pk-ev span { display:block; color:#94a3b8; font-size:11.5px; font-weight:700; margin-top:2px; }
+        .pk-acts { margin-top:14px; }
+        .pk-acts a { display:flex; align-items:center; justify-content:center; height:48px; border-radius:14px; background:rgba(147,51,234,.2); border:1px solid rgba(147,51,234,.5); color:#f3e8ff; font-weight:800; font-size:14.5px; text-decoration:none; }
+        .pk-msg { text-align:center; color:#94a3b8; font-weight:700; padding:26px 0; }
         .chip-sep { flex-shrink:0; width:1px; height:20px; background:rgba(255,255,255,.12); margin:0 3px; }
 
         @media (max-width:768px) {
@@ -1393,6 +1437,20 @@ body:has(#npCard.on) #f1c-chat-bubble { opacity:0; pointer-events:none; }
 
     <!-- ════════ Control band — search, counts and filters in one sticky strip.
          It stays pinned while you scroll, so the controls never leave. ════════ -->
+    <?php
+    /* «يحتاج انتباهك»: shown only when something is waiting. Tapping a line filters the cards to exactly those cars. */
+    $attAged = 0; $attRes = 0;
+    foreach ($cars as $__c) if (in_array($__c['status'] ?? '', ['available', 'reserved'], true)) {
+        if (($__c['days_in'] ?? null) !== null && (int)$__c['days_in'] >= 60) $attAged++;
+        if (($__c['status'] ?? '') === 'reserved' && !empty($reserveInfo[$__c['id']]['at']) && time() - strtotime($reserveInfo[$__c['id']]['at']) >= 7 * 86400) $attRes++;
+    }
+    if ($attAged || $attRes): ?>
+    <div class="att-strip" id="attStrip">
+        <span class="att-h">👀 <?= $lang === 'ar' ? 'يحتاج انتباهك' : 'Needs attention' ?></span>
+        <?php if ($attAged): ?><button type="button" class="att-i" data-age="old">⏳ <b><?= $attAged ?></b> <?= $lang === 'ar' ? ($attAged === 1 ? 'سيارة في المخزون منذ أكثر من 60 يوماً' : 'سيارات في المخزون منذ أكثر من 60 يوماً') : 'in stock for over 60 days' ?> <i>‹</i></button><?php endif; ?>
+        <?php if ($attRes): ?><button type="button" class="att-i res" data-age="resold">🔒 <b><?= $attRes ?></b> <?= $lang === 'ar' ? ($attRes === 1 ? 'سيارة محجوزة منذ أكثر من 7 أيام' : 'سيارات محجوزة منذ أكثر من 7 أيام') : 'reserved for over 7 days' ?> <i>‹</i></button><?php endif; ?>
+    </div>
+    <?php endif; ?>
     <div class="control-band" id="controlBand">
 
         <div class="cb-top">
@@ -1462,6 +1520,8 @@ body:has(#npCard.on) #f1c-chat-bubble { opacity:0; pointer-events:none; }
             </button>
             <?php endif; ?>
 
+            <button type="button" class="chip chip-age" data-age="new">✨ <?= $lang === 'ar' ? 'جديدة' : 'New' ?> <span class="chip-n"></span></button>
+            <button type="button" class="chip chip-age" data-age="old">⏳ <?= $lang === 'ar' ? '+60 يوماً' : '60+ days' ?> <span class="chip-n"></span></button>
             <?php if (count($branchChips) > 1): ?>
                 <span class="chip-sep"></span>
                 <button type="button" class="chip chip-branch on" data-branch="">
@@ -1473,6 +1533,7 @@ body:has(#npCard.on) #f1c-chat-bubble { opacity:0; pointer-events:none; }
                 </button>
                 <?php endforeach; ?>
             <?php endif; ?>
+            <span class="chip-sep" id="brandSep" hidden></span><span id="brandChips" style="display:contents"></span>
             <select class="chip-sort" id="sortSel" aria-label="<?= $lang === 'ar' ? 'ترتيب' : 'Sort' ?>">
                 <option value="new">↕️ <?= $lang === 'ar' ? 'الأحدث' : 'Newest' ?></option>
                 <option value="old"><?= $lang === 'ar' ? 'الأقدم في المخزون' : 'Longest in stock' ?></option>
@@ -1588,6 +1649,8 @@ body:has(#npCard.on) #f1c-chat-bubble { opacity:0; pointer-events:none; }
                  data-branch="<?= htmlspecialchars((string)$car['branch'], ENT_QUOTES) ?>"
                  data-id="<?= (int)$car['id'] ?>"
                  data-days="<?= $daysIn === null ? -1 : $daysIn ?>"
+                 data-brand="<?= htmlspecialchars((string)$car['brand'], ENT_QUOTES) ?>"
+                 data-resdays="<?= ($isReserved && $resInfo && !empty($resInfo['at'])) ? max(0, (int)floor((time() - strtotime($resInfo['at'])) / 86400)) : -1 ?>"
                  data-price="<?= (float)($officialNum ?? 0) ?>"
                  data-model="<?= htmlspecialchars(mb_strtolower($car['brand'] . ' ' . $car['model'] . ' ' . $car['trim_name']), ENT_QUOTES) ?>">
 
@@ -1708,6 +1771,9 @@ body:has(#npCard.on) #f1c-chat-bubble { opacity:0; pointer-events:none; }
          about current stock and the scroll stays bounded. -->
 
 </div>
+
+<!-- quick look at one car -->
+<div class="pk-ov" id="pkOv"><div class="pk" id="pkBox" role="dialog"></div></div>
 
 <button type="button" class="live-bar" id="liveBar" onclick="location.reload()">
     <span class="dot"></span><span id="liveTxt"></span><span class="go"><?= $lang === 'ar' ? 'تحديث' : 'Refresh' ?></span>
@@ -1892,7 +1958,12 @@ body:has(#npCard.on) #f1c-chat-bubble { opacity:0; pointer-events:none; }
 
         let fStatus = '';
         let fBranch = '';
+        let fAge = '';      // '' | new (added in the last 3 days) | old (60+ days) | resold (reserved 7+ days)
+        let fBrand = '';
         let emptyMsg = null;
+        const ageOk = c => fAge === '' || (fAge === 'new' ? (+c.dataset.days >= 0 && +c.dataset.days <= 3) : fAge === 'old' ? +c.dataset.days >= 60 : +c.dataset.resdays >= 7);
+        /* the filters are remembered while the app is open, so an automatic refresh keeps your place */
+        const keep = () => { try { sessionStorage.setItem('f1cDashF', JSON.stringify({ s: fStatus, b: fBranch, a: fAge, r: fBrand, q: input ? input.value : '' })); } catch (e) {} };
 
         /* أ/إ/آ → ا, ة → ه, ى → ي, no tashkeel — so "ايدو" finds "إيدو" */
         const norm = s => String(s || '').toLowerCase().replace(/[\u064B-\u065F\u0640]/g, '').replace(/[أإآ]/g, 'ا').replace(/ة/g, 'ه').replace(/ى/g, 'ي').replace(/\s+/g, ' ');
@@ -1906,7 +1977,7 @@ body:has(#npCard.on) #f1c-chat-bubble { opacity:0; pointer-events:none; }
                 const okText   = q === '' || q.split(' ').every(w => card._s.indexOf(w) !== -1);
                 const okStatus = fStatus === '' || card.getAttribute('data-status') === fStatus;
                 const okBranch = fBranch === '' || card.getAttribute('data-branch') === fBranch;
-                const show = okText && okStatus && okBranch;
+                const show = okText && okStatus && okBranch && ageOk(card) && (fBrand === '' || card.dataset.brand === fBrand);
                 card.style.display = show ? '' : 'none';
                 if (show) shown++;
             });
@@ -1920,13 +1991,42 @@ body:has(#npCard.on) #f1c-chat-bubble { opacity:0; pointer-events:none; }
             if (grid) {
                 if (!emptyMsg) {
                     emptyMsg = document.createElement('div');
-                    emptyMsg.style.cssText = 'grid-column:1/-1;text-align:center;color:#64748b;padding:34px;font-size:15px;';
-                    emptyMsg.textContent = '🔍 ' + (LANG_NO_RESULTS || 'No results');
+                    emptyMsg.className = 'dash-empty';
+                    emptyMsg.innerHTML = '<div class="de-ic">🔍</div><b>' + (LANG_NO_RESULTS || 'No results') + '</b><span>' + <?= json_encode($lang === 'ar' ? 'لا توجد سيارات تطابق البحث والفلاتر المختارة' : 'No cars match the search and the chosen filters', JSON_UNESCAPED_UNICODE) ?> + '</span>' +
+                        '<button type="button">✕ ' + <?= json_encode($lang === 'ar' ? 'مسح البحث والفلاتر' : 'Clear search and filters', JSON_UNESCAPED_UNICODE) ?> + '</button>';
+                    emptyMsg.querySelector('button').addEventListener('click', clearAll);
                     grid.appendChild(emptyMsg);
                 }
                 emptyMsg.style.display = (shown === 0 && cards.length > 0) ? '' : 'none';
             }
+            document.querySelectorAll('.chip-age').forEach(c => c.classList.toggle('on', c.dataset.age === fAge));
+            document.querySelectorAll('.att-i').forEach(c => c.classList.toggle('on', c.dataset.age === fAge));
+            document.querySelectorAll('.chip-brand').forEach(c => c.classList.toggle('on', c.dataset.brand === fBrand));
+            keep();
         }
+        function clearAll() { if (input) input.value = ''; fAge = ''; fBrand = ''; fBranch = ''; setBranch(''); setStatus(''); }
+        function setAge(v) { fAge = fAge === v ? '' : v; apply(); }
+        function setBrand(v) { fBrand = fBrand === v ? '' : v; apply(); }
+        /* «جديدة» / «+60 يوماً» chips with their counts (hidden when there are none) */
+        document.querySelectorAll('.chip-age').forEach(function (c) {
+            const n = cards.filter(x => c.dataset.age === 'new' ? (+x.dataset.days >= 0 && +x.dataset.days <= 3) : +x.dataset.days >= 60).length;
+            c.querySelector('.chip-n').textContent = n; c.hidden = n === 0;
+            c.addEventListener('click', () => setAge(c.dataset.age));
+        });
+        document.querySelectorAll('.att-i').forEach(c => c.addEventListener('click', () => { setAge(c.dataset.age); if (fAge && grid) grid.scrollIntoView({ behavior: 'smooth', block: 'start' }); }));
+        /* one chip per brand, with its count */
+        (function () {
+            const box = document.getElementById('brandChips'), sep = document.getElementById('brandSep'); if (!box) return;
+            const count = {}; cards.forEach(c => { const b = c.dataset.brand || ''; if (b) count[b] = (count[b] || 0) + 1; });
+            const names = Object.keys(count).sort((a, b) => count[b] - count[a]);
+            if (names.length < 2) return;
+            sep.hidden = false;
+            names.forEach(function (b) {
+                const el = document.createElement('button'); el.type = 'button'; el.className = 'chip chip-brand'; el.dataset.brand = b;
+                el.appendChild(document.createTextNode(b + ' ')); const n = document.createElement('span'); n.className = 'chip-n'; n.textContent = count[b]; el.appendChild(n);
+                el.addEventListener('click', () => setBrand(b)); box.appendChild(el);
+            });
+        })();
 
         if (input) input.addEventListener('input', apply);
         if (clearBt) clearBt.addEventListener('click', function () {
@@ -1955,7 +2055,10 @@ body:has(#npCard.on) #f1c-chat-bubble { opacity:0; pointer-events:none; }
         }
 
         document.querySelectorAll('.chip-status').forEach(function (c) {
-            c.addEventListener('click', function () { setStatus(c.getAttribute('data-status') || ''); });
+            const v = c.getAttribute('data-status') || '';
+            const n = document.createElement('span'); n.className = 'chip-n'; n.textContent = cards.filter(x => v === '' || x.getAttribute('data-status') === v).length;
+            c.appendChild(document.createTextNode(' ')); c.appendChild(n);
+            c.addEventListener('click', function () { setStatus(v); });
         });
         document.querySelectorAll('.chip-branch').forEach(function (c) {
             c.addEventListener('click', function () { setBranch(c.getAttribute('data-branch') || ''); });
@@ -1991,6 +2094,15 @@ body:has(#npCard.on) #f1c-chat-bubble { opacity:0; pointer-events:none; }
             }).observe(probe);
         }
 
+        try {   // back from an automatic refresh (or a page of the app): same filters as before
+            const k = JSON.parse(sessionStorage.getItem('f1cDashF') || 'null');
+            if (k && !new URLSearchParams(location.search).get('search')) {
+                if (input && k.q) input.value = k.q;
+                fAge = k.a || ''; fBrand = (k.r && cards.some(c => c.dataset.brand === k.r)) ? k.r : '';
+                if (k.b && document.querySelector('.chip-branch[data-branch="' + String(k.b).replace(/"/g, '\\"') + '"]')) { fBranch = k.b; document.querySelectorAll('.chip-branch').forEach(c => c.classList.toggle('on', (c.getAttribute('data-branch') || '') === fBranch)); }
+                if (k.s) { fStatus = k.s; document.querySelectorAll('.chip-status').forEach(c => c.classList.toggle('on', (c.getAttribute('data-status') || '') === fStatus)); document.querySelectorAll('.pill[data-status]').forEach(pl => pl.classList.toggle('on', (pl.getAttribute('data-status') || '') === fStatus)); }
+            }
+        } catch (e) {}
         apply();   // honour a ?search= value that arrived in the URL
 
         /* ── sort: newest / longest in stock / price / model (remembered per browser) ── */
@@ -2034,6 +2146,12 @@ body:has(#npCard.on) #f1c-chat-bubble { opacity:0; pointer-events:none; }
                     for (const id in r.sig) if (SIG[id] !== r.sig[id]) n++;       // new or changed
                     for (const id in SIG) if (!(id in r.sig)) n++;               // gone (sold …)
                     if (n > 0) {
+                        const ids = []; for (const id in r.sig) if (SIG[id] !== r.sig[id]) ids.push(id);
+                        try { sessionStorage.setItem('f1cDashBack', JSON.stringify({ y: window.scrollY, ids: ids, t: Date.now() })); } catch (e) {}
+                        // nothing open and nothing being typed → the page refreshes itself and comes back to the same place; otherwise the bar asks first
+                        const typing = document.activeElement && /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName);
+                        const open = document.querySelector('.vc-more[open], .more-overlay.open, .pk-ov.on, .modal.open, .modal-overlay.open, .modal-overlay.show, .f1s-ov.on, [class*="overlay"].active, [class*="modal"].active, dialog[open]');
+                        if (!typing && !open) { location.reload(); return; }
                         txt.textContent = AR ? (n === 1 ? 'في تغيير جديد في المخزون' : n + ' تغييرات جديدة في المخزون') : (n === 1 ? '1 change in the stock' : n + ' changes in the stock');
                         bar.classList.add('on');
                     }
@@ -2044,7 +2162,43 @@ body:has(#npCard.on) #f1c-chat-bubble { opacity:0; pointer-events:none; }
         }
         setInterval(pulse, 45000);
         document.addEventListener('visibilitychange', () => { if (!document.hidden) pulse(); });
+        /* back from a refresh the page did by itself: same scroll position, and the cards that changed flash */
+        try {
+            const bk = JSON.parse(sessionStorage.getItem('f1cDashBack') || 'null'); sessionStorage.removeItem('f1cDashBack');
+            if (bk && Date.now() - bk.t < 20000) {
+                requestAnimationFrame(() => { window.scrollTo(0, bk.y || 0);
+                    (bk.ids || []).forEach(id => { const c = document.querySelector('.vehicle-card[data-id="' + String(id).replace(/\D/g, '') + '"]'); if (c) c.classList.add('just-changed'); }); });
+            }
+        } catch (e) {}
         if (document.getElementById('liveAct')) setTimeout(pulse, 400);   // fill "happening now" straight away
+    })();
+
+    /* ── quick look: tap a car's name → its details and latest history, without leaving the page ── */
+    (function () {
+        const ov = document.getElementById('pkOv'), box = document.getElementById('pkBox'); if (!ov) return;
+        const AR = <?= json_encode($lang === 'ar') ?>, LANG = <?= json_encode($lang) ?>;
+        const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+        const L = AR ? { trim: 'الفئة', color: 'اللون', branch: 'الفرع', chassis: 'الشاسيه', year: 'السنة', notes: 'ملاحظات', hist: '🕘 آخر ما حدث لهذه السيارة', full: '🧭 رحلة السيارة كاملة', wait: 'جاري التحميل…', fail: 'تعذّر تحميل بيانات السيارة', by: 'بواسطة' }
+                     : { trim: 'Trim', color: 'Colour', branch: 'Branch', chassis: 'Chassis', year: 'Year', notes: 'Notes', hist: '🕘 Latest on this car', full: '🧭 Full journey', wait: 'Loading…', fail: 'Could not load the car', by: 'by' };
+        const close = () => ov.classList.remove('on');
+        ov.addEventListener('click', e => { if (e.target === ov || e.target.closest('.pk-x')) close(); });
+        document.addEventListener('keydown', e => { if (e.key === 'Escape') close(); });
+        async function open(id) {
+            box.innerHTML = '<div class="pk-handle"></div><div class="pk-msg">' + L.wait + '</div>'; ov.classList.add('on');
+            let r = null;
+            try { r = await (await fetch('car_peek.php?lang=' + LANG + '&id=' + encodeURIComponent(id), { credentials: 'same-origin', cache: 'no-store', headers: { Accept: 'application/json' } })).json(); } catch (e) {}
+            if (!r || !r.ok) { box.innerHTML = '<div class="pk-handle"></div><div class="pk-head"><h3></h3><button type="button" class="pk-x">✕</button></div><div class="pk-msg">' + L.fail + '</div>'; return; }
+            const c = r.car, f = (l, v, cls, wide) => v ? '<div class="pk-f' + (wide ? ' wide' : '') + '"><label>' + l + '</label><div' + (cls ? ' class="' + cls + '"' : '') + '>' + esc(v) + '</div></div>' : '';
+            box.innerHTML = '<div class="pk-handle"></div><div class="pk-head"><div><h3>' + (c.status === 'reserved' ? '🔒 ' : '🚗 ') + esc(c.title) + '</h3><small>' + esc(c.age) + '</small></div><button type="button" class="pk-x" aria-label="close">✕</button></div>' +
+                '<div class="pk-grid">' + f(L.trim, c.trim) + f(L.year, c.year) + f(L.color, c.color) + f(L.branch, c.branch) + f(L.chassis, c.chassis, 'ch', true) + f(L.notes, c.notes, '', true) + '</div>' +
+                (r.history.length ? '<div class="pk-h4">' + L.hist + '</div>' + r.history.map(h => '<div class="pk-ev"><div><b>' + esc(h.what) + '</b>' + (h.by ? '<span>' + L.by + ' ' + esc(h.by) + '</span>' : '') + '</div><small>' + esc(h.when) + '</small></div>').join('') : '') +
+                (r.timeline ? '<div class="pk-acts"><a href="' + esc(r.timeline) + '">' + L.full + '</a></div>' : '');
+        }
+        document.addEventListener('click', e => {
+            const t = e.target.closest('.vc-titles'); if (!t) return;
+            const card = t.closest('.vehicle-card[data-id]'); if (!card) return;
+            e.preventDefault(); open(card.dataset.id);
+        });
     })();
 
     /* ── ⏱️ countdown to confirm transferred cars ── */
