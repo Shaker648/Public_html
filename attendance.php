@@ -891,6 +891,7 @@ function celebrate(msg){
   if (navigator.vibrate) navigator.vibrate([40, 60, 40, 60, 90]);
   card.classList.remove('party'); void card.offsetWidth; card.classList.add('party');
   if (msg) toast(msg);
+  if (window.F1App) F1App.sound(msg ? 'sale' : 'ok');
 }
 function confetti(box, colors){
   if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;

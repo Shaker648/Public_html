@@ -66,20 +66,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 if (chassis_locked($pdo, $uid)) { echo json_encode(['ok' => false, 'error' => 'locked', 'go' => 'transfer_lock.php?lang=' . $lang]); exit; }
                 $n = (int)($in['n'] ?? -1);
                 if (!is_numeric($in['n'] ?? null) || $n < 0 || $n > 5000) { echo json_encode(['ok' => false, 'error' => 'number']); exit; }
-                check_count_cols($pdo);
-                $up = $pdo->prepare("UPDATE stock_check_users s JOIN stock_checks c ON c.id = s.check_id SET s.counted = ?, s.counted_at = NOW()
-                                     WHERE s.check_id = ? AND s.user_id = ? AND s.counted IS NULL AND c.status IN ('active', 'expired')");
-                $up->execute([$n, $cid, $uid]);
-                if ($up->rowCount()) {
-                    $ck = $pdo->prepare("SELECT branch FROM stock_checks WHERE id = ?"); $ck->execute([$cid]);
-                    $counts = smart_check_counts($pdo, $cid);
+                if (check_counted($pdo, $cid, $uid) !== null) { echo json_encode(['ok' => true]); exit; }
+                $ck = $pdo->prepare("SELECT branch FROM stock_checks WHERE id = ? AND status IN ('active', 'expired')"); $ck->execute([$cid]);
+                $branchOf = $ck->fetchColumn();
+                if ($branchOf === false) break;
+                $counts = smart_check_counts($pdo, $cid);
+                // the number must match the system: a wrong one warns once, the second stops the system (the admin sees typed against real)
+                $t = check_count_try($pdo, $cid, $uid, $me, $n, (int)$counts[0], (string)$branchOf);
+                if ($t['ok'] || $t['locked']) {
                     // told to the people following the check — never to the people doing it (it carries the system's number)
                     $doing = array_values(smart_check_users($pdo, $cid));
                     $tell = array_values(array_diff(array_unique(array_merge(
                         array_map('strval', $pdo->query("SELECT username FROM users WHERE active = 1 AND role = 'admin'")->fetchAll(PDO::FETCH_COLUMN)), smart_check_watchers($pdo, $cid))), $doing));
-                    if ($tell) notify_event($pdo, 'check_item', ['id' => $cid, 'branch' => (string)$ck->fetchColumn(), 'counted' => $n, 'total' => $counts[0], 'actor_name' => $me,
+                    if ($tell) notify_event($pdo, 'check_item', ['id' => $cid, 'branch' => (string)$branchOf, 'counted' => $n, 'total' => $counts[0], 'actor_name' => $me,
                         'actor' => $me, 'only' => $tell, 'tag' => 'check-count-' . $cid . '-' . $uid, 'force' => true, 'now' => true]);
                 }
+                if (!$t['ok']) { echo json_encode(['ok' => false, 'error' => 'count', 'locked' => $t['locked'], 'go' => $t['locked'] ? 'transfer_lock.php?lang=' . $lang : '']); exit; }
                 echo json_encode(['ok' => true]); exit;
             case 'mark':
                 if (!sc_access($pdo, $cid, $uid, false) && !$isBoss) break;
@@ -383,7 +385,7 @@ $ago = function ($s) use ($ar): string {
         <div class="sc-step">1 / 2</div>
         <div class="sc-cnt-ic">🔢</div>
         <h2><?= $ar ? 'كم عدد السيارات الموجودة في الفرع الآن؟' : 'How many cars are at the branch right now?' ?></h2>
-        <p class="nf-note"><?= $ar ? 'عُدّ السيارات الموجودة أمامك في الفرع واكتب العدد. بعدها تبدأ تأكيد كل سيارة برقم الشاسيه. يُسجَّل العدد مرة واحدة ولا يمكن تعديله.' : 'Count the cars in front of you and type the number. Then you confirm each car by its chassis. The number is saved once and cannot be changed.' ?></p>
+        <p class="nf-note"><?= $ar ? 'عُدّ السيارات الموجودة أمامك في الفرع بدقة واكتب العدد. بعدها تبدأ تأكيد كل سيارة برقم الشاسيه. العدد غير الصحيح مرتين يوقف النظام.' : 'Count the cars in front of you carefully and type the number. Then you confirm each car by its chassis. Two wrong numbers stop your system.' ?></p>
         <input class="sc-in sc-cnt-in" id="scCntIn" type="number" inputmode="numeric" min="0" max="5000" placeholder="0" autocomplete="off">
         <button type="button" class="sc-fin" id="scCntGo">✅ <?= $ar ? 'تأكيد العدد والبدء' : 'Confirm the number and start' ?></button>
         <div class="nf-msg" id="scCntMsg"></div>
@@ -494,10 +496,12 @@ $ago = function ($s) use ($ar): string {
         const go = async () => {
             const v = $('scCntIn').value.trim(), m = $('scCntMsg');
             if (v === '' || !/^\d+$/.test(v)) { m.textContent = AR ? 'اكتب عدد السيارات بالأرقام' : 'Type the number of cars'; m.className = 'nf-msg bad'; $('scCntIn').focus(); return; }
-            if (!confirm(AR ? 'تأكيد أن عدد السيارات في الفرع هو ' + v + '؟ لا يمكن تعديل العدد بعد التأكيد.' : 'Confirm ' + v + ' cars at the branch? It cannot be changed afterwards.')) return;
+            if (!confirm(AR ? 'تأكيد أن عدد السيارات في الفرع هو ' + v + '؟' : 'Confirm ' + v + ' cars at the branch?')) return;
             $('scCntGo').disabled = true;
             const r = await post({ action: 'count', n: +v }).catch(() => ({ ok: false }));
-            if (r.ok) location.reload(); else if (r.go) location.href = r.go; else { $('scCntGo').disabled = false; m.textContent = AR ? 'تعذّر الحفظ — حاول مرة أخرى' : 'Could not save — try again'; m.className = 'nf-msg bad'; }
+            if (r.ok) location.reload(); else if (r.go) location.href = r.go; else { $('scCntGo').disabled = false; m.className = 'nf-msg bad';
+                m.textContent = r.error === 'count' ? (AR ? '❌ العدد غير صحيح. أعد عدّ السيارات بدقة — إذا أُدخل عدد غير صحيح مرة أخرى يتوقف النظام.' : '❌ Wrong number. Count the cars again carefully — one more wrong number stops your system.') : (AR ? 'تعذّر الحفظ — حاول مرة أخرى' : 'Could not save — try again');
+                if (r.error === 'count') { $('scCntIn').value = ''; $('scCntIn').focus(); if (window.F1App) F1App.sound('bad'); } }
         };
         $('scCntGo').addEventListener('click', go);
         $('scCntIn').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); go(); } });
@@ -530,6 +534,7 @@ $ago = function ($s) use ($ar): string {
             if (r.ok) {
                 const el = items.find(x => +x.dataset.id === r.item) || it;      // two cars of the same model: the number decides which one
                 paint(el, 'present'); it.classList.remove('asking'); chin.value = '';
+                if (window.F1App) F1App.sound('ok');
                 if (r.chassis) el.querySelector('.ch').textContent = r.chassis;
                 if (el !== it) { el.scrollIntoView({ block: 'center', behavior: 'smooth' }); }
                 counts(r.counts);
@@ -538,6 +543,7 @@ $ago = function ($s) use ($ar): string {
                 cherr.textContent = r.error === 'chassis' ? (AR ? '❌ رقم الشاسيه غير صحيح. راجع الرقم على السيارة نفسها — إذا أُدخل رقم غير صحيح مرة أخرى يتوقف النظام.' : '❌ Wrong chassis number. Check the number on the car — one more wrong number stops your system.')
                                 : (AR ? 'تعذّر الحفظ — حاول مرة أخرى' : 'Could not save — try again');
                 it.classList.remove('shake'); void it.offsetWidth; it.classList.add('shake'); chin.select();
+                if (window.F1App) F1App.sound('bad');
             }
         };
         if (chin) { it.querySelector('.chok').addEventListener('click', send); chin.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); send(); } }); }
