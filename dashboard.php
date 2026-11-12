@@ -629,6 +629,73 @@ function arDate($dt, $lang) {
         .chip.on { background:#9333ea; border-color:transparent; color:#fff; }
         .chip-n { font-size:10.5px; font-weight:800; opacity:.75; }
         .chip[hidden] { display:none !important; }
+        /* my day: streak ring + today's hours + badges */
+        .myday { display:flex; align-items:center; gap:14px; margin:0 0 12px; padding:12px 14px; border-radius:18px; text-decoration:none; color:#f1f5f9;
+                 background:linear-gradient(120deg,rgba(34,197,94,.10),rgba(147,51,234,.10)); border:1px solid rgba(34,197,94,.28); }
+        .myday.gold { background:linear-gradient(120deg,rgba(245,158,11,.14),rgba(147,51,234,.10)); border-color:rgba(245,158,11,.45); }
+        .md-ring { --p:0; position:relative; width:62px; height:62px; flex-shrink:0; border-radius:50%; display:grid; place-items:center;
+                   background:conic-gradient(#22c55e calc(var(--p) * 1%), rgba(255,255,255,.08) 0); }
+        .myday.gold .md-ring { background:conic-gradient(#f59e0b calc(var(--p) * 1%), rgba(255,255,255,.08) 0); }
+        .md-ring::before { content:''; position:absolute; inset:5px; border-radius:50%; background:#0b1222; }
+        .md-ring span { position:relative; font-size:21px; font-weight:900; line-height:1; font-variant-numeric:tabular-nums; }
+        .md-ring small { position:absolute; bottom:-4px; inset-inline-end:-4px; font-size:17px; }
+        .md-tx { flex:1; min-width:0; }
+        .md-tx b { display:block; font-size:15.5px; font-weight:900; }
+        .md-tx > span { display:block; font-size:12.5px; color:#94a3b8; font-weight:700; margin-top:2px; }
+        .md-bd { display:flex; flex-wrap:wrap; gap:5px; margin-top:7px; }
+        .md-bd i { font-style:normal; font-size:11.5px; font-weight:800; padding:4px 9px; border-radius:999px; background:rgba(250,204,21,.12); border:1px solid rgba(250,204,21,.35); color:#fde68a; }
+        .md-bd em { font-style:normal; font-size:11.5px; font-weight:800; padding:4px 9px; border-radius:999px; background:rgba(255,255,255,.05); border:1px dashed rgba(255,255,255,.18); color:#cbd5e1; }
+        .myday.party { animation:mdParty 1.6s ease 2; }
+        @keyframes mdParty { 30% { box-shadow:0 0 0 3px rgba(250,204,21,.7), 0 0 40px rgba(250,204,21,.45); transform:scale(1.015); } }
+        /* morning brief */
+        .brief-ov { position:fixed; inset:0; z-index:9150; background:rgba(2,6,23,.84); backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px); display:none; align-items:center; justify-content:center; padding:18px; }
+        .brief-ov.on { display:flex; }
+        .brief { width:100%; max-width:420px; text-align:center; border-radius:28px; padding:26px 20px 20px; background:linear-gradient(165deg,#1a2244,#0a1122); border:1px solid rgba(250,204,21,.3); box-shadow:0 30px 80px rgba(0,0,0,.6); animation:pkUp .45s cubic-bezier(.22,1,.36,1); }
+        .br-sun { font-size:52px; line-height:1; animation:brSun 4s ease-in-out infinite; }
+        @keyframes brSun { 50% { transform:translateY(-5px) rotate(8deg); } }
+        .brief h3 { font-size:21px; font-weight:900; margin-top:10px; }
+        .brief p { font-size:13.5px; color:#94a3b8; font-weight:700; margin-top:4px; }
+        .br-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(105px,1fr)); gap:8px; margin-top:16px; }
+        .br-i { background:rgba(0,0,0,.28); border:1px solid rgba(255,255,255,.07); border-radius:16px; padding:11px 6px; }
+        .br-i span { font-size:20px; } .br-i b { display:block; font-size:24px; font-weight:900; font-variant-numeric:tabular-nums; line-height:1.2; }
+        .br-i small { display:block; font-size:11px; color:#94a3b8; font-weight:800; margin-top:2px; }
+        .br-st { margin-top:12px; font-size:13.5px; font-weight:900; color:#fde68a; }
+        .brief button { margin-top:16px; width:100%; height:52px; border:0; border-radius:16px; background:linear-gradient(135deg,#16a34a,#22c55e); color:#022c14; font:inherit; font-size:16.5px; font-weight:900; cursor:pointer; }
+        /* stock heat */
+        .heat-btn { height:38px; padding:0 13px; border-radius:12px; border:1px solid rgba(255,255,255,.1); background:rgba(255,255,255,.05); color:#94a3b8; font:inherit; font-size:12.5px; font-weight:800; cursor:pointer; white-space:nowrap; flex-shrink:0; }
+        .heat-btn.on { background:linear-gradient(90deg,#2563eb,#f59e0b,#dc2626); border-color:transparent; color:#fff; }
+        .heat-leg { display:flex; align-items:center; gap:10px; margin:0 0 12px; font-size:11.5px; font-weight:800; color:#94a3b8; }
+        .heat-leg[hidden] { display:none; }
+        .heat-leg i { flex:1; height:8px; border-radius:8px; background:linear-gradient(90deg,hsl(210 80% 50%),hsl(140 70% 45%),hsl(60 85% 50%),hsl(25 90% 50%),hsl(0 85% 50%)); }
+        [dir="rtl"] .heat-leg i { transform:scaleX(-1); }
+        .inventory-grid.heat .vehicle-card { background:linear-gradient(160deg,hsl(var(--heat,210) 65% 20% / .95),hsl(var(--heat,210) 55% 9% / .97)) !important; border-color:hsl(var(--heat,210) 80% 50% / .65) !important; box-shadow:0 0 0 1px hsl(var(--heat,210) 80% 50% / .15), 0 10px 26px hsl(var(--heat,210) 80% 30% / .25) !important; }
+        /* branch map */
+        .grp-wrap.map { grid-template-columns:repeat(auto-fill,minmax(280px,1fr)); }
+        .lot { border-radius:20px; padding:14px; background:repeating-linear-gradient(90deg,rgba(255,255,255,.025) 0 1px,transparent 1px 40px),linear-gradient(170deg,#111a33,#0a1122); border:1px solid rgba(148,163,184,.18); }
+        .lot header { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+        .lot header b { font-size:15.5px; font-weight:900; }
+        .lot-n { font-size:13px; font-weight:900; padding:3px 11px; border-radius:999px; background:rgba(147,51,234,.25); color:#f3e8ff; font-variant-numeric:tabular-nums; }
+        .lot-meta { display:flex; flex-wrap:wrap; gap:6px; margin:8px 0 10px; min-height:22px; }
+        .lot-meta i { font-style:normal; font-size:11.5px; font-weight:800; padding:3px 9px; border-radius:999px; background:rgba(255,255,255,.06); color:#cbd5e1; }
+        .lot-meta .res { color:#fcd34d; } .lot-meta .old { color:#fca5a5; } .lot-meta .road { color:#7dd3fc; }
+        .lot-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(30px,1fr)); gap:9px; }
+        .lot-d { position:relative; width:100%; aspect-ratio:1; max-width:38px; border-radius:11px 11px 8px 8px; border:2px solid rgba(255,255,255,.28); background:var(--c,#64748b); cursor:pointer; padding:0;
+                 box-shadow:inset 0 -6px 8px rgba(0,0,0,.28), 0 3px 8px rgba(0,0,0,.4); animation:lotIn .45s cubic-bezier(.2,1.5,.4,1) both; animation-delay:calc(var(--i,0) * 18ms); -webkit-tap-highlight-color:transparent; }
+        @keyframes lotIn { from { opacity:0; transform:scale(.3); } }
+        .lot-d:active { transform:scale(.88); }
+        .lot-d.res { border-color:#fbbf24; box-shadow:0 0 0 2px rgba(251,191,36,.35), 0 0 12px rgba(251,191,36,.55), inset 0 -6px 8px rgba(0,0,0,.28); }
+        .lot-d.old::after { content:''; position:absolute; inset:-5px; border-radius:14px; border:2px solid #ef4444; animation:lotOld 1.6s ease-out infinite; }
+        @keyframes lotOld { from { opacity:.9; transform:scale(.85); } to { opacity:0; transform:scale(1.25); } }
+        .lot-d.new::before { content:'✨'; position:absolute; top:-9px; inset-inline-end:-7px; font-size:12px; }
+        .lot-d.road { animation:lotRoad 1.4s ease-in-out infinite; border-style:dashed; border-color:#38bdf8; }
+        .lot-d.road::before { content:'🚚'; position:absolute; top:-10px; inset-inline-end:-8px; font-size:13px; }
+        @keyframes lotRoad { 50% { transform:translateX(5px); } }
+        .grp-wrap.heat .lot-d { background:hsl(var(--h,210) 80% 48%); }
+        .lot-leg { grid-column:1/-1; display:flex; flex-wrap:wrap; gap:8px 16px; justify-content:center; font-size:11.5px; font-weight:800; color:#94a3b8; padding:4px 0 2px; }
+        .lot-leg span { display:inline-flex; align-items:center; gap:7px; }
+        .lot-leg .lot-d { width:18px; max-width:18px; border-radius:6px; animation:none; cursor:default; }
+        .lot-leg .lot-d.road { animation:none; } .lot-leg .lot-d::before { font-size:9px; top:-7px; }
+        @media (prefers-reduced-motion:reduce) { .lot-d, .lot-d.road, .lot-d.old::after, .br-sun, .myday.party { animation:none !important; } }
         /* «يحتاج انتباهك» */
         .att-strip { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin:0 0 12px; padding:10px 12px; border-radius:16px; background:linear-gradient(120deg,rgba(245,158,11,.10),rgba(15,23,42,.6)); border:1px solid rgba(245,158,11,.3); }
         .att-h { font-size:12.5px; font-weight:900; color:#fcd34d; white-space:nowrap; }
@@ -1438,6 +1505,53 @@ body:has(#npCard.on) #f1c-chat-bubble { opacity:0; pointer-events:none; }
     <!-- ════════ Control band — search, counts and filters in one sticky strip.
          It stays pinned while you scroll, so the controls never leave. ════════ -->
     <?php
+    /* ── my day: hours today, attendance streak and badges (from attendance only) + the morning brief ── */
+    $myDay = null; $brief = null; $roadIds = [];
+    if (is_file(__DIR__ . '/my_day.php')) {
+        require_once __DIR__ . '/my_day.php';
+        if (can('page.attendance')) $myDay = my_day($pdo, (int)$_SESSION['user_id'], $lang);
+        $brief = my_day_brief($pdo);
+    }
+    $hmTxt = fn($secs) => sprintf($lang === 'ar' ? '%dس %02dد' : '%dh %02dm', intdiv(max(0, (int)$secs), 3600), intdiv(max(0, (int)$secs) % 3600, 60));
+    if ($myDay): $mdPct = min(100, (int)round($myDay['today'] * 100 / max(1, $myDay['target']))); $mdGold = $myDay['today'] >= $myDay['target']; ?>
+    <a class="myday<?= $mdGold ? ' gold' : '' ?>" href="attendance.php?lang=<?= $lang ?>" id="myDay" data-streak="<?= (int)$myDay['streak'] ?>">
+        <div class="md-ring" style="--p:<?= $mdPct ?>"><span><?= $myDay['streak'] ?></span><small>🔥</small></div>
+        <div class="md-tx">
+            <b><?= $lang === 'ar' ? ($myDay['streak'] > 0 ? ($myDay['streak'] === 1 ? 'يوم حضور واحد' : ($myDay['streak'] === 2 ? 'يومان متتاليان' : $myDay['streak'] . ($myDay['streak'] <= 10 ? ' أيام متتالية' : ' يوماً متتالياً'))) : 'ابدأ سلسلة حضورك اليوم')
+                                   : ($myDay['streak'] > 0 ? $myDay['streak'] . ' day' . ($myDay['streak'] === 1 ? '' : 's') . ' in a row' : 'Start your streak today') ?></b>
+            <span><?= $myDay['in'] ? '🟢 ' : '' ?><?= $lang === 'ar' ? 'اليوم ' . $hmTxt($myDay['today']) . ' من ' . rtrim(rtrim(number_format($myDay['target'] / 3600, 1), '0'), '.') . ' ساعات' : 'Today ' . $hmTxt($myDay['today']) . ' of ' . rtrim(rtrim(number_format($myDay['target'] / 3600, 1), '0'), '.') . 'h' ?><?= $myDay['in'] ? '' : ($myDay['today'] ? '' : ' · ' . ($lang === 'ar' ? 'لم تسجّل الحضور بعد' : 'not clocked in yet')) ?></span>
+            <?php if ($myDay['badges'] || $myDay['next']): ?><div class="md-bd">
+                <?php foreach ($myDay['badges'] as $bd): ?><i><?= $bd[0] ?> <?= htmlspecialchars($bd[1]) ?></i><?php endforeach; ?>
+                <?php if ($myDay['next']): ?><em>🎯 <?= htmlspecialchars($myDay['next']) ?></em><?php endif; ?>
+            </div><?php endif; ?>
+        </div>
+    </a>
+    <?php endif; ?>
+    <?php if ($brief): $bItems = [];
+        if ($canStatSold) $bItems[] = ['💰', $brief['sold'], $lang === 'ar' ? 'بيعت أمس' : 'sold yesterday'];
+        $bItems[] = ['🚗', $brief['added'], $lang === 'ar' ? 'أُضيفت أمس' : 'added yesterday'];
+        $bItems[] = ['🚚', $brief['road'], $lang === 'ar' ? 'في الطريق بين الفروع' : 'on the road now'];
+        if ($isAdmin || $isManager) $bItems[] = ['🟢', $brief['present'], $lang === 'ar' ? 'حاضرون الآن' : 'present now'];
+        $bItems[] = ['⏳', $brief['aged'], $lang === 'ar' ? 'في المخزون منذ +60 يوماً' : 'in stock 60+ days'];
+    ?>
+    <div class="brief-ov" id="briefOv" data-day="<?= date('Y-m-d') ?>">
+        <div class="brief" role="dialog">
+            <div class="br-sun">☀️</div>
+            <h3 id="briefHi"><?= $lang === 'ar' ? 'صباح الخير' : 'Good morning' ?>، <?= htmlspecialchars((string)$_SESSION['username']) ?></h3>
+            <p><?= $lang === 'ar' ? 'هذا ما تغيّر منذ أمس' : 'Here is what changed since yesterday' ?></p>
+            <div class="br-grid">
+                <?php foreach ($bItems as $bi): ?><div class="br-i"><span><?= $bi[0] ?></span><b><?= (int)$bi[1] ?></b><small><?= $bi[2] ?></small></div><?php endforeach; ?>
+            </div>
+            <?php if ($myDay && $myDay['streak'] > 0): ?><div class="br-st">🔥 <?= $lang === 'ar' ? 'سلسلة حضورك: ' . $myDay['streak'] . ($myDay['streak'] <= 10 && $myDay['streak'] > 2 ? ' أيام' : ' يوم') : 'Your streak: ' . $myDay['streak'] . ' days' ?></div><?php endif; ?>
+            <button type="button" id="briefGo"><?= $lang === 'ar' ? 'ابدأ يومك 🚀' : 'Start the day 🚀' ?></button>
+        </div>
+    </div>
+    <?php endif; ?>
+    <?php
+    /* cars on their way to a branch and not confirmed yet (the branch map shows them arriving) */
+    try { if (function_exists('smart_pending_transfers') || is_file(__DIR__ . '/notify_smart.php')) { require_once __DIR__ . '/notify_smart.php'; foreach (smart_pending_transfers($pdo, '', 7) as $__p) $roadIds[(int)$__p['car_id']] = true; } } catch (Throwable $e) {}
+    ?>
+    <?php
     /* «يحتاج انتباهك»: shown only when something is waiting. Tapping a line filters the cards to exactly those cars. */
     $attAged = 0; $attRes = 0;
     foreach ($cars as $__c) if (in_array($__c['status'] ?? '', ['available', 'reserved'], true)) {
@@ -1598,10 +1712,13 @@ body:has(#npCard.on) #f1c-chat-bubble { opacity:0; pointer-events:none; }
             <button type="button" data-v="cards" class="on">▦ <?= $lang === 'ar' ? 'كروت' : 'Cards' ?></button>
             <button type="button" data-v="list">☰ <?= $lang === 'ar' ? 'قائمة' : 'List' ?></button>
             <button type="button" data-v="groups">🗂 <?= $lang === 'ar' ? 'حسب الموديل' : 'By model' ?></button>
+            <button type="button" data-v="map">🗺 <?= $lang === 'ar' ? 'خريطة الفروع' : 'Branch map' ?></button>
         </div>
+        <button type="button" class="heat-btn" id="heatBtn" aria-pressed="false">🌡 <?= $lang === 'ar' ? 'حرارة المخزون' : 'Stock heat' ?></button>
         <?php endif; ?>
     </div>
 
+    <div class="heat-leg" id="heatLeg" hidden><span><?= $lang === 'ar' ? 'جديدة' : 'New' ?></span><i></i><span><?= $lang === 'ar' ? '+90 يوماً' : '90+ days' ?></span></div>
     <div class="grp-wrap" id="grpWrap"></div>
     <div class="inventory-grid" id="invGrid">
 
@@ -1650,6 +1767,7 @@ body:has(#npCard.on) #f1c-chat-bubble { opacity:0; pointer-events:none; }
                  data-id="<?= (int)$car['id'] ?>"
                  data-days="<?= $daysIn === null ? -1 : $daysIn ?>"
                  data-brand="<?= htmlspecialchars((string)$car['brand'], ENT_QUOTES) ?>"
+                 data-road="<?= isset($roadIds[(int)$car['id']]) ? 1 : 0 ?>"
                  data-resdays="<?= ($isReserved && $resInfo && !empty($resInfo['at'])) ? max(0, (int)floor((time() - strtotime($resInfo['at'])) / 86400)) : -1 ?>"
                  data-price="<?= (float)($officialNum ?? 0) ?>"
                  data-model="<?= htmlspecialchars(mb_strtolower($car['brand'] . ' ' . $car['model'] . ' ' . $car['trim_name']), ENT_QUOTES) ?>">
@@ -2177,6 +2295,31 @@ body:has(#npCard.on) #f1c-chat-bubble { opacity:0; pointer-events:none; }
         if (document.getElementById('liveAct')) setTimeout(pulse, 400);   // fill "happening now" straight away
     })();
 
+    /* ── ☀️ morning brief: once a day on this device, the first time the dashboard is opened ── */
+    (function () {
+        const ov = document.getElementById('briefOv'); if (!ov) return;
+        let seen = ''; try { seen = localStorage.getItem('f1cBrief') || ''; } catch (e) {}
+        if (seen === ov.dataset.day || /[?&](more|find)=1\b/.test(location.search)) return;
+        const h = new Date().getHours(), hi = document.getElementById('briefHi'), AR = <?= json_encode($lang === 'ar') ?>;
+        if (h >= 12) { hi.textContent = hi.textContent.replace(AR ? 'صباح الخير' : 'Good morning', AR ? 'مساء الخير' : (h < 18 ? 'Good afternoon' : 'Good evening')); ov.querySelector('.br-sun').textContent = h < 18 ? '🌤️' : '🌙'; }
+        const close = () => { ov.classList.remove('on'); try { localStorage.setItem('f1cBrief', ov.dataset.day); } catch (e) {} };
+        const show = () => { if (document.getElementById('f1cWelcome')) { setTimeout(show, 1500); return; } ov.classList.add('on'); };
+        setTimeout(show, 600);
+        document.getElementById('briefGo').addEventListener('click', close);
+        ov.addEventListener('click', e => { if (e.target === ov) close(); });
+    })();
+    /* ── 🔥 a streak milestone is celebrated once ── */
+    (function () {
+        const md = document.getElementById('myDay'); if (!md) return;
+        const s = +md.dataset.streak, hit = [30, 14, 7, 3].find(n => s >= n); if (!hit) return;
+        let last = 0; try { last = +localStorage.getItem('f1cStreakHit') || 0; } catch (e) {}
+        if (s < last) { try { localStorage.setItem('f1cStreakHit', '0'); } catch (e) {} last = 0; }   // the streak restarted
+        if (hit <= last) return;
+        try { localStorage.setItem('f1cStreakHit', String(hit)); } catch (e) {}
+        md.classList.add('party');
+        document.addEventListener('pointerdown', function once() { document.removeEventListener('pointerdown', once); if (window.F1App) F1App.sound('sale'); }, { once: true });
+    })();
+
     /* ── quick look: tap a car's name → its details and latest history, without leaving the page ── */
     (function () {
         const ov = document.getElementById('pkOv'), box = document.getElementById('pkBox'); if (!ov) return;
@@ -2198,6 +2341,7 @@ body:has(#npCard.on) #f1c-chat-bubble { opacity:0; pointer-events:none; }
                 (r.history.length ? '<div class="pk-h4">' + L.hist + '</div>' + r.history.map(h => '<div class="pk-ev"><div><b>' + esc(h.what) + '</b>' + (h.by ? '<span>' + L.by + ' ' + esc(h.by) + '</span>' : '') + '</div><small>' + esc(h.when) + '</small></div>').join('') : '') +
                 (r.timeline ? '<div class="pk-acts"><a href="' + esc(r.timeline) + '">' + L.full + '</a></div>' : '');
         }
+        window.F1Peek = open;   // the branch map opens the same sheet
         document.addEventListener('click', e => {
             const t = e.target.closest('.vc-titles'); if (!t) return;
             const card = t.closest('.vehicle-card[data-id]'); if (!card) return;
@@ -2950,10 +3094,48 @@ priceLine + '\n' +
             try { localStorage.setItem(KEY, v); } catch (e) {}
             sw.querySelectorAll('button').forEach(function (b) { b.classList.toggle('on', b.dataset.v === v); });
             grid.classList.toggle('view-list', v === 'list');
-            grid.classList.toggle('view-groups', v === 'groups');
-            wrap.classList.toggle('on', v === 'groups');
+            grid.classList.toggle('view-groups', v === 'groups' || v === 'map');
+            wrap.classList.toggle('on', v === 'groups' || v === 'map');
+            wrap.classList.toggle('map', v === 'map');
             if (v === 'groups') buildGroups();
+            if (v === 'map') buildMap();
         }
+        /* 🗺 branch map: every branch is a lot, every car a dot in its own colour.
+           gold ring = reserved · red pulse = 60+ days · ✨ = new · 🚚 = on its way and not confirmed yet */
+        function buildMap() {
+            var lots = {}, order = [];
+            grid.querySelectorAll('.vehicle-card[data-search]').forEach(function (c) {
+                if (c.style.display === 'none') return;
+                var b = c.dataset.branchLabel || '?';
+                if (!lots[b]) { lots[b] = []; order.push(b); }
+                lots[b].push(c);
+            });
+            order.sort(function (a, b) { return lots[b].length - lots[a].length; });
+            wrap.innerHTML = order.length ? order.map(function (b) {
+                var cars = lots[b], res = 0, old = 0, road = 0;
+                var dots = cars.map(function (c, i) {
+                    var d = +c.dataset.days, cls = 'lot-d' + (c.dataset.status === 'reserved' ? ' res' : '') + (d >= 60 ? ' old' : '') + (d >= 0 && d <= 3 ? ' new' : '') + (c.dataset.road === '1' ? ' road' : '');
+                    if (c.dataset.status === 'reserved') res++; if (d >= 60) old++; if (c.dataset.road === '1') road++;
+                    return '<button type="button" class="' + cls + '" data-id="' + c.dataset.id + '" style="--c:' + (c.dataset.hex || '#64748b') + ';--h:' + (c.style.getPropertyValue('--heat') || 210) + ';--i:' + i + '" title="' + esc((c.dataset.title || '') + ' · ' + (c.dataset.colorLabel || '')) + '" aria-label="' + esc(c.dataset.title || '') + '"></button>';
+                }).join('');
+                return '<section class="lot"><header><b>📍 ' + esc(b) + '</b><span class="lot-n">' + cars.length + '</span></header>' +
+                    '<div class="lot-meta">' + (res ? '<i class="res">🔒 ' + res + '</i>' : '') + (old ? '<i class="old">⏳ ' + old + '</i>' : '') + (road ? '<i class="road">🚚 ' + road + '</i>' : '') + '</div>' +
+                    '<div class="lot-grid">' + dots + '</div></section>';
+            }).join('') + '<div class="lot-leg"><span><i class="lot-d res" style="--c:#94a3b8"></i>' + (AR ? 'محجوزة' : 'Reserved') + '</span><span><i class="lot-d old" style="--c:#94a3b8"></i>' + (AR ? '+60 يوماً' : '60+ days') + '</span><span><i class="lot-d new" style="--c:#94a3b8"></i>' + (AR ? 'جديدة' : 'New') + '</span><span><i class="lot-d road" style="--c:#94a3b8"></i>' + (AR ? 'في الطريق' : 'On the way') + '</span></div>'
+              : '<div style="grid-column:1/-1;text-align:center;color:#64748b;padding:30px">🔍 ' + (AR ? 'لا توجد نتائج' : 'No results') + '</div>';
+        }
+        wrap.addEventListener('click', function (e) { var d = e.target.closest('.lot-d[data-id]'); if (d && window.F1Peek) F1Peek(d.dataset.id); });
+        /* 🌡 stock heat: every card (and every dot on the map) is tinted by how long the car has been in stock */
+        (function () {
+            var hb = document.getElementById('heatBtn'), leg = document.getElementById('heatLeg'); if (!hb) return;
+            grid.querySelectorAll('.vehicle-card[data-days]').forEach(function (c) { var d = Math.max(0, Math.min(90, +c.dataset.days || 0)); c.style.setProperty('--heat', Math.round(210 - d / 90 * 210)); });
+            function setHeat(on) {
+                hb.classList.toggle('on', on); hb.setAttribute('aria-pressed', on ? 'true' : 'false'); grid.classList.toggle('heat', on); wrap.classList.toggle('heat', on); if (leg) leg.hidden = !on;
+                try { localStorage.setItem('f1cDashHeat', on ? '1' : '0'); } catch (e) {}
+            }
+            hb.addEventListener('click', function () { setHeat(!hb.classList.contains('on')); });
+            try { if (localStorage.getItem('f1cDashHeat') === '1') setHeat(true); } catch (e) {}
+        })();
         sw.addEventListener('click', function (e) { var b = e.target.closest('button[data-v]'); if (b) setView(b.dataset.v); });
         /* a model tapped in «by model» → its cars */
         wrap.addEventListener('click', function (e) {
@@ -2965,7 +3147,7 @@ priceLine + '\n' +
         });
         /* the filters show / hide cards: keep «by model» in step */
         var tmr = null;
-        new MutationObserver(function () { if (view !== 'groups') return; clearTimeout(tmr); tmr = setTimeout(buildGroups, 80); })
+        new MutationObserver(function () { if (view !== 'groups' && view !== 'map') return; clearTimeout(tmr); tmr = setTimeout(view === 'map' ? buildMap : buildGroups, 80); })
             .observe(grid, { subtree: true, attributes: true, attributeFilter: ['style'] });
         setView(view);
     }
