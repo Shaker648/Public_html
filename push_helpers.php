@@ -64,6 +64,7 @@ function notify_events(): array
         'transfer_received'=> ['تأكيد استلام سيارة منقولة',       'Transferred car received',   '📥', ['admin'], true, true, 'transfer'],
         'transfer_unconfirmed' => ['لم يكن أحد في الفرع للاستلام (24 ساعة)', 'Nobody at the branch to receive (24 h)', '🏖️', ['admin'], true, null, 'transfer'],
         // surprise stock check (جرد مفاجئ)
+        'check_plan'       => ['اقتراح جرد مفاجئ ينتظر موافقتك',  'A surprise check waiting for your approval', '🎲', ['admin'], true, null, 'check'],
         'check_start'      => ['بدء جرد مفاجئ',                 'Surprise stock check started', '📋', ['admin'], true, true, 'check'],
         'check_item'       => ['تأكيد كل سيارة أثناء الجرد',    'Each car confirmed during a check', '🔎', ['admin'], true, null, 'check'],
         'check_tick'       => ['الوقت المتبقي للجرد (منتصف المدة)', 'Stock check time left (half-way)', '⏳', ['admin'], true, true, 'check'],
@@ -848,6 +849,14 @@ function notify_message(PDO $pdo, string $event, array $d, string $lang): array
                 $url = 'transfer_receive.php?lang=' . $lang;
             }
             break;
+        case 'check_plan':
+            $bn = push_branch_label($pdo, (string)($d['branch'] ?? ''), $lang);
+            $sp = ($d['kind'] ?? '') === 'spot';
+            $title = '🎲 ' . ($ar ? ($sp ? 'اقتراح فحص سريع لسيارة: فرع ' : 'اقتراح جرد مفاجئ: فرع ') . $bn : ($sp ? 'Proposed spot check: ' : 'Proposed surprise check: ') . $bn);
+            $body[] = ($ar ? '👤 المكلَّف المقترح: ' : '👤 Proposed for: ') . ($d['user'] ?? '');
+            $body[] = $ar ? '⏳ لن يُرسل شيء للفرع قبل موافقتك — ينتهي الاقتراح بعد ساعتين' : '⏳ Nothing is sent to the branch until you approve — the proposal expires in two hours';
+            $url = 'stock_check.php?lang=' . $lang . '#plans';
+            break;
         case 'check_item':
             $bn = push_branch_label($pdo, (string)($d['branch'] ?? ''), $lang);
             if (isset($d['counted'])) {   // the first step: how many cars the person counted, against the system
@@ -876,10 +885,12 @@ function notify_message(PDO $pdo, string $event, array $d, string $lang): array
             $n  = (int)($d['count'] ?? 0);
             $url = 'stock_check.php?lang=' . $lang . (!empty($d['id']) ? '&id=' . (int)$d['id'] : '');
             if ($event === 'check_start') {
-                $title = $ev[2] . ' ' . ($ar ? 'بدأ جرد مفاجئ: فرع ' . $bn . ' — المكلَّف: ' . ($d['users'] ?? '') : 'Surprise stock check started: ' . $bn . ' — ' . ($d['users'] ?? ''));
+                $title = !empty($d['spot']) ? '⚡ ' . ($ar ? 'فحص سريع لسيارة: فرع ' . $bn . ' — المكلَّف: ' . ($d['users'] ?? '') : 'Spot check: ' . $bn . ' — ' . ($d['users'] ?? ''))
+                                            : $ev[2] . ' ' . ($ar ? 'بدأ جرد مفاجئ: فرع ' . $bn . ' — المكلَّف: ' . ($d['users'] ?? '') : 'Surprise stock check started: ' . $bn . ' — ' . ($d['users'] ?? ''));
                 $body[] = $ar ? '⏱️ المدة ' . ($d['dur'] ?? '') . ' — تنتهي الساعة ' . $d['until'] : '⏱️ ' . ($d['dur'] ?? '') . ' — ends at ' . $d['until'];
                 // the number of cars is not sent: the first step of the check is to count them
-                $body[] = $ar ? '🔢 أولاً: عُدّ السيارات الموجودة في الفرع، ثم أكّد كل سيارة برقم الشاسيه' : '🔢 First count the cars at the branch, then confirm each one by its chassis';
+                $body[] = !empty($d['spot']) ? ($ar ? '🔑 اذهب إلى السيارة المطلوبة واكتب رقم الشاسيه الموجود عليها' : '🔑 Go to the car asked for and type the chassis number on it')
+                                             : ($ar ? '🔢 أولاً: عُدّ السيارات الموجودة في الفرع، ثم أكّد كل سيارة برقم الشاسيه' : '🔢 First count the cars at the branch, then confirm each one by its chassis');
                 if (!empty($d['note'])) $body[] = '📝 ' . $d['note'];
                 if (!empty($d['lock'])) $body[] = $ar ? '🔒 بعد الساعة ' . $d['until'] . ' يبدأ إيقاف النظام عن المكلَّف إذا لم يكتمل الجرد' : '🔒 After ' . $d['until'] . ' the system locks for them if not finished';
             } elseif ($event === 'check_tick') {
@@ -1006,7 +1017,7 @@ function notify_message(PDO $pdo, string $event, array $d, string $lang): array
         default:
             $title = $ev[2] . ' ' . ($ar ? $ev[0] : $ev[1]);
     }
-    $noBy = ['test', 'user_locked', 'check_tick', 'transfer_missing', 'transfer_resolved', 'check_start', 'check_warn', 'check_locked', 'check_done', 'transfer_received', 'duty_start', 'duty_warn', 'duty_locked', 'duty_done', 'duty_unlocked', 'sale_celebrate', 'last_car', 'reserve_old', 'stock_aged', 'transfer_unconfirmed',
+    $noBy = ['test', 'check_plan', 'user_locked', 'check_tick', 'transfer_missing', 'transfer_resolved', 'check_start', 'check_warn', 'check_locked', 'check_done', 'transfer_received', 'duty_start', 'duty_warn', 'duty_locked', 'duty_done', 'duty_unlocked', 'sale_celebrate', 'last_car', 'reserve_old', 'stock_aged', 'transfer_unconfirmed',
              'amana_long', 'bank_waiting', 'clockout_forgot', 'login_failed', 'price_reserved'];
     if ($by !== '' && !in_array($event, $noBy, true) && strpos($event, 'att_') !== 0) $body[] = ($ar ? '✍️ بواسطة ' : '✍️ by ') . $by;
     return [
@@ -1116,7 +1127,7 @@ function notify_deliver(PDO $pdo, int $logId, string $event, array $msg, array $
 
     // same kind, not seen yet, in the last 15 minutes → one grouped notification
     $group = [];
-    if (!in_array($event, ['message', 'test', 'transfer_incoming', 'check_item', 'check_start', 'check_tick', 'check_warn', 'check_locked', 'check_done', 'transfer_missing', 'user_locked', 'lock_basma', 'lock_reason', 'lock_countdown', 'duty_unlocked'], true)) {
+    if (!in_array($event, ['message', 'test', 'transfer_incoming', 'check_plan', 'check_item', 'check_start', 'check_tick', 'check_warn', 'check_locked', 'check_done', 'transfer_missing', 'user_locked', 'lock_basma', 'lock_reason', 'lock_countdown', 'duty_unlocked'], true)) {
         $in2 = implode(',', $withDev);
         $gs = $pdo->prepare("SELECT i.user_id, l.title FROM notify_inbox i JOIN notify_log l ON l.id = i.log_id
                              WHERE i.user_id IN ($in2) AND l.event = ? AND i.seen_at IS NULL AND l.created_at >= NOW() - INTERVAL 15 MINUTE

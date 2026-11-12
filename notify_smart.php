@@ -19,7 +19,8 @@
  * transfer. Every reminder is sent once (notify_once).
  */
 require_once __DIR__ . '/push_helpers.php';
-require_once __DIR__ . '/chassis_gate.php';   // cars are confirmed by typing the chassis: it is never sent to the receiving branch
+require_once __DIR__ . '/chassis_gate.php';
+if (is_file(__DIR__ . '/check_auto.php')) require_once __DIR__ . '/check_auto.php';   // checks the system proposes and the admin approves; spot checks   // cars are confirmed by typing the chassis: it is never sent to the receiving branch
 
 /* ════════════════════════ helpers ════════════════════════ */
 function smart_line(array $c): string
@@ -652,18 +653,21 @@ function smart_check_counts(PDO $pdo, int $checkId): array
  * Start a surprise check: the cars in the branch right now are the list;
  * the people chosen get it at once (phone + in the system) with the deadline.
  */
-function smart_check_create(PDO $pdo, string $branch, array $userIds, int $minutes, string $note, bool $lock, string $by, array $watchIds = []): int
+function smart_check_create(PDO $pdo, string $branch, array $userIds, int $minutes, string $note, bool $lock, string $by, array $watchIds = [], array $onlyCarIds = [], bool $spot = false): int
 {
     push_tables($pdo);
-    $minutes = max(5, min(1440, $minutes));
+    if (function_exists('check_auto_tables')) check_auto_tables($pdo);
+    $minutes = max($spot ? 3 : 5, min(1440, $minutes));
     $userIds = array_values(array_unique(array_filter(array_map('intval', $userIds))));
     $st = $pdo->prepare("SELECT id, brand, model, trim_name, car_year, color, chassis FROM cars WHERE branch = ? AND status IN ('available', 'reserved') ORDER BY brand, model, chassis");
     $st->execute([$branch]);
     $cars = $st->fetchAll(PDO::FETCH_ASSOC);
+    if ($onlyCarIds) $cars = array_values(array_filter($cars, fn($c) => in_array((int)$c['id'], array_map('intval', $onlyCarIds), true)));   // a spot check: just these cars
     $watchIds = array_values(array_unique(array_filter(array_map('intval', $watchIds))));
     $pdo->prepare("INSERT INTO stock_checks (branch, note, minutes, lock_on, created_by, created_at, deadline, watchers) VALUES (?, ?, ?, ?, ?, NOW(), NOW() + INTERVAL ? MINUTE, ?)")
         ->execute([$branch, mb_substr($note, 0, 250), $minutes, $lock ? 1 : 0, $by, $minutes, json_encode($watchIds)]);
     $id = (int)$pdo->lastInsertId();
+    if ($spot) { try { $pdo->prepare("UPDATE stock_checks SET spot = 1 WHERE id = ?")->execute([$id]); } catch (Throwable $e) {} }
     $iu = $pdo->prepare("INSERT IGNORE INTO stock_check_users (check_id, user_id) VALUES (?, ?)");
     foreach ($userIds as $u) $iu->execute([$id, $u]);
     $lang = notify_options($pdo)['lang'];
@@ -674,7 +678,7 @@ function smart_check_create(PDO $pdo, string $branch, array $userIds, int $minut
     $names = smart_check_users($pdo, $id);
     $dur = $lang === 'ar' ? ($minutes % 60 === 0 ? ($minutes === 60 ? 'ساعة' : ($minutes === 120 ? 'ساعتان' : ($minutes / 60) . ' ساعات')) : push_ar_mins($minutes)) : $minutes . ' min';
     // the people doing it + the people the admin chose to follow it (the admin included, if chosen)
-    notify_event($pdo, 'check_start', ['id' => $id, 'branch' => $branch, 'count' => count($cars), 'until' => smart_time_label(time() + $minutes * 60, $lang), 'dur' => $dur,
+    notify_event($pdo, 'check_start', ['id' => $id, 'branch' => $branch, 'count' => count($cars), 'spot' => $spot, 'until' => smart_time_label(time() + $minutes * 60, $lang), 'dur' => $dur,
         'users' => implode('، ', $names), 'note' => $note, 'lock' => $lock, 'only' => array_merge(array_values($names), smart_check_watchers($pdo, $id)),
         'actor' => $by, 'tag' => 'chk-' . $id, 'force' => true, 'now' => true]);
     return $id;
@@ -883,6 +887,7 @@ function smart_run(PDO $pdo): array
 
         /* 📋 surprise stock checks: warnings, time up → lock */
         $done = array_merge($done, smart_check_scan($pdo));
+        if (function_exists('check_auto_scan')) $done = array_merge($done, check_auto_scan($pdo));   // proposals for the admin (nothing is sent without approval)
         /* 🚚 receiving transferred cars: countdowns, warnings, locks (any time of day) */
         $done = array_merge($done, smart_duty_scan($pdo));
 
