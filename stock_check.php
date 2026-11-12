@@ -56,8 +56,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 if (!$users) { echo json_encode(['ok' => false, 'error' => 'nobody']); exit; }
                 $id = smart_check_create($pdo, $branch, $users, (int)($in['minutes'] ?? 30), trim((string)($in['note'] ?? '')), !empty($in['lock']), $me, array_map('intval', (array)($in['watch'] ?? [])));
                 echo json_encode(['ok' => true, 'id' => $id]); exit;
+            case 'count':
+                // the first step: how many cars are at the branch? (answered once; the admin sees it against the system)
+                if ($isAdmin || !sc_access($pdo, $cid, $uid, false)) break;
+                if (chassis_locked($pdo, $uid)) { echo json_encode(['ok' => false, 'error' => 'locked', 'go' => 'transfer_lock.php?lang=' . $lang]); exit; }
+                $n = (int)($in['n'] ?? -1);
+                if (!is_numeric($in['n'] ?? null) || $n < 0 || $n > 5000) { echo json_encode(['ok' => false, 'error' => 'number']); exit; }
+                check_count_cols($pdo);
+                $up = $pdo->prepare("UPDATE stock_check_users s JOIN stock_checks c ON c.id = s.check_id SET s.counted = ?, s.counted_at = NOW()
+                                     WHERE s.check_id = ? AND s.user_id = ? AND s.counted IS NULL AND c.status IN ('active', 'expired')");
+                $up->execute([$n, $cid, $uid]);
+                if ($up->rowCount()) {
+                    $ck = $pdo->prepare("SELECT branch FROM stock_checks WHERE id = ?"); $ck->execute([$cid]);
+                    $counts = smart_check_counts($pdo, $cid);
+                    // told to the people following the check — never to the people doing it (it carries the system's number)
+                    $doing = array_values(smart_check_users($pdo, $cid));
+                    $tell = array_values(array_diff(array_unique(array_merge(
+                        array_map('strval', $pdo->query("SELECT username FROM users WHERE active = 1 AND role = 'admin'")->fetchAll(PDO::FETCH_COLUMN)), smart_check_watchers($pdo, $cid))), $doing));
+                    if ($tell) notify_event($pdo, 'check_item', ['id' => $cid, 'branch' => (string)$ck->fetchColumn(), 'counted' => $n, 'total' => $counts[0], 'actor_name' => $me,
+                        'actor' => $me, 'only' => $tell, 'tag' => 'check-count-' . $cid . '-' . $uid, 'force' => true, 'now' => true]);
+                }
+                echo json_encode(['ok' => true]); exit;
             case 'mark':
                 if (!sc_access($pdo, $cid, $uid, false) && !$isBoss) break;
+                if (!$isAdmin && check_counted($pdo, $cid, $uid) === null && sc_access($pdo, $cid, $uid, false)) { echo json_encode(['ok' => false, 'error' => 'count_first']); exit; }
                 $state = in_array($in['state'] ?? '', ['present', 'missing'], true) ? $in['state'] : null;
                 $note  = mb_substr(trim((string)($in['note'] ?? '')), 0, 250);
                 if (!$isAdmin && chassis_locked($pdo, $uid)) { echo json_encode(['ok' => false, 'error' => 'locked', 'go' => 'transfer_lock.php?lang=' . $lang]); exit; }
@@ -93,6 +115,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 echo json_encode(['ok' => true, 'counts' => $counts, 'item' => (int)($in['item'] ?? 0), 'chassis' => $shown ?? null]); exit;
             case 'extra':
                 if (!sc_access($pdo, $cid, $uid, false) && !$isBoss) break;
+                if (!$isAdmin && check_counted($pdo, $cid, $uid) === null && sc_access($pdo, $cid, $uid, false)) { echo json_encode(['ok' => false, 'error' => 'count_first']); exit; }
                 $txt = mb_substr(trim((string)($in['text'] ?? '')), 0, 200);
                 if ($txt === '') { echo json_encode(['ok' => false, 'error' => 'empty']); exit; }
                 $pdo->prepare("INSERT INTO stock_check_items (check_id, car_id, label, state, marked_by, marked_at) VALUES (?, 0, ?, 'extra', ?, NOW())")->execute([$cid, $txt, $me]);
@@ -102,6 +125,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 echo json_encode(['ok' => true]); exit;
             case 'finish':
                 if (!sc_access($pdo, $cid, $uid, false) && !$isBoss) break;
+                if (!$isAdmin && check_counted($pdo, $cid, $uid) === null && sc_access($pdo, $cid, $uid, false)) { echo json_encode(['ok' => false, 'error' => 'count_first']); exit; }
                 echo json_encode(['ok' => smart_check_finish($pdo, $cid, $me)]); exit;
             case 'cancel':
                 if (!$isBoss) break;
@@ -131,6 +155,8 @@ if ($viewId) {
     $check = $st->fetch(PDO::FETCH_ASSOC) ?: null;
 }
 $doMode = $check && in_array((int)$check['id'], $myIds, true) && in_array($check['status'], ['active', 'expired'], true);
+// the first step for whoever does the check: count the cars. Until they answer, the list and its totals stay hidden.
+$needCount = $doMode && !$isAdmin && check_counted($pdo, (int)$check['id'], $uid) === null;
 
 $br  = fn($n) => push_branch_label($pdo, (string)$n, $lang);
 $stLbl = $ar ? ['active' => '⏳ جارٍ', 'expired' => '⌛ انتهى الوقت', 'done' => '✅ مكتمل', 'cancelled' => '✖ ملغى']
@@ -229,6 +255,14 @@ $ago = function ($s) use ($ar): string {
 .sc-it button.y.on{background:#16a34a;border-color:#16a34a;color:#fff}.sc-it button.n.on{background:#dc2626;border-color:#dc2626;color:#fff}
 .sc-it .nt{width:100%;display:none}.sc-it.missing .nt{display:block}
 .sc-it .by{font-size:11px;color:var(--mut);font-weight:700}
+.sc-count{text-align:center;padding:26px 18px}
+.sc-count h2{font-size:20px;line-height:1.6;margin:6px 0 8px}
+.sc-step{display:inline-block;font-size:12px;font-weight:900;color:#c4b5fd;background:rgba(147,51,234,.18);border:1px solid rgba(147,51,234,.4);padding:3px 12px;border-radius:999px;direction:ltr}
+.sc-cnt-ic{font-size:46px;margin-top:10px}
+.sc-cnt-in{display:block;width:100%;max-width:220px;height:72px;margin:16px auto 0;text-align:center;font-family:Inter,sans-serif;font-size:38px;font-weight:900;border-color:rgba(163,230,53,.5);direction:ltr}
+.sc-count .sc-fin{max-width:420px}
+.sc-cn{font-style:normal;font-size:12px;font-weight:900;padding:3px 9px;border-radius:999px;background:rgba(255,255,255,.06);color:#cbd5e1}
+.sc-cn.ok{background:rgba(34,197,94,.15);color:#86efac}.sc-cn.bad{background:rgba(239,68,68,.16);color:#fca5a5}
 .sc-how{margin-bottom:14px;padding:12px 16px;border-radius:14px;background:rgba(163,230,53,.07);border:1px solid rgba(163,230,53,.35);color:#d9f99d;font-size:13.5px;font-weight:700;line-height:1.8}
 .sc-how b{display:block;color:#fff;font-size:14.5px}
 .sc-it .chb{width:100%;display:none;flex-wrap:wrap;gap:8px}.sc-it.asking .chb{display:flex}
@@ -331,14 +365,25 @@ $ago = function ($s) use ($ar): string {
     <div class="sc-top">
         <div class="r1">
             <div><b style="font-size:16px">📍 <?= htmlspecialchars($br($check['branch'])) ?></b>
-                <div class="sc-prog"><span id="scDone"><?= $cM ?></span> / <?= $cT ?> · <span class="sc-st <?= $check['status'] ?>"><?= $stLbl[$check['status']] ?? '' ?></span></div></div>
+                <div class="sc-prog"><?php if (!$needCount): ?><span id="scDone"><?= $cM ?></span> / <?= $cT ?> · <?php endif; ?><span class="sc-st <?= $check['status'] ?>"><?= $stLbl[$check['status']] ?? '' ?></span></div></div>
             <?php if (in_array($check['status'], ['active', 'expired'], true)): ?><div class="sc-cd" id="scCd" data-secs="<?= (int)$check['secs'] ?>">—</div><?php endif; ?>
         </div>
-        <div class="sc-bar"><i id="scBar" style="width:<?= $cT ? round($cM * 100 / $cT) : 100 ?>%"></i></div>
-        <?php if ($doMode): ?><input class="sc-in sc-search" id="scQ" placeholder="🔍 <?= $isAdmin ? ($ar ? 'ابحث بالشاسيه أو الموديل…' : 'Search chassis or model…') : ($ar ? 'ابحث بالموديل أو اللون…' : 'Search model or colour…') ?>"><?php endif; ?>
+        <?php if (!$needCount): ?><div class="sc-bar"><i id="scBar" style="width:<?= $cT ? round($cM * 100 / $cT) : 100 ?>%"></i></div><?php endif; ?>
+        <?php if ($doMode && !$needCount): ?><input class="sc-in sc-search" id="scQ" placeholder="🔍 <?= $isAdmin ? ($ar ? 'ابحث بالشاسيه أو الموديل…' : 'Search chassis or model…') : ($ar ? 'ابحث بالموديل أو اللون…' : 'Search model or colour…') ?>"><?php endif; ?>
     </div>
 
-    <?php if ($doMode && !$isAdmin): ?>
+    <?php if ($needCount): ?>
+    <section class="nf-card sc-count">
+        <div class="sc-step">1 / 2</div>
+        <div class="sc-cnt-ic">🔢</div>
+        <h2><?= $ar ? 'كم عدد السيارات الموجودة في الفرع الآن؟' : 'How many cars are at the branch right now?' ?></h2>
+        <p class="nf-note"><?= $ar ? 'عُدّ السيارات الموجودة أمامك في الفرع واكتب العدد. بعدها تبدأ تأكيد كل سيارة برقم الشاسيه. يُسجَّل العدد مرة واحدة ولا يمكن تعديله.' : 'Count the cars in front of you and type the number. Then you confirm each car by its chassis. The number is saved once and cannot be changed.' ?></p>
+        <input class="sc-in sc-cnt-in" id="scCntIn" type="number" inputmode="numeric" min="0" max="5000" placeholder="0" autocomplete="off">
+        <button type="button" class="sc-fin" id="scCntGo">✅ <?= $ar ? 'تأكيد العدد والبدء' : 'Confirm the number and start' ?></button>
+        <div class="nf-msg" id="scCntMsg"></div>
+    </section>
+    <?php endif; ?>
+    <?php if ($doMode && !$isAdmin && !$needCount): ?>
     <div class="sc-how">🔑 <b><?= $ar ? 'طريقة تأكيد وجود السيارة' : 'How to confirm a car' ?></b>
         <?= $ar ? 'اضغط «موجودة» ثم اكتب رقم الشاسيه من السيارة نفسها. إذا كان الرقم يبدأ بأصفار فتجاوزها واكتب الأرقام التي بعدها فقط (مثال: 000482 تُكتب 482). الرقم غير الصحيح مرتين يوقف النظام.'
                 : 'Tap "Here", then type the chassis number off the car itself. If it starts with zeros, skip them (000482 → 482). Two wrong numbers stop your system.' ?></div>
@@ -351,7 +396,7 @@ $ago = function ($s) use ($ar): string {
         <h2>👤 <?= $ar ? 'المكلَّفون' : 'Assigned' ?></h2>
         <div class="sc-ppl2">
             <?php foreach ($assigned as $aid => $an): ?>
-            <span><?= htmlspecialchars($an) ?><?php if (in_array($aid, $lockedIds, true)): ?> 🔒 <button type="button" class="nf-mini" data-unlock="<?= $aid ?>"><?= $ar ? '🔓 فتح النظام' : '🔓 Unlock' ?></button><?php endif; ?></span>
+            <span><?= htmlspecialchars($an) ?><?php $cn = check_counted($pdo, (int)$check['id'], (int)$aid); if ($cn !== null): ?> <em class="sc-cn <?= $cn === (int)$cT ? 'ok' : 'bad' ?>">🔢 <?= $ar ? 'عدّ ' . $cn . ' — النظام ' . (int)$cT : 'counted ' . $cn . ' — system ' . (int)$cT ?> <?= $cn === (int)$cT ? '✓' : '✗' ?></em><?php elseif (in_array($check['status'], ['active', 'expired'], true)): ?> <em class="sc-cn"><?= $ar ? '🔢 لم يُدخل العدد بعد' : '🔢 not counted yet' ?></em><?php endif; ?><?php if (in_array($aid, $lockedIds, true)): ?> 🔒 <button type="button" class="nf-mini" data-unlock="<?= $aid ?>"><?= $ar ? '🔓 فتح النظام' : '🔓 Unlock' ?></button><?php endif; ?></span>
             <?php endforeach; ?>
         </div>
         <?php if (in_array($check['status'], ['active', 'expired'], true)): ?><button type="button" class="nf-btn ghost" id="scCancel" style="margin-top:8px">✖ <?= $ar ? 'إلغاء الجرد' : 'Cancel check' ?></button><?php endif; ?>
@@ -359,6 +404,7 @@ $ago = function ($s) use ($ar): string {
     </section>
     <?php endif; ?>
 
+    <?php if (!$needCount): ?>
     <section class="nf-card" id="scItems">
         <?php foreach ($items as $it): if ((int)$it['car_id'] === 0) continue; ?>
         <?php $seeCh = $isAdmin || !$doMode && $isBoss || $it['state'] === 'present' || !in_array($check['status'], ['active', 'expired'], true);   // the number stays hidden from whoever is doing the check until they type it ?>
@@ -387,6 +433,7 @@ $ago = function ($s) use ($ar): string {
         <button type="button" class="sc-fin" id="scFin" <?= $cM < $cT ? 'disabled' : '' ?>>🏁 <?= $ar ? 'إنهاء الجرد وإرسال النتيجة' : 'Finish and send the result' ?></button>
         <?php endif; ?>
     </section>
+    <?php endif; ?>
 <?php else: ?>
     <section class="nf-card"><div class="nf-empty"><?= $ar ? 'لا يوجد جرد مطلوب منك الآن' : 'No stock check for you right now' ?></div></section>
 <?php endif; ?>
@@ -434,6 +481,20 @@ $ago = function ($s) use ($ar): string {
             cd.textContent = (s < 0 ? '−' : '') + Math.floor(a / 3600) + ':' + String(Math.floor(a % 3600 / 60)).padStart(2, '0') + ':' + String(a % 60).padStart(2, '0');
             cd.classList.toggle('over', s <= 0); cd.classList.toggle('low', s > 0 && s < 600); };
         tick(); setInterval(tick, 1000);
+    }
+
+    /* ── step 1: how many cars are at the branch ── */
+    if ($('scCntGo')) {
+        const go = async () => {
+            const v = $('scCntIn').value.trim(), m = $('scCntMsg');
+            if (v === '' || !/^\d+$/.test(v)) { m.textContent = AR ? 'اكتب عدد السيارات بالأرقام' : 'Type the number of cars'; m.className = 'nf-msg bad'; $('scCntIn').focus(); return; }
+            if (!confirm(AR ? 'تأكيد أن عدد السيارات في الفرع هو ' + v + '؟ لا يمكن تعديل العدد بعد التأكيد.' : 'Confirm ' + v + ' cars at the branch? It cannot be changed afterwards.')) return;
+            $('scCntGo').disabled = true;
+            const r = await post({ action: 'count', n: +v }).catch(() => ({ ok: false }));
+            if (r.ok) location.reload(); else if (r.go) location.href = r.go; else { $('scCntGo').disabled = false; m.textContent = AR ? 'تعذّر الحفظ — حاول مرة أخرى' : 'Could not save — try again'; m.className = 'nf-msg bad'; }
+        };
+        $('scCntGo').addEventListener('click', go);
+        $('scCntIn').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); go(); } });
     }
 
     /* ── doing the check ── */

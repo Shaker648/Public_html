@@ -850,6 +850,16 @@ function notify_message(PDO $pdo, string $event, array $d, string $lang): array
             break;
         case 'check_item':
             $bn = push_branch_label($pdo, (string)($d['branch'] ?? ''), $lang);
+            if (isset($d['counted'])) {   // the first step: how many cars the person counted, against the system
+                $same = (int)$d['counted'] === (int)$d['total'];
+                $title = ($same ? '🔢 ' : '⚠️ ') . ($ar ? 'جرد فرع ' . $bn . ': ' . ($d['actor_name'] ?? '') . ' عدّ ' . (int)$d['counted'] . ' — المسجَّل في النظام ' . (int)$d['total']
+                                                         : $bn . ' check: ' . ($d['actor_name'] ?? '') . ' counted ' . (int)$d['counted'] . ' — the system has ' . (int)$d['total']);
+                $body[] = $same ? ($ar ? '✅ العدد مطابق للنظام' : '✅ Matches the system')
+                                : ($ar ? '❗ العدد غير مطابق: الفرق ' . abs((int)$d['counted'] - (int)$d['total']) . ((int)$d['counted'] > (int)$d['total'] ? ' (أكثر من النظام)' : ' (أقل من النظام)')
+                                       : '❗ Does not match: off by ' . abs((int)$d['counted'] - (int)$d['total']));
+                $url = 'stock_check.php?lang=' . $lang . '&id=' . (int)($d['id'] ?? 0);
+                break;
+            }
             $miss = ($d['state'] ?? '') === 'missing';
             $title = ($miss ? '❌ ' : '✅ ') . ($ar ? 'جرد فرع ' . $bn . ': ' . (int)$d['done'] . ' من أصل ' . (int)$d['total'] : $bn . ' check: ' . (int)$d['done'] . ' of ' . (int)$d['total']);
             $body[] = ($miss ? ($ar ? '❌ غير موجودة: ' : '❌ Missing: ') : ($ar ? '✅ موجودة: ' : '✅ Present: ')) . ($d['label'] ?? '') . (!empty($d['chassis']) ? ' · 🔑 ' . $d['chassis'] : '');
@@ -868,16 +878,17 @@ function notify_message(PDO $pdo, string $event, array $d, string $lang): array
             if ($event === 'check_start') {
                 $title = $ev[2] . ' ' . ($ar ? 'بدأ جرد مفاجئ: فرع ' . $bn . ' — المكلَّف: ' . ($d['users'] ?? '') : 'Surprise stock check started: ' . $bn . ' — ' . ($d['users'] ?? ''));
                 $body[] = $ar ? '⏱️ المدة ' . ($d['dur'] ?? '') . ' — تنتهي الساعة ' . $d['until'] : '⏱️ ' . ($d['dur'] ?? '') . ' — ends at ' . $d['until'];
-                $body[] = $ar ? '🚗 المطلوب تأكيد وجود ' . push_ar_cars($n) . ' في الفرع' : '🚗 ' . $n . ' cars to confirm';
+                // the number of cars is not sent: the first step of the check is to count them
+                $body[] = $ar ? '🔢 أولاً: عُدّ السيارات الموجودة في الفرع، ثم أكّد كل سيارة برقم الشاسيه' : '🔢 First count the cars at the branch, then confirm each one by its chassis';
                 if (!empty($d['note'])) $body[] = '📝 ' . $d['note'];
                 if (!empty($d['lock'])) $body[] = $ar ? '🔒 بعد الساعة ' . $d['until'] . ' يبدأ إيقاف النظام عن المكلَّف إذا لم يكتمل الجرد' : '🔒 After ' . $d['until'] . ' the system locks for them if not finished';
             } elseif ($event === 'check_tick') {
                 $title = '⏳ ' . ($ar ? 'متبقٍّ ' . push_ar_mins((int)$d['mins']) . ' — جرد فرع ' . $bn : (int)$d['mins'] . ' min left — ' . $bn . ' stock check');
-                $body[] = ($ar ? '👤 المكلَّف: ' : '👤 Assigned: ') . ($d['users'] ?? '') . ' · ' . ($ar ? 'تمت مراجعة ' . (int)$d['done'] . ' من أصل ' . $n : (int)$d['done'] . ' of ' . $n . ' checked');
+                $body[] = ($ar ? '👤 المكلَّف: ' : '👤 Assigned: ') . ($d['users'] ?? '') . ' · ' . ($ar ? 'تمت مراجعة ' . (int)$d['done'] . (empty($d['hide_total']) ? ' من أصل ' . $n : '') : (int)$d['done'] . (empty($d['hide_total']) ? ' of ' . $n : '') . ' checked');
                 $body[] = $ar ? '🔒 ينتهي الوقت الساعة ' . ($d['until'] ?? '') . (!empty($d['lock']) ? ' ثم يبدأ إيقاف النظام' : '') : '🔒 Time ends at ' . ($d['until'] ?? '') . (!empty($d['lock']) ? ', then the lock starts' : '');
             } elseif ($event === 'check_warn') {
                 $title = $ev[2] . ' ' . ($ar ? 'متبقٍّ ' . push_ar_mins((int)$d['mins']) . ' على بدء الإيقاف — جرد فرع ' . $bn : (int)$d['mins'] . ' min until the lock — ' . $bn . ' stock check');
-                $body[] = ($ar ? 'تم تأكيد ' : 'Checked ') . (int)$d['done'] . ($ar ? ' من أصل ' : ' of ') . $n . ($ar ? '' : ' cars') . ' · ' . ($d['users'] ?? '');
+                $body[] = ($ar ? 'تم تأكيد ' : 'Checked ') . (int)$d['done'] . (empty($d['hide_total']) ? ($ar ? ' من أصل ' : ' of ') . $n : '') . ($ar ? '' : ' cars') . ' · ' . ($d['users'] ?? '');
             } elseif ($event === 'check_locked') {
                 $title = $ev[2] . ' ' . ($ar ? 'تم إيقاف النظام عن ' : 'System locked for ') . ($d['users'] ?? '');
                 $body[] = $ar ? 'لم يكتمل جرد فرع ' . $bn . ' في الوقت المحدد (تمت مراجعة ' . (int)$d['done'] . ' من أصل ' . $n . ')' : 'The ' . $bn . ' stock check was not finished in time (' . (int)$d['done'] . ' of ' . $n . ')';

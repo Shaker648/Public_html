@@ -157,3 +157,37 @@ function chassis_mask_rows(PDO $pdo, array &$rows, string $idKey = 'id'): void
         unset($r);
     } catch (Throwable $e) { error_log('chassis_mask_rows: ' . $e->getMessage()); }
 }
+
+/* ════════ the stock check starts with a question: how many cars are at the branch? ════════ */
+/** The two columns that keep each person's answer (added on first use). */
+function check_count_cols(PDO $pdo): void
+{
+    static $done = false;
+    if ($done) return;
+    $done = true;
+    try { $pdo->query("SELECT counted FROM stock_check_users LIMIT 1"); }
+    catch (Throwable $e) { try { $pdo->exec("ALTER TABLE stock_check_users ADD counted INT NULL, ADD counted_at DATETIME NULL"); } catch (Throwable $e2) {} }
+}
+
+/** This person's answer for a check: the number they counted, or null if they have not answered yet. */
+function check_counted(PDO $pdo, int $checkId, int $uid): ?int
+{
+    try {
+        check_count_cols($pdo);
+        $st = $pdo->prepare("SELECT counted FROM stock_check_users WHERE check_id = ? AND user_id = ?");
+        $st->execute([$checkId, $uid]);
+        $v = $st->fetchColumn();
+        return ($v === false || $v === null) ? null : (int)$v;
+    } catch (Throwable $e) { return null; }
+}
+
+/** Has anyone doing this check not answered yet? (then the number of cars must not be sent to them) */
+function check_count_pending(PDO $pdo, int $checkId): bool
+{
+    try {
+        check_count_cols($pdo);
+        $st = $pdo->prepare("SELECT 1 FROM stock_check_users s JOIN users u ON u.id = s.user_id WHERE s.check_id = ? AND s.counted IS NULL AND u.role <> 'admin' LIMIT 1");
+        $st->execute([$checkId]);
+        return (bool)$st->fetchColumn();
+    } catch (Throwable $e) { return false; }
+}

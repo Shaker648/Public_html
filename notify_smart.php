@@ -753,14 +753,14 @@ function smart_check_scan(PDO $pdo): array
             // half-way: the same notification updates with the time left
             if (!(int)$c['half_sent'] && (int)$c['secs'] > $warnAt && (int)$c['secs'] <= (int)$c['minutes'] * 30) {
                 $pdo->prepare("UPDATE stock_checks SET half_sent = 1 WHERE id = ?")->execute([$id]);
-                notify_event($pdo, 'check_tick', ['id' => $id, 'branch' => $c['branch'], 'count' => $t, 'done' => $m, 'mins' => max(1, (int)ceil((int)$c['secs'] / 60)),
+                notify_event($pdo, 'check_tick', ['id' => $id, 'branch' => $c['branch'], 'count' => $t, 'hide_total' => check_count_pending($pdo, $id), 'done' => $m, 'mins' => max(1, (int)ceil((int)$c['secs'] / 60)),
                     'until' => smart_time_label((int)$c['dl'], $lang), 'lock' => (int)$c['lock_on'], 'users' => implode('، ', $names), 'only' => $who,
                     'actor' => '', 'tag' => 'chk-' . $id, 'force' => true, 'now' => true]);
                 $log[] = 'check_tick #' . $id;
             }
             if (!(int)$c['warned'] && (int)$c['secs'] > 0 && (int)$c['secs'] <= $warnAt) {
                 $pdo->prepare("UPDATE stock_checks SET warned = 1 WHERE id = ?")->execute([$id]);
-                notify_event($pdo, 'check_warn', ['id' => $id, 'branch' => $c['branch'], 'count' => $t, 'done' => $m, 'mins' => max(1, (int)ceil((int)$c['secs'] / 60)),
+                notify_event($pdo, 'check_warn', ['id' => $id, 'branch' => $c['branch'], 'count' => $t, 'hide_total' => check_count_pending($pdo, $id), 'done' => $m, 'mins' => max(1, (int)ceil((int)$c['secs'] / 60)),
                     'users' => implode('، ', $names), 'only' => $who, 'actor' => '', 'tag' => 'chk-' . $id, 'force' => true, 'now' => true]);
                 $log[] = 'check_warn #' . $id;
             }
