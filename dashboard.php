@@ -629,6 +629,25 @@ function arDate($dt, $lang) {
         .chip.on { background:#9333ea; border-color:transparent; color:#fff; }
         .chip-n { font-size:10.5px; font-weight:800; opacity:.75; }
         .chip[hidden] { display:none !important; }
+        /* branch trust (admins) */
+        .duty-bar.plan { border-color:rgba(250,204,21,.55); background:linear-gradient(120deg,rgba(250,204,21,.16),rgba(147,51,234,.12)); }
+        .trust { margin:0 0 12px; padding:12px 14px; border-radius:18px; background:rgba(15,23,42,.6); border:1px solid rgba(148,163,184,.18); }
+        .tr-h { font-size:13.5px; font-weight:900; color:#e2e8f0; margin-bottom:10px; }
+        .tr-h small { font-size:11px; color:#94a3b8; font-weight:700; margin-inline-start:6px; }
+        .tr-row { display:flex; gap:10px; overflow-x:auto; padding-bottom:2px; }
+        .tr-b { flex:0 0 auto; min-width:86px; display:flex; flex-direction:column; align-items:center; gap:6px; padding:8px 6px; border-radius:14px; border:1px solid transparent; background:none; color:inherit; font:inherit; cursor:pointer; }
+        .tr-b.on { background:rgba(255,255,255,.05); border-color:rgba(255,255,255,.12); }
+        .tr-ring { --p:0; --c:#22c55e; position:relative; width:58px; height:58px; border-radius:50%; display:grid; place-items:center; background:conic-gradient(var(--c) calc(var(--p) * 1%), rgba(255,255,255,.08) 0); }
+        .tr-ring::before { content:''; position:absolute; inset:5px; border-radius:50%; background:#0b1222; }
+        .tr-ring b { position:relative; font-size:18px; font-weight:900; font-variant-numeric:tabular-nums; color:var(--c); }
+        .tr-b.mid .tr-ring { --c:#f59e0b; } .tr-b.bad .tr-ring { --c:#ef4444; }
+        .tr-b.bad .tr-ring { animation:trBad 1.8s ease-in-out infinite; }
+        @keyframes trBad { 50% { box-shadow:0 0 0 4px rgba(239,68,68,.25), 0 0 18px rgba(239,68,68,.45); } }
+        .tr-n { font-size:12px; font-weight:800; color:#cbd5e1; white-space:nowrap; }
+        .tr-why { margin-top:10px; padding:10px 12px; border-radius:12px; background:rgba(0,0,0,.28); border:1px solid rgba(255,255,255,.07); font-size:12.5px; font-weight:700; color:#cbd5e1; }
+        .tr-why b { display:block; font-size:13.5px; color:#fff; margin-bottom:4px; }
+        .tr-why div { display:flex; gap:10px; padding:3px 0; } .tr-why div i { font-style:normal; color:#fca5a5; font-weight:900; min-width:34px; }
+        .tr-why a { display:inline-block; margin-top:8px; color:#c4b5fd; font-weight:800; text-decoration:none; }
         /* my day: streak ring + today's hours + badges */
         .myday { display:flex; align-items:center; gap:14px; margin:0 0 12px; padding:12px 14px; border-radius:18px; text-decoration:none; color:#f1f5f9;
                  background:linear-gradient(120deg,rgba(34,197,94,.10),rgba(147,51,234,.10)); border:1px solid rgba(34,197,94,.28); }
@@ -1505,6 +1524,34 @@ body:has(#npCard.on) #f1c-chat-bubble { opacity:0; pointer-events:none; }
     <!-- ════════ Control band — search, counts and filters in one sticky strip.
          It stays pinned while you scroll, so the controls never leave. ════════ -->
     <?php
+    /* ── admins only: checks the system proposes (waiting for approval) and each branch's trust score ── */
+    if ($isAdmin && is_file(__DIR__ . '/check_auto.php')):
+        try { require_once __DIR__ . '/notify_smart.php'; } catch (Throwable $e) {}
+        $adPlans = function_exists('check_auto_pending') ? check_auto_pending($pdo) : [];
+        $trust   = function_exists('branch_trust') ? branch_trust($pdo) : [];
+        if ($adPlans): ?>
+    <a class="duty-bar plan" href="stock_check.php?lang=<?= $lang ?>#plans" data-secs="0">
+        <span class="dt-ic">🎲</span>
+        <span class="dt-tx"><?= $lang === 'ar' ? (count($adPlans) === 1 ? 'اقتراح جرد مفاجئ ينتظر موافقتك' : count($adPlans) . ' اقتراحات جرد تنتظر موافقتك') : count($adPlans) . ' proposed check(s) waiting for you' ?>
+            <small><?= htmlspecialchars(implode(' · ', array_map(fn($x) => ($x['kind'] === 'spot' ? '⚡ ' : '📋 ') . push_branch_label($pdo, (string)$x['branch'], $lang) . ' — ' . $x['username'], array_slice($adPlans, 0, 3)))) ?></small></span>
+        <span class="dt-go">✅ <?= $lang === 'ar' ? 'مراجعة' : 'Review' ?></span>
+    </a>
+        <?php endif; if ($trust): ?>
+    <div class="trust" id="trustStrip">
+        <div class="tr-h">🛡️ <?= $lang === 'ar' ? 'ثقة الفروع' : 'Branch trust' ?> <small><?= $lang === 'ar' ? 'آخر 30 يوماً · للإدارة فقط' : 'last 30 days · admins only' ?></small></div>
+        <div class="tr-row">
+            <?php foreach ($trust as $tb => $tv): $sc = (int)$tv['score']; $tc = $sc >= 85 ? 'good' : ($sc >= 60 ? 'mid' : 'bad'); ?>
+            <button type="button" class="tr-b <?= $tc ?>" data-why="<?= htmlspecialchars(json_encode(array_map(fn($w) => ['−' . $w[0], branch_trust_label($w[2], $w[1], $lang)], $tv['why']), JSON_UNESCAPED_UNICODE), ENT_QUOTES) ?>" data-name="<?= htmlspecialchars(push_branch_label($pdo, (string)$tb, $lang), ENT_QUOTES) ?>">
+                <span class="tr-ring" style="--p:<?= $sc ?>"><b><?= $sc ?></b></span>
+                <span class="tr-n"><?= htmlspecialchars(push_branch_label($pdo, (string)$tb, $lang)) ?></span>
+            </button>
+            <?php endforeach; ?>
+        </div>
+        <div class="tr-why" id="trustWhy" hidden></div>
+    </div>
+        <?php endif;
+    endif; ?>
+    <?php
     /* ── my day: hours today, attendance streak and badges (from attendance only) + the morning brief ── */
     $myDay = null; $brief = null; $roadIds = [];
     if (is_file(__DIR__ . '/my_day.php')) {
@@ -2295,6 +2342,23 @@ body:has(#npCard.on) #f1c-chat-bubble { opacity:0; pointer-events:none; }
         if (document.getElementById('liveAct')) setTimeout(pulse, 400);   // fill "happening now" straight away
     })();
 
+    /* ── 🛡️ branch trust: tap a branch → why it lost points ── */
+    (function () {
+        const why = document.getElementById('trustWhy'); if (!why) return;
+        const AR = <?= json_encode($lang === 'ar') ?>;
+        const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+        document.querySelectorAll('.tr-b').forEach(b => b.addEventListener('click', () => {
+            const was = b.classList.contains('on');
+            document.querySelectorAll('.tr-b').forEach(x => x.classList.remove('on'));
+            if (was) { why.hidden = true; return; }
+            b.classList.add('on');
+            let rows = []; try { rows = JSON.parse(b.dataset.why || '[]'); } catch (e) {}
+            why.innerHTML = '<b>📍 ' + esc(b.dataset.name) + '</b>' + (rows.length ? rows.map(r => '<div><i>' + esc(r[0]) + '</i><span>' + esc(r[1]) + '</span></div>').join('')
+                : '<div><span>' + (AR ? '✅ لا توجد أي مخالفة مسجَّلة خلال آخر 30 يوماً' : '✅ Nothing recorded against it in the last 30 days') + '</span></div>') +
+                '<a href="lockdown.php?lang=<?= $lang ?>#ldBox">🗃️ ' + (AR ? 'فتح السجل الخاص بالإدارة' : 'Open the admin record') + ' ‹</a>';
+            why.hidden = false;
+        }));
+    })();
     /* ── ☀️ morning brief: once a day on this device, the first time the dashboard is opened ── */
     (function () {
         const ov = document.getElementById('briefOv'); if (!ov) return;

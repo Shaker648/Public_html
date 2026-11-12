@@ -43,6 +43,12 @@ function sc_access(PDO $pdo, int $id, int $uid, bool $boss): bool
     return (bool)$st->fetchColumn();
 }
 
+/** Is this check a one-car spot check? (it has no counting step) */
+function sc_is_spot(PDO $pdo, int $id): bool
+{
+    try { $st = $pdo->prepare("SELECT spot FROM stock_checks WHERE id = ?"); $st->execute([$id]); return (bool)$st->fetchColumn(); } catch (Throwable $e) { return false; }
+}
+
 /* ─── JSON actions ─── */
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     header('Content-Type: application/json; charset=utf-8');
@@ -60,6 +66,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 if (!$users) { echo json_encode(['ok' => false, 'error' => 'nobody']); exit; }
                 $id = smart_check_create($pdo, $branch, $users, (int)($in['minutes'] ?? 30), trim((string)($in['note'] ?? '')), !empty($in['lock']), $me, array_map('intval', (array)($in['watch'] ?? [])));
                 echo json_encode(['ok' => true, 'id' => $id]); exit;
+            case 'spot':     // ⚡ one random car of the branch, for one person
+                if (!$isBoss) break;
+                $branch = (string)($in['branch'] ?? ''); $who = (int)($in['user'] ?? 0);
+                $okB = $pdo->prepare("SELECT 1 FROM branches WHERE name = ?"); $okB->execute([$branch]);
+                if (!$okB->fetchColumn() || !$who) { echo json_encode(['ok' => false, 'error' => 'pick']); exit; }
+                $id = check_spot_create($pdo, $branch, $who, (int)($in['minutes'] ?? 5), $me);
+                echo json_encode($id ? ['ok' => true, 'id' => $id] : ['ok' => false, 'error' => 'nocar']); exit;
+            case 'plan':     // the admin's answer to a check the system proposed
+                if (!$isAdmin) break;
+                $id = check_auto_decide($pdo, (int)($in['plan'] ?? 0), !empty($in['send']), $me, (int)($in['minutes'] ?? 0));
+                echo json_encode(['ok' => true, 'id' => $id]); exit;
+            case 'auto_rules':
+                if (!$isAdmin) break;
+                push_setting_set($pdo, 'check_auto', json_encode(['on' => !empty($in['on']), 'full' => max(0, min(7, (int)($in['full'] ?? 1))), 'spot' => max(0, min(14, (int)($in['spot'] ?? 2))),
+                    'from' => max(0, min(22, (int)($in['from'] ?? 11))), 'to' => max(1, min(23, (int)($in['to'] ?? 20)))]), $me);
+                // this week's plans that were not asked yet are planned again with the new numbers
+                check_auto_tables($pdo); $pdo->exec("DELETE FROM stock_check_plans WHERE status = 'planned'");
+                $wk = $pdo->prepare("UPDATE stock_check_plans SET week_key = CONCAT(week_key, 'x') WHERE week_key = ?"); $wk->execute([date('o-W')]);
+                echo json_encode(['ok' => true]); exit;
             case 'count':
                 // the first step: how many cars are at the branch? (answered once; the admin sees it against the system)
                 if ($isAdmin || !sc_access($pdo, $cid, $uid, false)) break;
@@ -85,7 +110,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 echo json_encode(['ok' => true]); exit;
             case 'mark':
                 if (!sc_access($pdo, $cid, $uid, false) && !$isBoss) break;
-                if (!$isAdmin && check_counted($pdo, $cid, $uid) === null && sc_access($pdo, $cid, $uid, false)) { echo json_encode(['ok' => false, 'error' => 'count_first']); exit; }
+                if (!$isAdmin && !sc_is_spot($pdo, $cid) && check_counted($pdo, $cid, $uid) === null && sc_access($pdo, $cid, $uid, false)) { echo json_encode(['ok' => false, 'error' => 'count_first']); exit; }
                 $state = in_array($in['state'] ?? '', ['present', 'missing'], true) ? $in['state'] : null;
                 $note  = mb_substr(trim((string)($in['note'] ?? '')), 0, 250);
                 if (!$isAdmin && chassis_locked($pdo, $uid)) { echo json_encode(['ok' => false, 'error' => 'locked', 'go' => 'transfer_lock.php?lang=' . $lang]); exit; }
@@ -121,7 +146,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 echo json_encode(['ok' => true, 'counts' => $counts, 'item' => (int)($in['item'] ?? 0), 'chassis' => $shown ?? null]); exit;
             case 'extra':
                 if (!sc_access($pdo, $cid, $uid, false) && !$isBoss) break;
-                if (!$isAdmin && check_counted($pdo, $cid, $uid) === null && sc_access($pdo, $cid, $uid, false)) { echo json_encode(['ok' => false, 'error' => 'count_first']); exit; }
+                if (!$isAdmin && !sc_is_spot($pdo, $cid) && check_counted($pdo, $cid, $uid) === null && sc_access($pdo, $cid, $uid, false)) { echo json_encode(['ok' => false, 'error' => 'count_first']); exit; }
                 $txt = mb_substr(trim((string)($in['text'] ?? '')), 0, 200);
                 if ($txt === '') { echo json_encode(['ok' => false, 'error' => 'empty']); exit; }
                 $pdo->prepare("INSERT INTO stock_check_items (check_id, car_id, label, state, marked_by, marked_at) VALUES (?, 0, ?, 'extra', ?, NOW())")->execute([$cid, $txt, $me]);
@@ -132,7 +157,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 echo json_encode(['ok' => true]); exit;
             case 'finish':
                 if (!sc_access($pdo, $cid, $uid, false) && !$isBoss) break;
-                if (!$isAdmin && check_counted($pdo, $cid, $uid) === null && sc_access($pdo, $cid, $uid, false)) { echo json_encode(['ok' => false, 'error' => 'count_first']); exit; }
+                if (!$isAdmin && !sc_is_spot($pdo, $cid) && check_counted($pdo, $cid, $uid) === null && sc_access($pdo, $cid, $uid, false)) { echo json_encode(['ok' => false, 'error' => 'count_first']); exit; }
                 echo json_encode(['ok' => smart_check_finish($pdo, $cid, $me)]); exit;
             case 'cancel':
                 if (!$isBoss) break;
@@ -164,7 +189,8 @@ if ($viewId) {
 }
 $doMode = $check && in_array((int)$check['id'], $myIds, true) && in_array($check['status'], ['active', 'expired'], true);
 // the first step for whoever does the check: count the cars. Until they answer, the list and its totals stay hidden.
-$needCount = $doMode && !$isAdmin && check_counted($pdo, (int)$check['id'], $uid) === null;
+$isSpot = $check && !empty($check['spot']);
+$needCount = $doMode && !$isAdmin && !$isSpot && check_counted($pdo, (int)$check['id'], $uid) === null;
 
 $br  = fn($n) => push_branch_label($pdo, (string)$n, $lang);
 $stLbl = $ar ? ['active' => '⏳ جارٍ', 'expired' => '⌛ انتهى الوقت', 'done' => '✅ مكتمل', 'cancelled' => '✖ ملغى']
@@ -263,6 +289,12 @@ $ago = function ($s) use ($ar): string {
 .sc-it button.y.on{background:#16a34a;border-color:#16a34a;color:#fff}.sc-it button.n.on{background:#dc2626;border-color:#dc2626;color:#fff}
 .sc-it .nt{width:100%;display:none}.sc-it.missing .nt{display:block}
 .sc-it .by{font-size:11px;color:var(--mut);font-weight:700}
+.sc-plans{border-color:rgba(250,204,21,.45);background:linear-gradient(160deg,rgba(250,204,21,.08),rgba(255,255,255,.02))}
+.sc-plan{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:12px;border-radius:14px;border:1px solid rgba(250,204,21,.3);background:rgba(2,6,23,.4);margin-bottom:8px}
+.sc-plan .i{flex:1;min-width:200px}.sc-plan b{display:block;font-size:14.5px}.sc-plan small{display:block;font-size:12.5px;color:var(--mut);font-weight:700;margin-top:3px}
+.sc-spot{display:flex;flex-wrap:wrap;gap:8px}.sc-spot select{flex:1;min-width:130px}
+.sc-auto{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:10px;margin:12px 0}
+.sc-auto label{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:13px;font-weight:800;color:var(--mut)}
 .sc-count{text-align:center;padding:26px 18px}
 .sc-count h2{font-size:20px;line-height:1.6;margin:6px 0 8px}
 .sc-step{display:inline-block;font-size:12px;font-weight:900;color:#c4b5fd;background:rgba(147,51,234,.18);border:1px solid rgba(147,51,234,.4);padding:3px 12px;border-radius:999px;direction:ltr}
@@ -293,7 +325,7 @@ $ago = function ($s) use ($ar): string {
 <div class="nf-wrap">
     <header class="nf-head">
         <div><h1>📋 <?= $ar ? 'الجرد المفاجئ' : 'Surprise stock check' ?></h1>
-            <p><?= $ar ? 'تأكيد وجود كل سيارة في الفرع خلال وقت محدد' : 'Confirm every car at a branch within a set time' ?></p></div>
+            <p><?= !empty($isSpot) ? ($ar ? '⚡ فحص سريع: اذهب إلى السيارة المطلوبة واكتب رقم الشاسيه الموجود عليها' : '⚡ Spot check: go to the car asked for and type its chassis') : ($ar ? 'تأكيد وجود كل سيارة في الفرع خلال وقت محدد' : 'Confirm every car at a branch within a set time') ?></p></div>
         <div class="nf-nav">
             <?php if ($isBoss): ?><a class="nf-btn pur" href="permissions_admin.php?lang=<?= $lang ?>">🔐 <?= $ar ? 'الصلاحيات' : 'Permissions' ?></a><?php endif; ?>
             <?php if ($isBoss && $check): ?><a class="nf-btn" href="stock_check.php?lang=<?= $lang ?>">📋 <?= $ar ? 'كل عمليات الجرد' : 'All checks' ?></a><?php endif; ?>
@@ -303,6 +335,51 @@ $ago = function ($s) use ($ar): string {
     </header>
 
 <?php if ($isBoss && !$check): ?>
+    <?php $plans = $isAdmin ? check_auto_pending($pdo) : []; $autoR = check_auto_rules($pdo); ?>
+    <?php if ($plans): ?>
+    <section class="nf-card sc-plans" id="plans">
+        <h2>🎲 <?= $ar ? 'اقتراحات النظام — بانتظار موافقتك' : 'Proposed by the system — waiting for you' ?> <span class="nf-count"><?= count($plans) ?></span></h2>
+        <p class="nf-note"><?= $ar ? 'لم يُرسل أي شيء للفرع. اضغط «إرسال الآن» ليبدأ الجرد فوراً، أو «تجاهل». ينتهي الاقتراح تلقائياً بعد ساعتين.' : 'Nothing has been sent to the branch. Press "Send now" to start it at once, or "Skip". A proposal expires by itself after two hours.' ?></p>
+        <?php foreach ($plans as $pl): $sp = $pl['kind'] === 'spot'; ?>
+        <div class="sc-plan">
+            <div class="i"><b><?= $sp ? '⚡ ' . ($ar ? 'فحص سريع لسيارة واحدة' : 'Spot check, one car') : '📋 ' . ($ar ? 'جرد مفاجئ كامل' : 'Full surprise check') ?> — 📍 <?= htmlspecialchars($br($pl['branch'])) ?></b>
+                <small>👤 <?= $ar ? 'المكلَّف المقترح: ' : 'Proposed for: ' ?><?= htmlspecialchars((string)$pl['username']) ?> · <?= $ar ? 'منذ ' . max(1, (int)$pl['mins']) . ' دقيقة' : max(1, (int)$pl['mins']) . ' min ago' ?></small></div>
+            <select class="sc-in" data-pm><?php foreach ($sp ? [3, 5, 10, 15] : [15, 30, 45, 60, 90] as $mm): ?><option value="<?= $mm ?>"<?= $mm === ($sp ? 5 : 30) ? ' selected' : '' ?>><?= $mm ?> <?= $ar ? 'دقيقة' : 'min' ?></option><?php endforeach; ?></select>
+            <button type="button" class="nf-btn" data-plan="<?= (int)$pl['id'] ?>" data-send="1">🚨 <?= $ar ? 'إرسال الآن' : 'Send now' ?></button>
+            <button type="button" class="nf-btn ghost" data-plan="<?= (int)$pl['id'] ?>" data-send="0">✖ <?= $ar ? 'تجاهل' : 'Skip' ?></button>
+        </div>
+        <?php endforeach; ?>
+    </section>
+    <?php endif; ?>
+
+    <section class="nf-card">
+        <h2>⚡ <?= $ar ? 'فحص سريع لسيارة واحدة' : 'Spot check, one car' ?></h2>
+        <p class="nf-note"><?= $ar ? 'يختار النظام سيارة واحدة عشوائياً من الفرع، وعلى المكلَّف كتابة رقم الشاسيه الموجود عليها خلال دقائق. دقيقة واحدة من وقته، وتتأكد أن السيارة موجودة فعلاً.' : 'The system picks one random car of the branch; the person types the chassis on it within minutes.' ?></p>
+        <div class="sc-spot">
+            <select class="sc-in" id="spBranch"><option value=""><?= $ar ? '— الفرع —' : '— branch —' ?></option><?php foreach ($branches as $b): if (!(int)$b['n']) continue; ?><option value="<?= htmlspecialchars($b['name']) ?>"><?= htmlspecialchars(($ar ? $b['name_ar'] : $b['name_en']) ?: $b['name']) ?> (<?= (int)$b['n'] ?>)</option><?php endforeach; ?></select>
+            <select class="sc-in" id="spUser"><option value=""><?= $ar ? '— المكلَّف —' : '— who —' ?></option><?php foreach ($people as $p2): if ($p2['role'] === 'admin') continue; ?><option value="<?= (int)$p2['id'] ?>" data-here="<?= htmlspecialchars($here[(int)$p2['id']] ?? '') ?>"><?= htmlspecialchars($p2['username']) ?></option><?php endforeach; ?></select>
+            <select class="sc-in" id="spMin"><?php foreach ([3, 5, 10, 15] as $mm): ?><option value="<?= $mm ?>"<?= $mm === 5 ? ' selected' : '' ?>><?= $mm ?> <?= $ar ? 'دقائق' : 'min' ?></option><?php endforeach; ?></select>
+            <button type="button" class="nf-btn" id="spGo">⚡ <?= $ar ? 'إرسال الفحص' : 'Send' ?></button>
+        </div>
+        <div class="nf-msg" id="spMsg"></div>
+    </section>
+
+    <?php if ($isAdmin): ?>
+    <section class="nf-card">
+        <h2>🎲 <?= $ar ? 'اقتراحات تلقائية بموافقتك' : 'Automatic proposals, with your approval' ?></h2>
+        <p class="nf-note"><?= $ar ? 'يختار النظام أياماً وأوقاتاً عشوائية خلال الأسبوع لكل فرع، ويختار موظفاً حاضراً في الفرع لحظتها، ثم يسألك أنت أولاً. لا يُرسل أي شيء للفرع إلا بعد ضغطك «إرسال الآن»، فلا يستطيع أحد توقّع الموعد.' : 'The system picks random days and times through the week for each branch and a person who is there at that moment, then asks you first. Nothing reaches the branch until you press "Send now".' ?></p>
+        <label class="sc-opt"><span class="tg"><input type="checkbox" id="auOn" <?= $autoR['on'] ? 'checked' : '' ?>><span></span></span> <?= $ar ? 'تفعيل الاقتراحات التلقائية' : 'Turn automatic proposals on' ?></label>
+        <div class="sc-auto">
+            <label><?= $ar ? 'جرد كامل لكل فرع أسبوعياً' : 'Full checks per branch per week' ?> <input type="number" class="sc-in sc-num" id="auFull" min="0" max="7" value="<?= $autoR['full'] ?>"></label>
+            <label><?= $ar ? 'فحص سريع لكل فرع أسبوعياً' : 'Spot checks per branch per week' ?> <input type="number" class="sc-in sc-num" id="auSpot" min="0" max="14" value="<?= $autoR['spot'] ?>"></label>
+            <label><?= $ar ? 'من الساعة' : 'From hour' ?> <input type="number" class="sc-in sc-num" id="auFrom" min="0" max="22" value="<?= $autoR['from'] ?>"></label>
+            <label><?= $ar ? 'إلى الساعة' : 'To hour' ?> <input type="number" class="sc-in sc-num" id="auTo" min="1" max="23" value="<?= $autoR['to'] ?>"></label>
+        </div>
+        <button type="button" class="nf-btn" id="auSave">💾 <?= $ar ? 'حفظ' : 'Save' ?></button>
+        <div class="nf-msg" id="auMsg"></div>
+    </section>
+    <?php endif; ?>
+
     <section class="nf-card">
         <h2>🚨 <?= $ar ? 'جرد مفاجئ جديد' : 'New surprise check' ?></h2>
         <p class="nf-note"><?= $ar ? 'يصل للمكلَّف فوراً على موبايله وداخل النظام. قائمة السيارات هي الموجودة في الفرع لحظة الإرسال.' : 'It reaches the people chosen at once, on their phone and in the system. The list is the cars at the branch right now.' ?></p>
@@ -404,7 +481,7 @@ $ago = function ($s) use ($ar): string {
         <h2>👤 <?= $ar ? 'المكلَّفون' : 'Assigned' ?></h2>
         <div class="sc-ppl2">
             <?php foreach ($assigned as $aid => $an): ?>
-            <span><?= htmlspecialchars($an) ?><?php $cn = check_counted($pdo, (int)$check['id'], (int)$aid); if ($cn !== null): ?> <em class="sc-cn <?= $cn === (int)$cT ? 'ok' : 'bad' ?>">🔢 <?= $ar ? 'عدّ ' . $cn . ' — النظام ' . (int)$cT : 'counted ' . $cn . ' — system ' . (int)$cT ?> <?= $cn === (int)$cT ? '✓' : '✗' ?></em><?php elseif (in_array($check['status'], ['active', 'expired'], true)): ?> <em class="sc-cn"><?= $ar ? '🔢 لم يُدخل العدد بعد' : '🔢 not counted yet' ?></em><?php endif; ?><?php if (in_array($aid, $lockedIds, true)): ?> 🔒 <button type="button" class="nf-mini" data-unlock="<?= $aid ?>"><?= $ar ? '🔓 فتح النظام' : '🔓 Unlock' ?></button><?php endif; ?></span>
+            <span><?= htmlspecialchars($an) ?><?php $cn = $isSpot ? -1 : check_counted($pdo, (int)$check['id'], (int)$aid); if ($cn === -1): ?><?php elseif ($cn !== null): ?> <em class="sc-cn <?= $cn === (int)$cT ? 'ok' : 'bad' ?>">🔢 <?= $ar ? 'عدّ ' . $cn . ' — النظام ' . (int)$cT : 'counted ' . $cn . ' — system ' . (int)$cT ?> <?= $cn === (int)$cT ? '✓' : '✗' ?></em><?php elseif (in_array($check['status'], ['active', 'expired'], true)): ?> <em class="sc-cn"><?= $ar ? '🔢 لم يُدخل العدد بعد' : '🔢 not counted yet' ?></em><?php endif; ?><?php if (in_array($aid, $lockedIds, true)): ?> 🔒 <button type="button" class="nf-mini" data-unlock="<?= $aid ?>"><?= $ar ? '🔓 فتح النظام' : '🔓 Unlock' ?></button><?php endif; ?></span>
             <?php endforeach; ?>
         </div>
         <?php if (in_array($check['status'], ['active', 'expired'], true)): ?><button type="button" class="nf-btn ghost" id="scCancel" style="margin-top:8px">✖ <?= $ar ? 'إلغاء الجرد' : 'Cancel check' ?></button><?php endif; ?>
@@ -480,6 +557,31 @@ $ago = function ($s) use ($ar): string {
             if (r.ok) location.href = '?lang=<?= $lang ?>&id=' + r.id; else { $('scGo').disabled = false; m.textContent = '✗ ' + r.error; m.className = 'nf-msg bad'; }
         });
     }
+
+    /* ── proposals, spot check, automatic proposals ── */
+    document.querySelectorAll('[data-plan]').forEach(b => b.addEventListener('click', async () => {
+        const send = b.dataset.send === '1', row = b.closest('.sc-plan');
+        if (send && !confirm(AR ? 'إرسال هذا الجرد للفرع الآن؟' : 'Send this check to the branch now?')) return;
+        row.querySelectorAll('button').forEach(x => x.disabled = true);
+        const r = await post({ action: 'plan', plan: +b.dataset.plan, send, minutes: +row.querySelector('[data-pm]').value });
+        if (r.ok && r.id) location.href = '?lang=<?= $lang ?>&id=' + r.id; else location.reload();
+    }));
+    if ($('spGo')) {
+        const sb = $('spBranch'), su = $('spUser');
+        sb.addEventListener('change', () => { [...su.options].forEach(o => { if (o.value) o.textContent = o.textContent.replace(/ 🟢.*$/, '') + (sb.value && o.dataset.here === sb.value ? (AR ? ' 🟢 في الفرع الآن' : ' 🟢 at the branch') : ''); }); });
+        $('spGo').addEventListener('click', async () => {
+            const m = $('spMsg');
+            if (!sb.value || !su.value) { m.textContent = AR ? 'اختر الفرع والمكلَّف' : 'Pick the branch and the person'; m.className = 'nf-msg bad'; return; }
+            if (!confirm(AR ? 'إرسال فحص سريع لسيارة واحدة الآن؟' : 'Send a one-car spot check now?')) return;
+            $('spGo').disabled = true;
+            const r = await post({ action: 'spot', branch: sb.value, user: +su.value, minutes: +$('spMin').value });
+            if (r.ok) location.href = '?lang=<?= $lang ?>&id=' + r.id; else { $('spGo').disabled = false; m.textContent = r.error === 'nocar' ? (AR ? 'لا توجد سيارات في هذا الفرع' : 'No cars at this branch') : '✗ ' + r.error; m.className = 'nf-msg bad'; }
+        });
+    }
+    if ($('auSave')) $('auSave').addEventListener('click', async () => {
+        const r = await post({ action: 'auto_rules', on: $('auOn').checked, full: +$('auFull').value, spot: +$('auSpot').value, from: +$('auFrom').value, to: +$('auTo').value }), m = $('auMsg');
+        m.textContent = r.ok ? (AR ? '✓ تم الحفظ' : '✓ Saved') : '✗'; m.className = 'nf-msg ' + (r.ok ? 'ok' : 'bad');
+    });
 
     /* ── countdown ── */
     const cd = $('scCd');
