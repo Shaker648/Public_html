@@ -86,14 +86,14 @@ $active = $pdo->query("SELECT l.*, u.username, TIMESTAMPDIFF(SECOND, l.locked_at
 $lockedIds = array_map('intval', array_column($active, 'user_id'));
 $history = $pdo->query("SELECT l.*, u.username FROM user_locks l JOIN users u ON u.id = l.user_id WHERE l.unlocked_at IS NOT NULL ORDER BY l.locked_at DESC LIMIT 20")->fetchAll(PDO::FETCH_ASSOC);
 
-$kindLbl = $ar ? ['manual' => '✋ يدوي', 'check' => '📋 جرد مفاجئ', 'transfer' => '🚚 استلام', 'chassis' => '🔑 رقم شاسيه غير صحيح'] : ['manual' => '✋ Manual', 'check' => '📋 Stock check', 'transfer' => '🚚 Receiving', 'chassis' => '🔑 Wrong chassis'];
+$kindLbl = $ar ? ['manual' => '✋ يدوي', 'check' => '📋 جرد مفاجئ', 'transfer' => '🚚 استلام', 'chassis' => '🔑 إدخال غير صحيح'] : ['manual' => '✋ Manual', 'check' => '📋 Stock check', 'transfer' => '🚚 Receiving', 'chassis' => '🔑 Wrong entry'];
 /* admins only: what was typed against the real chassis number */
-$ctxLbl = $ar ? ['receive' => '🚚 استلام', 'check' => '📋 جرد'] : ['receive' => '🚚 Receiving', 'check' => '📋 Stock check'];
+$ctxLbl = $ar ? ['receive' => '🚚 استلام', 'check' => '📋 جرد', 'count' => '🔢 عدد السيارات'] : ['receive' => '🚚 Receiving', 'check' => '📋 Stock check', 'count' => '🔢 Car count'];
 $chTries = function (array $rows) use ($ar, $ctxLbl, $pdo, $lang) {
     if (!$rows) return '';
-    $h = '<div class="ld-ch"><div class="ld-ch-t">🔑 ' . ($ar ? 'ما أدخله مقابل الرقم الحقيقي (يظهر للإدارة فقط)' : 'What was typed against the real number (admins only)') . '</div>';
+    $h = '<div class="ld-ch"><div class="ld-ch-t">🔑 ' . ($ar ? 'ما أدخله مقابل الصحيح (يظهر للإدارة فقط)' : 'What was typed against the right answer (admins only)') . '</div>';
     foreach ($rows as $t) {
-        $h .= '<div class="ld-ch-r' . ((int)$t['ok'] ? ' ok' : '') . '"><div class="c">🚗 ' . htmlspecialchars((string)$t['label']) . ' <small>' . htmlspecialchars(($ctxLbl[$t['ctx']] ?? $t['ctx'])
+        $h .= '<div class="ld-ch-r' . ((int)$t['ok'] ? ' ok' : '') . '"><div class="c">' . ($t['ctx'] === 'count' ? '🔢 ' : '🚗 ') . htmlspecialchars((string)$t['label']) . ' <small>' . htmlspecialchars(($ctxLbl[$t['ctx']] ?? $t['ctx'])
             . ((string)$t['place'] !== '' ? ' · 📍 ' . push_branch_label($pdo, (string)$t['place'], $lang) : '') . ' · ' . date('Y-m-d', strtotime($t['created_at'])) . ' ' . smart_time_label(strtotime($t['created_at']), $lang)
             . (isset($t['username']) ? ' · 👤 ' . $t['username'] : '')) . '</small></div>'
             . '<div class="v"><span>' . ($ar ? 'أدخل' : 'Typed') . '</span><b class="bad">' . htmlspecialchars((string)$t['typed']) . '</b></div>'
@@ -101,6 +101,35 @@ $chTries = function (array $rows) use ($ar, $ctxLbl, $pdo, $lang) {
     }
     return $h . '</div>';
 };
+/* ── the record (admins only): everything sensitive in one timeline, last 30 days ── */
+$box = [];
+if ($isAdmin) {
+    $bx = function (string $sql, callable $map) use ($pdo, &$box) { try { foreach ($pdo->query($sql)->fetchAll(PDO::FETCH_ASSOC) as $r) { $e = $map($r); if ($e) $box[] = $e; } } catch (Throwable $e) { error_log('lockdown box: ' . $e->getMessage()); } };
+    $brb = fn($n) => push_branch_label($pdo, (string)$n, $lang);
+    $fence = 50;
+    try { $fs = json_decode((string)$pdo->query("SELECT setting_value FROM settings WHERE setting_key = 'attendance_settings'")->fetchColumn(), true); if (isset($fs['fence'])) $fence = max(10, (int)$fs['fence']); } catch (Throwable $e) {}
+    $bx("SELECT l.locked_at AS t, u.username, l.kind, l.reason, l.unlocked_at FROM user_locks l JOIN users u ON u.id = l.user_id WHERE l.locked_at >= NOW() - INTERVAL 30 DAY",
+        fn($r) => ['t' => $r['t'], 'u' => $r['username'], 'k' => 'stop', 'ic' => '⛔', 'x' => ($ar ? 'إيقاف النظام: ' : 'System stopped: ') . trim(strstr($kindLbl[$r['kind']] ?? $r['kind'], ' ')), 'd' => (string)$r['reason']]);
+    try { chassis_tables($pdo); } catch (Throwable $e) {}
+    $bx("SELECT created_at AS t, username, ctx, label, place, typed, real_chassis FROM chassis_tries WHERE ok = 0 AND created_at >= NOW() - INTERVAL 30 DAY",
+        fn($r) => ['t' => $r['t'], 'u' => $r['username'], 'k' => 'wrong', 'ic' => $r['ctx'] === 'count' ? '🔢' : '🔑',
+                   'x' => $r['ctx'] === 'count' ? ($ar ? 'عدد سيارات غير صحيح' : 'Wrong car count') : ($ar ? 'رقم شاسيه غير صحيح' : 'Wrong chassis number'),
+                   'd' => ($ar ? 'أدخل ' : 'typed ') . $r['typed'] . ($ar ? ' — الصحيح ' : ' — right ') . $r['real_chassis'] . ($r['ctx'] === 'count' ? '' : ' · ' . $r['label']) . ((string)$r['place'] !== '' ? ' · 📍 ' . $brb($r['place']) : '')]);
+    $bx("SELECT a.clock_in AS t, u.username, a.branch_name, a.in_dist_m FROM attendance_logs a JOIN users u ON u.id = a.user_id WHERE a.clock_in >= NOW() - INTERVAL 30 DAY AND a.in_dist_m > " . (int)$fence,
+        fn($r) => ['t' => $r['t'], 'u' => $r['username'], 'k' => 'far', 'ic' => '📍', 'x' => $ar ? 'تسجيل حضور من مكان بعيد عن الفرع' : 'Clocked in far from the branch',
+                   'd' => $brb($r['branch_name']) . ' · ' . ((int)$r['in_dist_m'] < 1000 ? (int)$r['in_dist_m'] . ($ar ? ' م' : ' m') : round((int)$r['in_dist_m'] / 1000, 1) . ($ar ? ' كم' : ' km'))]);
+    $bx("SELECT a.clock_out AS t, u.username, a.out_branch_name, a.branch_name, a.out_dist_m FROM attendance_logs a JOIN users u ON u.id = a.user_id WHERE a.clock_out >= NOW() - INTERVAL 30 DAY AND a.auto_closed = 0 AND a.out_dist_m > " . (int)$fence,
+        fn($r) => ['t' => $r['t'], 'u' => $r['username'], 'k' => 'far', 'ic' => '📍', 'x' => $ar ? 'تسجيل انصراف من مكان بعيد عن الفرع' : 'Clocked out far from the branch',
+                   'd' => $brb($r['out_branch_name'] ?: $r['branch_name']) . ' · ' . ((int)$r['out_dist_m'] < 1000 ? (int)$r['out_dist_m'] . ($ar ? ' م' : ' m') : round((int)$r['out_dist_m'] / 1000, 1) . ($ar ? ' كم' : ' km'))]);
+    $bx("SELECT a.clock_in AS t, u.username, a.branch_name FROM attendance_logs a JOIN users u ON u.id = a.user_id WHERE a.clock_in >= NOW() - INTERVAL 30 DAY AND a.auto_closed = 1",
+        fn($r) => ['t' => $r['t'], 'u' => $r['username'], 'k' => 'forgot', 'ic' => '⏰', 'x' => $ar ? 'نسي تسجيل الانصراف' : 'Forgot to clock out', 'd' => $brb($r['branch_name'])]);
+    $bx("SELECT ti.reported_at AS t, ti.reported_by AS username, ti.note, m.to_branch, c.brand, c.model FROM transfer_issues ti JOIN movements m ON m.id = ti.movement_id JOIN cars c ON c.id = m.car_id WHERE ti.reported_at >= NOW() - INTERVAL 30 DAY",
+        fn($r) => ['t' => $r['t'], 'u' => $r['username'], 'k' => 'miss', 'ic' => '❗', 'x' => $ar ? 'بلاغ «لم تصل»' : '"Did not arrive" report', 'd' => trim($r['brand'] . ' ' . $r['model']) . ' · 📍 ' . $brb($r['to_branch']) . ((string)$r['note'] !== '' ? ' · 📝 ' . $r['note'] : '')]);
+    usort($box, fn($a, $b) => strcmp((string)$b['t'], (string)$a['t']));
+    $boxAll = count($box);
+    $boxBy = array_count_values(array_column($box, 'u')); arsort($boxBy);
+    $box = array_slice($box, 0, 150);
+}
 $looseTries = [];
 if ($isAdmin) try {
     chassis_tables($pdo);
@@ -165,6 +194,16 @@ window.addEventListener('error', function (e) {
 .ld-acts button{height:36px;padding:0 12px;border-radius:10px;border:1px solid var(--line);background:rgba(255,255,255,.05);color:var(--txt);font:inherit;font-size:12.5px;font-weight:900;cursor:pointer}
 .ld-acts .cd{border-color:rgba(250,204,21,.55);color:#fde68a;background:rgba(250,204,21,.08)}
 .ld-cd{font-size:12.5px;font-weight:900;padding:5px 11px;border-radius:999px;background:rgba(250,204,21,.14);color:#fde68a;border:1px solid rgba(250,204,21,.4)}
+.bx-ppl,.bx-kinds{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px}
+.bx-p,.bx-k{height:34px;padding:0 12px;border-radius:999px;border:1px solid var(--line);background:rgba(255,255,255,.04);color:var(--txt);font:inherit;font-size:12.5px;font-weight:800;cursor:pointer}
+.bx-p b{color:#fca5a5;margin-inline-start:4px}.bx-p.on{background:linear-gradient(90deg,#dc2626,#9333ea);border-color:transparent;color:#fff}.bx-p.on b{color:#fff}
+.bx-k.on{background:rgba(250,204,21,.18);border-color:rgba(250,204,21,.6);color:#fde68a}
+.bx-list{max-height:520px;overflow:auto;border-radius:14px;border:1px solid rgba(255,255,255,.07)}
+.bx-e{display:flex;gap:10px;align-items:flex-start;padding:10px 12px;border-bottom:1px solid rgba(255,255,255,.05);border-inline-start:3px solid #64748b}
+.bx-e[hidden]{display:none}
+.bx-e.stop{border-inline-start-color:#ef4444}.bx-e.wrong{border-inline-start-color:#a3e635}.bx-e.far{border-inline-start-color:#f59e0b}.bx-e.forgot{border-inline-start-color:#38bdf8}.bx-e.miss{border-inline-start-color:#c084fc}
+.bx-e .ic{font-size:18px}.bx-e .t{flex:1;min-width:0}.bx-e b{display:block;font-size:13.5px}.bx-e small{display:block;font-size:12px;color:var(--mut);font-weight:700;margin-top:2px;overflow-wrap:anywhere}
+.bx-e time{font-size:11.5px;color:var(--mut);font-weight:700;white-space:nowrap}
 .ld-ch{flex-basis:100%;padding:10px 12px;border-radius:12px;background:rgba(2,6,23,.5);border:1px solid rgba(163,230,53,.35)}
 .ld-ch-t{font-size:12.5px;font-weight:900;color:#d9f99d;margin-bottom:6px}
 .ld-ch-r{display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center;padding:8px 0;border-top:1px solid rgba(255,255,255,.07)}
@@ -297,10 +336,48 @@ window.addEventListener('error', function (e) {
     <?php if ($looseTries): ?>
     <!-- wrong chassis numbers that did not stop anyone (the first mistake) — admins only -->
     <section class="nf-card">
-        <h2>🔑 <?= $ar ? 'أرقام شاسيه غير صحيحة لم توقف النظام' : 'Wrong chassis numbers that did not stop the system' ?> <span class="nf-count"><?= count($looseTries) ?></span></h2>
-        <p class="nf-note"><?= $ar ? 'المحاولة الأولى غير الصحيحة تُسجَّل هنا فقط؛ الثانية توقف النظام.' : 'A first wrong number is only recorded here; the second one stops the system.' ?></p>
+        <h2>🔑 <?= $ar ? 'إدخالات غير صحيحة لم توقف النظام' : 'Wrong entries that did not stop the system' ?> <span class="nf-count"><?= count($looseTries) ?></span></h2>
+        <p class="nf-note"><?= $ar ? 'أول رقم شاسيه أو عدد سيارات غير صحيح يُسجَّل هنا فقط؛ الثاني يوقف النظام.' : 'A first wrong chassis or car count is only recorded here; the second one stops the system.' ?></p>
         <?= $chTries($looseTries) ?>
     </section>
+    <?php endif; ?>
+
+    <?php if ($isAdmin): ?>
+    <!-- the record: admins only -->
+    <section class="nf-card" id="ldBox">
+        <h2>🗃️ <?= $ar ? 'السجل الخاص بالإدارة' : 'The admin record' ?> <span class="nf-count"><?= (int)$boxAll ?></span></h2>
+        <p class="nf-note"><?= $ar ? 'كل ما يستحق المراجعة خلال آخر 30 يوماً في مكان واحد: الإيقافات، الإدخالات غير الصحيحة، البصمة من مكان بعيد، نسيان الانصراف، وبلاغات «لم تصل». يظهر للإدارة فقط. اضغط على اسم لعرض سجله وحده.'
+                                   : 'Everything worth a look in the last 30 days: stops, wrong entries, far clock-ins, forgotten clock-outs and "did not arrive" reports. Admins only. Tap a name to see only that person.' ?></p>
+        <?php if (!$box): ?><div class="nf-empty"><?= $ar ? 'لا يوجد شيء مسجَّل خلال آخر 30 يوماً ✅' : 'Nothing recorded in the last 30 days ✅' ?></div><?php else: ?>
+        <div class="bx-ppl">
+            <button type="button" class="bx-p on" data-u=""><?= $ar ? 'الكل' : 'All' ?> <b><?= (int)$boxAll ?></b></button>
+            <?php foreach ($boxBy as $bu => $bn): ?><button type="button" class="bx-p" data-u="<?= htmlspecialchars((string)$bu) ?>"><?= htmlspecialchars((string)$bu) ?> <b><?= (int)$bn ?></b></button><?php endforeach; ?>
+        </div>
+        <div class="bx-kinds">
+            <?php foreach (($ar ? ['' => 'كل الأنواع', 'stop' => '⛔ إيقاف', 'wrong' => '🔑 إدخال غير صحيح', 'far' => '📍 بعيد عن الفرع', 'forgot' => '⏰ نسي الانصراف', 'miss' => '❗ لم تصل']
+                               : ['' => 'All kinds', 'stop' => '⛔ Stops', 'wrong' => '🔑 Wrong entries', 'far' => '📍 Far away', 'forgot' => '⏰ Forgot out', 'miss' => '❗ Did not arrive']) as $kk => $kl): ?>
+            <button type="button" class="bx-k<?= $kk === '' ? ' on' : '' ?>" data-k="<?= $kk ?>"><?= $kl ?></button><?php endforeach; ?>
+        </div>
+        <div class="bx-list">
+            <?php foreach ($box as $e): ?>
+            <div class="bx-e <?= $e['k'] ?>" data-u="<?= htmlspecialchars((string)$e['u']) ?>" data-k="<?= $e['k'] ?>">
+                <span class="ic"><?= $e['ic'] ?></span>
+                <div class="t"><b><?= htmlspecialchars((string)$e['u']) ?> — <?= htmlspecialchars($e['x']) ?></b><?php if ((string)$e['d'] !== ''): ?><small><?= htmlspecialchars(mb_strlen($e['d']) > 220 ? mb_substr($e['d'], 0, 220) . '…' : $e['d']) ?></small><?php endif; ?></div>
+                <time><?= htmlspecialchars($fmt($e['t'])) ?></time>
+            </div>
+            <?php endforeach; ?>
+            <div class="nf-empty" id="bxNone" hidden><?= $ar ? 'لا يوجد شيء بهذا الاختيار' : 'Nothing for this choice' ?></div>
+        </div>
+        <?php endif; ?>
+    </section>
+    <script>
+    (function () {
+        var u = '', k = '', rows = [].slice.call(document.querySelectorAll('.bx-e'));
+        function paint() { var n = 0; rows.forEach(function (r) { var ok = (!u || r.dataset.u === u) && (!k || r.dataset.k === k); r.hidden = !ok; if (ok) n++; }); var e = document.getElementById('bxNone'); if (e) e.hidden = n > 0; }
+        document.querySelectorAll('.bx-p').forEach(function (b) { b.addEventListener('click', function () { u = b.dataset.u; document.querySelectorAll('.bx-p').forEach(function (x) { x.classList.toggle('on', x === b); }); paint(); }); });
+        document.querySelectorAll('.bx-k').forEach(function (b) { b.addEventListener('click', function () { k = b.dataset.k; document.querySelectorAll('.bx-k').forEach(function (x) { x.classList.toggle('on', x === b); }); paint(); }); });
+    })();
+    </script>
     <?php endif; ?>
 
     <!-- history -->

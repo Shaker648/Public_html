@@ -191,3 +191,35 @@ function check_count_pending(PDO $pdo, int $checkId): bool
         return (bool)$st->fetchColumn();
     } catch (Throwable $e) { return false; }
 }
+
+/**
+ * The count typed at the start of a stock check, against the system's number.
+ * Right → saved. Wrong → a warning the first time; the second wrong number stops
+ * the person's system (same rule and same record as a wrong chassis). The typed
+ * number is then kept as their answer, so once the admin opens the system they
+ * go on to the chassis step.
+ * Returns ['ok' => bool, 'locked' => bool].
+ */
+function check_count_try(PDO $pdo, int $checkId, int $uid, string $uname, int $typed, int $real, string $branch): array
+{
+    chassis_tables($pdo); check_count_cols($pdo);
+    $save = $pdo->prepare("UPDATE stock_check_users SET counted = ?, counted_at = NOW() WHERE check_id = ? AND user_id = ? AND counted IS NULL");
+    $lang = function_exists('notify_options') ? notify_options($pdo)['lang'] : 'ar';
+    $label = $lang === 'ar' ? 'عدد السيارات في الفرع' : 'Number of cars at the branch';
+    $ok = $typed === $real;
+    $pdo->prepare("INSERT INTO chassis_tries (user_id, username, ctx, ref_id, car_id, label, place, typed, real_chassis, ok, cleared, created_at) VALUES (?, ?, 'count', ?, 0, ?, ?, ?, ?, ?, ?, NOW())")
+        ->execute([$uid, $uname, $checkId, $label, mb_substr($branch, 0, 100), (string)$typed, (string)$real, $ok ? 1 : 0, $ok ? 1 : 0]);
+    if ($ok) {
+        $save->execute([$typed, $checkId, $uid]);
+        $pdo->prepare("UPDATE chassis_tries SET cleared = 1 WHERE user_id = ? AND cleared = 0")->execute([$uid]);
+        return ['ok' => true, 'locked' => false];
+    }
+    $n = $pdo->prepare("SELECT COUNT(*) FROM chassis_tries WHERE user_id = ? AND ok = 0 AND cleared = 0");
+    $n->execute([$uid]);
+    if ((int)$n->fetchColumn() < CHASSIS_MAX_WRONG) return ['ok' => false, 'locked' => false];
+    $save->execute([$typed, $checkId, $uid]);
+    $why = $lang === 'ar' ? 'إدخال عدد غير صحيح للسيارات مرتين أثناء الجرد المفاجئ' : 'Wrong number of cars typed twice during the stock check';
+    $lockId = smart_lock_user($pdo, $uid, 'chassis', $why, '');
+    $pdo->prepare("UPDATE chassis_tries SET cleared = 1, lock_id = ? WHERE user_id = ? AND ok = 0 AND cleared = 0")->execute([$lockId ?: null, $uid]);
+    return ['ok' => false, 'locked' => $lockId > 0];
+}

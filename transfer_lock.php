@@ -183,7 +183,7 @@ body{min-height:100vh;background:radial-gradient(120% 70% at 50% 0%,#3b0a0a 0%,#
     ?>
     <?php if ($manual): ?>
     <div class="lk-ic">🔒</div>
-    <h1><?= $chStop ? ($ar ? 'تم إيقاف النظام — رقم شاسيه غير صحيح' : 'System stopped — wrong chassis number') : ($ar ? 'تم إيقاف النظام من الإدارة' : 'Your system was stopped by management') ?></h1>
+    <h1><?= $chStop ? ($ar ? 'تم إيقاف النظام — إدخال غير صحيح' : 'System stopped — wrong entry') : ($ar ? 'تم إيقاف النظام من الإدارة' : 'Your system was stopped by management') ?></h1>
     <?= $reasons() ?>
     <div class="lk-call">📞 <?= $ar ? 'للاستفسار تواصل مع مديرك أو الإدارة' : 'Please contact your manager or the management' ?></div>
     <?= $basmaBox() ?>

@@ -235,6 +235,7 @@ $NT = $ntLang === 'ar' ? [
     if (!items.length) return;
     const total = stack.querySelectorAll('.nt-card:not(.out)').length + items.length;
     ensureHead(total);
+    if (window.F1App && F1App.soundFor) F1App.soundFor(items[0].event);   // each kind of event has its own short sound and vibration
     items.forEach((x, i) => {
       const el = card(x, i);
       stack.appendChild(el);

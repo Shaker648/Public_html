@@ -1847,6 +1847,9 @@ body:has(#npCard.on) #f1c-chat-bubble { opacity:0; pointer-events:none; }
             <a href="#" class="more-item" id="moreTextSize" onclick="event.preventDefault(); if (window.F1App) { F1App.textSize(F1App.isBig() ? 'normal' : 'big'); this.querySelector('b').textContent = F1App.isBig() ? '<?= $lang === 'ar' ? 'كبير' : 'Large' ?>' : '<?= $lang === 'ar' ? 'عادي' : 'Normal' ?>'; }">
                 <span class="mi-icon">🔠</span><?= $lang === 'ar' ? 'حجم الخط' : 'Text size' ?>: <b><?= $lang === 'ar' ? 'عادي' : 'Normal' ?></b>
             </a>
+            <a href="#" class="more-item" id="moreSound" onclick="event.preventDefault(); if (window.F1App) { F1App.sounds(!F1App.soundsOn()); this.querySelector('b').textContent = F1App.soundsOn() ? '<?= $lang === 'ar' ? 'تشغيل' : 'On' ?>' : '<?= $lang === 'ar' ? 'إيقاف' : 'Off' ?>'; }">
+                <span class="mi-icon">🔔</span><?= $lang === 'ar' ? 'الأصوات' : 'Sounds' ?>: <b><?= $lang === 'ar' ? 'تشغيل' : 'On' ?></b>
+            </a>
             <a href="logout.php" class="more-item more-item-logout">
                 <span class="mi-icon">🚪</span><?= $t[$lang]['logout'] ?>
             </a>
@@ -2104,6 +2107,7 @@ body:has(#npCard.on) #f1c-chat-bubble { opacity:0; pointer-events:none; }
             }
         } catch (e) {}
         apply();   // honour a ?search= value that arrived in the URL
+        if (/[?&]find=1\b/.test(location.search) && input) setTimeout(function () { input.focus(); input.scrollIntoView({ block: 'center' }); }, 400);   // the «بحث» shortcut on the app icon
 
         /* ── sort: newest / longest in stock / price / model (remembered per browser) ── */
         const sortSel = document.getElementById('sortSel');
@@ -2273,6 +2277,8 @@ body:has(#npCard.on) #f1c-chat-bubble { opacity:0; pointer-events:none; }
 
     // ── "More" menu sheet ──
     function openMore() {
+        var sn = document.querySelector('#moreSound b');
+        if (sn && window.F1App && !F1App.soundsOn()) sn.textContent = '<?= $lang === 'ar' ? 'إيقاف' : 'Off' ?>';
         var ts = document.querySelector('#moreTextSize b');
         if (ts && window.F1App && F1App.isBig()) ts.textContent = '<?= $lang === 'ar' ? 'كبير' : 'Large' ?>';
         document.getElementById('moreOverlay').classList.add('open');
