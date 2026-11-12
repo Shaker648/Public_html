@@ -81,8 +81,11 @@ if ($currentUser['role'] !== 'admin') {
                 exit;
             }
         } catch (Throwable $e) {}   // table not created yet → nobody is locked
-        // a surprise stock check in progress: the system is closed for whoever is doing it — only the
-        // check itself — until it is finished, so the chassis numbers can only come from the cars
+    }
+    // a surprise stock check in progress: the system is closed for whoever is doing it. Only the check
+    // itself (and signing out) opens until it is finished — not even the notifications list, because
+    // old notifications can carry chassis numbers. The numbers can only come from the cars.
+    if (!in_array($__page, ['stock_check.php', 'logout.php', 'push_subscribe.php', 'transfer_lock.php'], true)) {
         try {
             $__ck = $pdo->prepare("SELECT c.id FROM stock_checks c JOIN stock_check_users u ON u.check_id = c.id WHERE u.user_id = ? AND c.status IN ('active', 'expired') ORDER BY c.deadline LIMIT 1");
             $__ck->execute([$currentUser['id']]);
@@ -96,7 +99,7 @@ if ($currentUser['role'] !== 'admin') {
                 header('Location: stock_check.php?lang=' . $lang . '&id=' . $__cid);
                 exit;
             }
-        } catch (Throwable $e) {}
+        } catch (Throwable $e) {}   // table not created yet → no check is running
     }
 }
 

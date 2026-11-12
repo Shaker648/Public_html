@@ -28,6 +28,10 @@ smart_check_scan($pdo);
 
 $myChecks = smart_checks_for_user($pdo, $uid);
 $myIds = array_map(fn($c) => (int)$c['id'], $myChecks);
+// while someone (not an admin) has a check to do, this page is ONLY that check for them: no list of
+// other checks, no older results (they show chassis numbers), no starting / cancelling / unlocking
+$inCheck = $myChecks && !$isAdmin;
+if ($inCheck) $isBoss = false;
 if (!$isBoss && !$myChecks && !isset($_GET['id'])) { header('Location: dashboard.php?lang=' . $lang); exit; }
 
 /** May this person work on / see this check? */
@@ -121,6 +125,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $pdo->prepare("INSERT INTO stock_check_items (check_id, car_id, label, state, marked_by, marked_at) VALUES (?, 0, ?, 'extra', ?, NOW())")->execute([$cid, $txt, $me]);
                 echo json_encode(['ok' => true, 'id' => (int)$pdo->lastInsertId()]); exit;
             case 'unextra':
+                if (!sc_access($pdo, $cid, $uid, false) && !$isBoss) break;
                 $pdo->prepare("DELETE FROM stock_check_items WHERE id = ? AND check_id = ? AND car_id = 0")->execute([(int)($in['item'] ?? 0), $cid]);
                 echo json_encode(['ok' => true]); exit;
             case 'finish':
@@ -147,6 +152,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 /* ─── which view ─── */
 $viewId = (int)($_GET['id'] ?? 0);
 if (!$viewId && !$isBoss && $myChecks) $viewId = (int)$myChecks[0]['id'];
+if ($inCheck && !in_array($viewId, $myIds, true)) $viewId = (int)$myChecks[0]['id'];   // only their own running check
 $check = null;
 if ($viewId) {
     if (!sc_access($pdo, $viewId, $uid, $isBoss)) { header('Location: dashboard.php?lang=' . $lang); exit; }
