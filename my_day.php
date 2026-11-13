@@ -82,3 +82,44 @@ function my_day_brief(PDO $pdo): array
     try { if (function_exists('smart_pending_transfers')) $b['road'] = count(smart_pending_transfers($pdo, '', 7)); } catch (Throwable $e) {}
     return $b;
 }
+
+/**
+ * «دقة الجرد»: how well this person did the stock checks they have ALREADY finished
+ * (last 60 days) — on time and without wrong entries. null when they have none.
+ * It never looks at checks that are running or planned.
+ */
+function my_check_score(PDO $pdo, int $uid): ?int
+{
+    try {
+        $st = $pdo->prepare("SELECT COUNT(*) AS n, SUM(c.finished_at <= c.deadline) AS ontime FROM stock_checks c JOIN stock_check_users s ON s.check_id = c.id
+                             WHERE s.user_id = ? AND c.status = 'done' AND c.finished_at >= NOW() - INTERVAL 60 DAY");
+        $st->execute([$uid]);
+        $r = $st->fetch(PDO::FETCH_ASSOC);
+        if (!$r || !(int)$r['n']) return null;
+        $wrong = 0;
+        try {
+            $w = $pdo->prepare("SELECT COUNT(*) FROM chassis_tries WHERE user_id = ? AND ok = 0 AND ctx IN ('check', 'count') AND created_at >= NOW() - INTERVAL 60 DAY");
+            $w->execute([$uid]);
+            $wrong = (int)$w->fetchColumn();
+        } catch (Throwable $e) {}
+        return max(0, min(100, (int)round(100 * (int)$r['ontime'] / (int)$r['n']) - 10 * $wrong));
+    } catch (Throwable $e) { return null; }
+}
+
+/**
+ * The attendance board: everyone (not admins) by their streak of days in a row,
+ * then by full days this month. Each row: name, streak, full days, check score (or null).
+ */
+function my_day_board(PDO $pdo, string $lang, int $limit = 8): array
+{
+    $rows = [];
+    try {
+        foreach ($pdo->query("SELECT id, username FROM users WHERE active = 1 AND role <> 'admin'")->fetchAll(PDO::FETCH_ASSOC) as $u) {
+            $d = my_day($pdo, (int)$u['id'], $lang);
+            if (!$d['streak'] && !$d['month_days']) continue;
+            $rows[] = ['id' => (int)$u['id'], 'name' => (string)$u['username'], 'streak' => (int)$d['streak'], 'full' => (int)$d['full_days'], 'days' => (int)$d['month_days'], 'check' => my_check_score($pdo, (int)$u['id'])];
+        }
+        usort($rows, fn($a, $b) => [$b['streak'], $b['full'], $b['days']] <=> [$a['streak'], $a['full'], $a['days']] ?: strcmp($a['name'], $b['name']));
+    } catch (Throwable $e) { error_log('my_day_board: ' . $e->getMessage()); }
+    return array_slice($rows, 0, $limit);
+}
