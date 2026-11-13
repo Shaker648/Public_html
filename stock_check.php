@@ -49,6 +49,52 @@ function sc_is_spot(PDO $pdo, int $id): bool
     try { $st = $pdo->prepare("SELECT spot FROM stock_checks WHERE id = ?"); $st->execute([$id]); return (bool)$st->fetchColumn(); } catch (Throwable $e) { return false; }
 }
 
+/* ─── 📷 photo proof (spot checks): kept outside the public folders' reach and shown only to whoever runs the checks ─── */
+function sc_photo_dir(): string
+{
+    $d = __DIR__ . '/uploads/check_photos';
+    if (!is_dir($d)) { @mkdir($d, 0755, true); @file_put_contents($d . '/.htaccess', "Require all denied\nDeny from all\n"); @file_put_contents($d . '/index.html', ''); }
+    return $d;
+}
+function sc_photo_col(PDO $pdo): void
+{
+    static $done = false; if ($done) return; $done = true;
+    try { $pdo->query("SELECT photo FROM stock_check_items LIMIT 1"); }
+    catch (Throwable $e) { try { $pdo->exec("ALTER TABLE stock_check_items ADD photo VARCHAR(80) NULL, ADD photo_at DATETIME NULL"); } catch (Throwable $e2) {} }
+}
+if (isset($_GET['photo'])) {            // show one photo
+    sc_photo_col($pdo);
+    $st = $pdo->prepare("SELECT photo FROM stock_check_items WHERE id = ?"); $st->execute([(int)$_GET['photo']]);
+    $f = (string)$st->fetchColumn();
+    if (!$isBoss || !preg_match('/^[a-f0-9]{32}\.jpg$/', $f) || !is_file(sc_photo_dir() . '/' . $f)) { http_response_code(404); exit('Not found'); }
+    header('Content-Type: image/jpeg'); header('Cache-Control: private, max-age=3600'); header('X-Content-Type-Options: nosniff');
+    readfile(sc_photo_dir() . '/' . $f); exit;
+}
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['photo'])) {   // take one
+    header('Content-Type: application/json; charset=utf-8');
+    $cid = (int)($_POST['check'] ?? 0); $item = (int)($_POST['item'] ?? 0);
+    $fail = function (string $e) { echo json_encode(['ok' => false, 'error' => $e]); exit; };
+    if (!hash_equals($csrf, (string)($_POST['csrf'] ?? ''))) $fail('csrf');
+    if (!sc_access($pdo, $cid, $uid, false)) $fail('denied');
+    if (chassis_locked($pdo, $uid)) $fail('locked');
+    sc_photo_col($pdo);
+    // only for a car this person has already confirmed with its chassis, in a check that is still running
+    $st = $pdo->prepare("SELECT i.id FROM stock_check_items i JOIN stock_checks c ON c.id = i.check_id WHERE i.id = ? AND i.check_id = ? AND i.state = 'present' AND c.status IN ('active', 'expired')");
+    $st->execute([$item, $cid]);
+    if (!$st->fetchColumn()) $fail('item');
+    $up = $_FILES['photo'];
+    if (($up['error'] ?? 1) !== UPLOAD_ERR_OK || ($up['size'] ?? 0) < 2000 || $up['size'] > 6 * 1024 * 1024) $fail('file');
+    $info = @getimagesize($up['tmp_name']);
+    if (!$info || $info[2] !== IMAGETYPE_JPEG || $info[0] < 200 || $info[1] < 200) $fail('image');
+    $name = bin2hex(random_bytes(16)) . '.jpg';
+    if (!@move_uploaded_file($up['tmp_name'], sc_photo_dir() . '/' . $name)) $fail('save');
+    $old = $pdo->prepare("SELECT photo FROM stock_check_items WHERE id = ?"); $old->execute([$item]);
+    $oldF = (string)$old->fetchColumn();
+    $pdo->prepare("UPDATE stock_check_items SET photo = ?, photo_at = NOW() WHERE id = ?")->execute([$name, $item]);
+    if (preg_match('/^[a-f0-9]{32}\.jpg$/', $oldF)) @unlink(sc_photo_dir() . '/' . $oldF);
+    echo json_encode(['ok' => true]); exit;
+}
+
 /* ─── JSON actions ─── */
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     header('Content-Type: application/json; charset=utf-8');
@@ -79,7 +125,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 echo json_encode(['ok' => true, 'id' => $id]); exit;
             case 'auto_rules':
                 if (!$isAdmin) break;
-                push_setting_set($pdo, 'check_auto', json_encode(['on' => !empty($in['on']), 'full' => max(0, min(7, (int)($in['full'] ?? 1))), 'spot' => max(0, min(14, (int)($in['spot'] ?? 2))),
+                push_setting_set($pdo, 'check_auto', json_encode(['on' => !empty($in['on']), 'full' => max(0, min(7, (int)($in['full'] ?? 1))), 'spot' => max(0, min(14, (int)($in['spot'] ?? 2))), 'ping' => max(0, min(21, (int)($in['ping'] ?? 0))),
                     'from' => max(0, min(22, (int)($in['from'] ?? 11))), 'to' => max(1, min(23, (int)($in['to'] ?? 20)))]), $me);
                 // this week's plans that were not asked yet are planned again with the new numbers
                 check_auto_tables($pdo); $pdo->exec("DELETE FROM stock_check_plans WHERE status = 'planned'");
@@ -136,6 +182,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $pdo->prepare("UPDATE stock_check_items i JOIN stock_checks c ON c.id = i.check_id SET i.state = ?, i.note = ?, i.marked_by = ?, i.marked_at = NOW()
                                WHERE i.id = ? AND i.check_id = ? AND i.car_id > 0 AND c.status IN ('active', 'expired')")
                     ->execute([$state, $note ?: null, $me, (int)($in['item'] ?? 0), $cid]);
+                if ($state === 'present' && $prev) {   // physically confirmed: remembered on the car itself
+                    $ci = $pdo->prepare("SELECT car_id FROM stock_check_items WHERE id = ? AND check_id = ?"); $ci->execute([(int)($in['item'] ?? 0), $cid]);
+                    car_seen($pdo, (int)$ci->fetchColumn(), $me, sc_is_spot($pdo, $cid) ? 'spot' : 'check');
+                }
                 $counts = smart_check_counts($pdo, $cid);
                 // the admin follows the check car by car (one notification per check on the phone, updated each time)
                 if ($prev && $state && ($prev['state'] !== $state || ($state === 'missing' && $note !== '' && $note !== (string)$prev['note']))) {
@@ -158,6 +208,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             case 'finish':
                 if (!sc_access($pdo, $cid, $uid, false) && !$isBoss) break;
                 if (!$isAdmin && !sc_is_spot($pdo, $cid) && check_counted($pdo, $cid, $uid) === null && sc_access($pdo, $cid, $uid, false)) { echo json_encode(['ok' => false, 'error' => 'count_first']); exit; }
+                if (!$isAdmin && sc_is_spot($pdo, $cid)) {   // a spot check ends with a photo of the car's chassis plate
+                    sc_photo_col($pdo);
+                    $np = $pdo->prepare("SELECT COUNT(*) FROM stock_check_items WHERE check_id = ? AND car_id > 0 AND state = 'present' AND photo IS NULL"); $np->execute([$cid]);
+                    if ((int)$np->fetchColumn()) { echo json_encode(['ok' => false, 'error' => 'photo']); exit; }
+                }
                 echo json_encode(['ok' => smart_check_finish($pdo, $cid, $me)]); exit;
             case 'cancel':
                 if (!$isBoss) break;
@@ -303,6 +358,12 @@ $ago = function ($s) use ($ar): string {
 .sc-count .sc-fin{max-width:420px}
 .sc-cn{font-style:normal;font-size:12px;font-weight:900;padding:3px 9px;border-radius:999px;background:rgba(255,255,255,.06);color:#cbd5e1}
 .sc-cn.ok{background:rgba(34,197,94,.15);color:#86efac}.sc-cn.bad{background:rgba(239,68,68,.16);color:#fca5a5}
+.sc-ph-a{display:inline-block;margin-top:4px;font-size:12.5px;font-weight:800;color:#7dd3fc;text-decoration:none}
+.sc-it .phb{width:100%;display:none}.sc-it.present .phb{display:block}
+.sc-it .phbtn{display:flex;align-items:center;justify-content:center;gap:8px;height:50px;border-radius:13px;border:1.5px dashed rgba(56,189,248,.6);background:rgba(56,189,248,.08);color:#bae6fd;font-size:14.5px;font-weight:900;cursor:pointer}
+.sc-it .phb.done .phbtn{border-style:solid;border-color:rgba(34,197,94,.55);background:rgba(34,197,94,.1);color:#bbf7d0}
+.sc-it .phb.busy .phbtn{opacity:.6;pointer-events:none}
+.sc-it .pherr{font-size:13px;font-weight:800;color:#fca5a5;margin-top:6px}.sc-it .pherr:empty{display:none}
 .sc-how{margin-bottom:14px;padding:12px 16px;border-radius:14px;background:rgba(163,230,53,.07);border:1px solid rgba(163,230,53,.35);color:#d9f99d;font-size:13.5px;font-weight:700;line-height:1.8}
 .sc-how b{display:block;color:#fff;font-size:14.5px}
 .sc-it .chb{width:100%;display:none;flex-wrap:wrap;gap:8px}.sc-it.asking .chb{display:flex}
@@ -340,11 +401,11 @@ $ago = function ($s) use ($ar): string {
     <section class="nf-card sc-plans" id="plans">
         <h2>🎲 <?= $ar ? 'اقتراحات النظام — بانتظار موافقتك' : 'Proposed by the system — waiting for you' ?> <span class="nf-count"><?= count($plans) ?></span></h2>
         <p class="nf-note"><?= $ar ? 'لم يُرسل أي شيء للفرع. اضغط «إرسال الآن» ليبدأ الجرد فوراً، أو «تجاهل». ينتهي الاقتراح تلقائياً بعد ساعتين.' : 'Nothing has been sent to the branch. Press "Send now" to start it at once, or "Skip". A proposal expires by itself after two hours.' ?></p>
-        <?php foreach ($plans as $pl): $sp = $pl['kind'] === 'spot'; ?>
+        <?php foreach ($plans as $pl): $sp = $pl['kind'] === 'spot'; $pg = $pl['kind'] === 'ping'; ?>
         <div class="sc-plan">
-            <div class="i"><b><?= $sp ? '⚡ ' . ($ar ? 'فحص سريع لسيارة واحدة' : 'Spot check, one car') : '📋 ' . ($ar ? 'جرد مفاجئ كامل' : 'Full surprise check') ?> — 📍 <?= htmlspecialchars($br($pl['branch'])) ?></b>
+            <div class="i"><b><?= $pg ? '📍 ' . ($ar ? 'تأكيد تواجد (موقع الهاتف)' : 'Location check') : ($sp ? '⚡ ' . ($ar ? 'فحص سريع لسيارة واحدة' : 'Spot check, one car') : '📋 ' . ($ar ? 'جرد مفاجئ كامل' : 'Full surprise check')) ?> — 📍 <?= htmlspecialchars($br($pl['branch'])) ?></b>
                 <small>👤 <?= $ar ? 'المكلَّف المقترح: ' : 'Proposed for: ' ?><?= htmlspecialchars((string)$pl['username']) ?> · <?= $ar ? 'منذ ' . max(1, (int)$pl['mins']) . ' دقيقة' : max(1, (int)$pl['mins']) . ' min ago' ?></small></div>
-            <select class="sc-in" data-pm><?php foreach ($sp ? [3, 5, 10, 15] : [15, 30, 45, 60, 90] as $mm): ?><option value="<?= $mm ?>"<?= $mm === ($sp ? 5 : 30) ? ' selected' : '' ?>><?= $mm ?> <?= $ar ? 'دقيقة' : 'min' ?></option><?php endforeach; ?></select>
+            <select class="sc-in" data-pm<?= $pg ? ' hidden' : '' ?>><?php foreach ($sp ? [3, 5, 10, 15] : [15, 30, 45, 60, 90] as $mm): ?><option value="<?= $mm ?>"<?= $mm === ($sp ? 5 : 30) ? ' selected' : '' ?>><?= $mm ?> <?= $ar ? 'دقيقة' : 'min' ?></option><?php endforeach; ?></select>
             <button type="button" class="nf-btn" data-plan="<?= (int)$pl['id'] ?>" data-send="1">🚨 <?= $ar ? 'إرسال الآن' : 'Send now' ?></button>
             <button type="button" class="nf-btn ghost" data-plan="<?= (int)$pl['id'] ?>" data-send="0">✖ <?= $ar ? 'تجاهل' : 'Skip' ?></button>
         </div>
@@ -372,6 +433,7 @@ $ago = function ($s) use ($ar): string {
         <div class="sc-auto">
             <label><?= $ar ? 'جرد كامل لكل فرع أسبوعياً' : 'Full checks per branch per week' ?> <input type="number" class="sc-in sc-num" id="auFull" min="0" max="7" value="<?= $autoR['full'] ?>"></label>
             <label><?= $ar ? 'فحص سريع لكل فرع أسبوعياً' : 'Spot checks per branch per week' ?> <input type="number" class="sc-in sc-num" id="auSpot" min="0" max="14" value="<?= $autoR['spot'] ?>"></label>
+            <label><?= $ar ? 'تأكيد تواجد لكل فرع أسبوعياً' : 'Location checks per branch per week' ?> <input type="number" class="sc-in sc-num" id="auPing" min="0" max="21" value="<?= $autoR['ping'] ?>"></label>
             <label><?= $ar ? 'من الساعة' : 'From hour' ?> <input type="number" class="sc-in sc-num" id="auFrom" min="0" max="22" value="<?= $autoR['from'] ?>"></label>
             <label><?= $ar ? 'إلى الساعة' : 'To hour' ?> <input type="number" class="sc-in sc-num" id="auTo" min="1" max="23" value="<?= $autoR['to'] ?>"></label>
         </div>
@@ -495,10 +557,12 @@ $ago = function ($s) use ($ar): string {
         <?php $seeCh = $isAdmin || !$doMode && $isBoss || $it['state'] === 'present' || !in_array($check['status'], ['active', 'expired'], true);   // the number stays hidden from whoever is doing the check until they type it ?>
         <div class="sc-it <?= htmlspecialchars((string)$it['state']) ?>" data-id="<?= (int)$it['id'] ?>" data-q="<?= htmlspecialchars(mb_strtolower($it['label'] . ($seeCh ? ' ' . $it['chassis'] : ''))) ?>">
             <div class="i"><b>🚗 <?= htmlspecialchars($it['label']) ?></b><span class="ch"><?= $seeCh ? htmlspecialchars((string)$it['chassis']) : '🔑 ' . chassis_mask() ?></span>
+                <?php if (!empty($it['photo']) && $isBoss): ?><a class="sc-ph-a" href="?photo=<?= (int)$it['id'] ?>" target="_blank" rel="noopener">📷 <?= $ar ? 'صورة رقم الشاسيه' : 'Chassis plate photo' ?><?= !empty($it['photo_at']) ? ' · ' . htmlspecialchars(smart_time_label(strtotime($it['photo_at']), $lang)) : '' ?></a><?php endif; ?>
                 <?php if ($it['marked_by']): ?><div class="by">✍️ <?= htmlspecialchars($it['marked_by']) ?><?= $it['note'] ? ' · 📝 ' . htmlspecialchars($it['note']) : '' ?></div><?php endif; ?></div>
             <?php if ($doMode): ?>
             <div class="bt"><button type="button" class="y<?= $it['state'] === 'present' ? ' on' : '' ?>">✅ <?= $ar ? 'موجودة' : 'Here' ?></button><button type="button" class="n<?= $it['state'] === 'missing' ? ' on' : '' ?>">❌ <?= $ar ? 'غير موجودة' : 'Missing' ?></button></div>
             <?php if (!$isAdmin): ?><div class="chb"><input class="sc-in chin" autocapitalize="characters" autocomplete="off" autocorrect="off" spellcheck="false" maxlength="40" placeholder="<?= $ar ? 'اكتب رقم الشاسيه من السيارة' : 'Type the chassis from the car' ?>"><button type="button" class="chok">✅ <?= $ar ? 'تأكيد' : 'Confirm' ?></button><div class="cherr"></div></div><?php endif; ?>
+            <?php if (!$isAdmin && $isSpot): ?><div class="phb<?= !empty($it['photo']) ? ' done' : '' ?>"><label class="phbtn">📷 <span><?= !empty($it['photo']) ? ($ar ? 'تم رفع الصورة ✓ — إعادة التصوير' : 'Photo sent ✓ — retake') : ($ar ? 'التقط صورة لرقم الشاسيه على السيارة' : 'Take a photo of the chassis plate') ?></span><input type="file" accept="image/*" capture="environment" hidden></label><div class="pherr"></div></div><?php endif; ?>
             <input class="sc-in nt" maxlength="200" placeholder="<?= $ar ? 'ملاحظة: أين هي؟ (اختياري)' : 'Note: where is it? (optional)' ?>" value="<?= htmlspecialchars((string)$it['note']) ?>">
             <?php else: ?>
             <span class="sc-st <?= $it['state'] === 'present' ? 'done' : ($it['state'] === 'missing' ? 'expired' : '') ?>"><?= $it['state'] === 'present' ? ($ar ? '✅ موجودة' : '✅ here') : ($it['state'] === 'missing' ? ($ar ? '❌ غير موجودة' : '❌ missing') : ($ar ? '⏳ لم تُراجع' : '⏳ not checked')) ?></span>
@@ -561,7 +625,7 @@ $ago = function ($s) use ($ar): string {
     /* ── proposals, spot check, automatic proposals ── */
     document.querySelectorAll('[data-plan]').forEach(b => b.addEventListener('click', async () => {
         const send = b.dataset.send === '1', row = b.closest('.sc-plan');
-        if (send && !confirm(AR ? 'إرسال هذا الجرد للفرع الآن؟' : 'Send this check to the branch now?')) return;
+        if (send && !confirm(AR ? 'إرسال هذا الطلب الآن؟' : 'Send this now?')) return;
         row.querySelectorAll('button').forEach(x => x.disabled = true);
         const r = await post({ action: 'plan', plan: +b.dataset.plan, send, minutes: +row.querySelector('[data-pm]').value });
         if (r.ok && r.id) location.href = '?lang=<?= $lang ?>&id=' + r.id; else location.reload();
@@ -579,7 +643,7 @@ $ago = function ($s) use ($ar): string {
         });
     }
     if ($('auSave')) $('auSave').addEventListener('click', async () => {
-        const r = await post({ action: 'auto_rules', on: $('auOn').checked, full: +$('auFull').value, spot: +$('auSpot').value, from: +$('auFrom').value, to: +$('auTo').value }), m = $('auMsg');
+        const r = await post({ action: 'auto_rules', on: $('auOn').checked, full: +$('auFull').value, spot: +$('auSpot').value, ping: +$('auPing').value, from: +$('auFrom').value, to: +$('auTo').value }), m = $('auMsg');
         m.textContent = r.ok ? (AR ? '✓ تم الحفظ' : '✓ Saved') : '✗'; m.className = 'nf-msg ' + (r.ok ? 'ok' : 'bad');
     });
 
@@ -648,6 +712,23 @@ $ago = function ($s) use ($ar): string {
                 if (window.F1App) F1App.sound('bad');
             }
         };
+        /* 📷 spot check: a photo of the chassis plate, taken now with the camera, shrunk on the phone before it is sent */
+        const phb = it.querySelector('.phb');
+        if (phb) phb.querySelector('input').addEventListener('change', async e => {
+            const file = e.target.files && e.target.files[0], err = phb.querySelector('.pherr'), lbl = phb.querySelector('span'); if (!file) return;
+            phb.classList.add('busy'); err.textContent = ''; lbl.textContent = AR ? 'جاري رفع الصورة…' : 'Sending the photo…';
+            try {
+                const img = await new Promise((ok, no) => { const i = new Image(); i.onload = () => ok(i); i.onerror = no; i.src = URL.createObjectURL(file); });
+                const k = Math.min(1, 1600 / Math.max(img.width, img.height)), cv = document.createElement('canvas');
+                cv.width = Math.round(img.width * k); cv.height = Math.round(img.height * k); cv.getContext('2d').drawImage(img, 0, 0, cv.width, cv.height);
+                const blob = await new Promise(ok => cv.toBlob(ok, 'image/jpeg', .82));
+                const fd = new FormData(); fd.append('csrf', CSRF); fd.append('check', CHECK); fd.append('item', it.dataset.id); fd.append('photo', blob, 'p.jpg');
+                const r = await (await fetch(location.pathname, { method: 'POST', credentials: 'same-origin', body: fd })).json();
+                if (!r.ok) throw new Error(r.error);
+                phb.classList.add('done'); lbl.textContent = AR ? 'تم رفع الصورة ✓ — إعادة التصوير' : 'Photo sent ✓ — retake'; if (window.F1App) F1App.sound('ok');
+            } catch (x) { lbl.textContent = AR ? 'التقط صورة لرقم الشاسيه على السيارة' : 'Take a photo of the chassis plate'; err.textContent = AR ? 'تعذّر رفع الصورة — حاول مرة أخرى' : 'Could not send the photo — try again'; }
+            phb.classList.remove('busy'); e.target.value = '';
+        });
         if (chin) { it.querySelector('.chok').addEventListener('click', send); chin.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); send(); } }); }
         y.addEventListener('click', () => chin ? ask() : set('present'));
         n.addEventListener('click', () => set('missing'));
@@ -665,6 +746,7 @@ $ago = function ($s) use ($ar): string {
         if (!confirm(AR ? 'إنهاء الجرد وإرسال النتيجة للإدارة؟' : 'Finish and send the result?')) return;
         $('scFin').disabled = true;
         const r = await post({ action: 'finish' });
+        if (r.error === 'photo') { alert(AR ? 'التقط صورة لرقم الشاسيه على السيارة أولاً' : 'Take the photo of the chassis plate first'); $('scFin').disabled = false; return; }
         if (r.ok) location.href = <?= json_encode(user_lock_active($pdo, $uid) ? 'transfer_lock.php?lang=' . $lang : 'dashboard.php?lang=' . $lang) ?>; else $('scFin').disabled = false;
     });
 

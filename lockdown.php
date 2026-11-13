@@ -33,6 +33,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!hash_equals($csrf, (string)($in['csrf'] ?? ''))) { echo json_encode(['ok' => false, 'error' => 'csrf']); exit; }
     try {
         switch ($in['action'] ?? '') {
+            case 'ping':     // 📍 ask where a clocked-in person is right now (admins)
+                if (!$isAdmin || !function_exists('loc_ping_create')) break;
+                $pid = loc_ping_create($pdo, (int)($in['uid'] ?? 0), $me);
+                echo json_encode(['ok' => $pid > 0, 'error' => $pid ? '' : 'busy']); exit;
             case 'lock':
                 $n = 0;
                 foreach (array_unique(array_map('intval', (array)($in['uids'] ?? []))) as $u) {
@@ -77,6 +81,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 /* ─── page data ─── */
 smart_duty_scan($pdo); smart_check_scan($pdo); lock_countdown_scan($pdo);
+if (function_exists('loc_ping_scan')) loc_ping_scan($pdo);   // location checks nobody answered in time
 $rules  = lock_rules($pdo);
 $people = $pdo->query("SELECT id, username, role FROM users WHERE active = 1 ORDER BY FIELD(role,'admin','manager','sales'), username")->fetchAll(PDO::FETCH_ASSOC);
 $here = [];
@@ -125,6 +130,12 @@ if ($isAdmin) {
         fn($r) => ['t' => $r['t'], 'u' => $r['username'], 'k' => 'forgot', 'ic' => '⏰', 'x' => $ar ? 'نسي تسجيل الانصراف' : 'Forgot to clock out', 'd' => $brb($r['branch_name'])]);
     $bx("SELECT ti.reported_at AS t, ti.reported_by AS username, ti.note, m.to_branch, c.brand, c.model FROM transfer_issues ti JOIN movements m ON m.id = ti.movement_id JOIN cars c ON c.id = m.car_id WHERE ti.reported_at >= NOW() - INTERVAL 30 DAY",
         fn($r) => ['t' => $r['t'], 'u' => $r['username'], 'k' => 'miss', 'ic' => '❗', 'x' => $ar ? 'بلاغ «لم تصل»' : '"Did not arrive" report', 'd' => trim($r['brand'] . ' ' . $r['model']) . ' · 📍 ' . $brb($r['to_branch']) . ((string)$r['note'] !== '' ? ' · 📝 ' . $r['note'] : '')]);
+    if (function_exists('loc_ping_tables')) { try { loc_ping_tables($pdo); } catch (Throwable $e) {} }
+    $bx("SELECT p.asked_at AS t, u.username, p.branch, p.status, p.dist_m FROM loc_pings p JOIN users u ON u.id = p.user_id WHERE p.asked_at >= NOW() - INTERVAL 30 DAY AND p.status IN ('far', 'missed', 'denied')",
+        fn($r) => ['t' => $r['t'], 'u' => $r['username'], 'k' => 'loc', 'ic' => '📡',
+                   'x' => $ar ? ['far' => 'تأكيد تواجد: بعيد عن الفرع', 'missed' => 'تأكيد تواجد: لم يرد', 'denied' => 'تأكيد تواجد: الهاتف رفض إرسال الموقع'][$r['status']]
+                              : ['far' => 'Location check: far from the branch', 'missed' => 'Location check: no answer', 'denied' => 'Location check: phone refused'][$r['status']],
+                   'd' => $brb($r['branch']) . ($r['dist_m'] !== null ? ' · ' . ((int)$r['dist_m'] < 1000 ? (int)$r['dist_m'] . ($ar ? ' م' : ' m') : round((int)$r['dist_m'] / 1000, 1) . ($ar ? ' كم' : ' km')) : '')]);
     usort($box, fn($a, $b) => strcmp((string)$b['t'], (string)$a['t']));
     $boxAll = count($box);
     $boxBy = array_count_values(array_column($box, 'u')); arsort($boxBy);
@@ -201,7 +212,15 @@ window.addEventListener('error', function (e) {
 .bx-list{max-height:520px;overflow:auto;border-radius:14px;border:1px solid rgba(255,255,255,.07)}
 .bx-e{display:flex;gap:10px;align-items:flex-start;padding:10px 12px;border-bottom:1px solid rgba(255,255,255,.05);border-inline-start:3px solid #64748b}
 .bx-e[hidden]{display:none}
-.bx-e.stop{border-inline-start-color:#ef4444}.bx-e.wrong{border-inline-start-color:#a3e635}.bx-e.far{border-inline-start-color:#f59e0b}.bx-e.forgot{border-inline-start-color:#38bdf8}.bx-e.miss{border-inline-start-color:#c084fc}
+.bx-e.stop{border-inline-start-color:#ef4444}.bx-e.wrong{border-inline-start-color:#a3e635}.bx-e.far{border-inline-start-color:#f59e0b}.bx-e.forgot{border-inline-start-color:#38bdf8}.bx-e.miss{border-inline-start-color:#c084fc}.bx-e.loc{border-inline-start-color:#2dd4bf}
+.lp-ppl{display:flex;flex-wrap:wrap;gap:8px}
+.lp-p{display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:12px;border:1px solid var(--line);background:rgba(255,255,255,.03);font-size:13.5px;font-weight:800}
+.lp-p small{color:var(--mut);font-weight:700}.lp-p button{height:32px;padding:0 11px;border-radius:9px;border:0;background:linear-gradient(90deg,#0d9488,#0ea5e9);color:#fff;font:inherit;font-size:12.5px;font-weight:900;cursor:pointer}
+.lp-p button:disabled{opacity:.5}
+.lp-r{display:flex;gap:10px;align-items:center;padding:8px 2px;border-top:1px solid rgba(255,255,255,.06);font-size:13px;font-weight:700}
+.lp-r b{flex:1}.lp-r time{color:var(--mut);font-size:11.5px;white-space:nowrap}
+.lp-s{font-size:11.5px;font-weight:900;padding:3px 9px;border-radius:999px;white-space:nowrap}
+.lp-s.ok{background:rgba(34,197,94,.15);color:#86efac}.lp-s.far,.lp-s.denied{background:rgba(239,68,68,.16);color:#fca5a5}.lp-s.missed{background:rgba(245,158,11,.16);color:#fcd34d}.lp-s.pending{background:rgba(56,189,248,.15);color:#7dd3fc}
 .bx-e .ic{font-size:18px}.bx-e .t{flex:1;min-width:0}.bx-e b{display:block;font-size:13.5px}.bx-e small{display:block;font-size:12px;color:var(--mut);font-weight:700;margin-top:2px;overflow-wrap:anywhere}
 .bx-e time{font-size:11.5px;color:var(--mut);font-weight:700;white-space:nowrap}
 .ld-ch{flex-basis:100%;padding:10px 12px;border-radius:12px;background:rgba(2,6,23,.5);border:1px solid rgba(163,230,53,.35)}
@@ -269,6 +288,36 @@ window.addEventListener('error', function (e) {
         </div>
         <?php endforeach; ?>
     </section>
+
+    <?php if ($isAdmin && function_exists('loc_ping_create')):
+        loc_ping_scan($pdo);
+        $lpHere = [];
+        try { $lpHere = $pdo->query("SELECT u.id, u.username, a.branch_name FROM attendance_logs a JOIN users u ON u.id = a.user_id WHERE a.status = 'active' AND u.active = 1 AND u.role <> 'admin' ORDER BY a.branch_name, u.username")->fetchAll(PDO::FETCH_ASSOC); } catch (Throwable $e) {}
+        $lpLast = [];
+        try { $lpLast = $pdo->query("SELECT p.*, u.username FROM loc_pings p JOIN users u ON u.id = p.user_id ORDER BY p.id DESC LIMIT 12")->fetchAll(PDO::FETCH_ASSOC); } catch (Throwable $e) {}
+        $lpBusy = array_map('intval', array_column(array_filter($lpLast, fn($x) => $x['status'] === 'pending'), 'user_id'));
+        $lpS = $ar ? ['ok' => '✅ في الفرع', 'far' => '⚠️ بعيد', 'missed' => '⏰ لم يرد', 'denied' => '⛔ رفض الهاتف', 'pending' => '⏳ بانتظار الرد']
+                   : ['ok' => '✅ at the branch', 'far' => '⚠️ far', 'missed' => '⏰ no answer', 'denied' => '⛔ refused', 'pending' => '⏳ waiting']; ?>
+    <!-- 📍 location checks: admins only -->
+    <section class="nf-card" id="ldPing">
+        <h2>📍 <?= $ar ? 'تأكيد التواجد في الفرع' : 'Location checks' ?></h2>
+        <p class="nf-note"><?= $ar ? 'اطلب موقع موظف مسجَّل حضوره الآن. إذا كان النظام مفتوحاً على هاتفه يُرسَل الموقع تلقائياً دون أن يفعل شيئاً، وإلا يصله إشعار ليفتح النظام. إذا لم يرد خلال ' . LOC_PING_MINUTES . ' دقائق يُسجَّل «لم يرد».'
+                                   : 'Ask where a clocked-in person is right now. If the system is open on their phone it answers by itself; otherwise they get a notification. No answer in ' . LOC_PING_MINUTES . ' minutes is recorded.' ?></p>
+        <?php if (!$lpHere): ?><div class="nf-empty"><?= $ar ? 'لا يوجد أحد مسجَّل حضوره الآن' : 'Nobody is clocked in right now' ?></div><?php endif; ?>
+        <div class="lp-ppl">
+            <?php foreach ($lpHere as $h): ?>
+            <span class="lp-p">👤 <?= htmlspecialchars($h['username']) ?> <small>📍 <?= htmlspecialchars(push_branch_label($pdo, (string)$h['branch_name'], $lang)) ?></small>
+                <button type="button" data-ping="<?= (int)$h['id'] ?>" <?= in_array((int)$h['id'], $lpBusy, true) ? 'disabled' : '' ?>>📡 <?= $ar ? 'اطلب الموقع' : 'Ask' ?></button></span>
+            <?php endforeach; ?>
+        </div>
+        <?php if ($lpLast): ?><div style="margin-top:12px">
+            <?php foreach ($lpLast as $r): ?>
+            <div class="lp-r"><b><?= htmlspecialchars($r['username']) ?> <small style="color:var(--mut)">· <?= htmlspecialchars(push_branch_label($pdo, (string)$r['branch'], $lang)) ?><?= $r['dist_m'] !== null ? ' · ' . ((int)$r['dist_m'] < 1000 ? (int)$r['dist_m'] . ($ar ? ' م' : ' m') : round((int)$r['dist_m'] / 1000, 1) . ($ar ? ' كم' : ' km')) : '' ?></small></b>
+                <span class="lp-s <?= htmlspecialchars($r['status']) ?>"><?= $lpS[$r['status']] ?? htmlspecialchars($r['status']) ?></span><time><?= htmlspecialchars($fmt($r['asked_at'])) ?></time></div>
+            <?php endforeach; ?>
+        </div><?php endif; ?>
+    </section>
+    <?php endif; ?>
 
     <!-- new stop -->
     <section class="nf-card">
@@ -354,8 +403,8 @@ window.addEventListener('error', function (e) {
             <?php foreach ($boxBy as $bu => $bn): ?><button type="button" class="bx-p" data-u="<?= htmlspecialchars((string)$bu) ?>"><?= htmlspecialchars((string)$bu) ?> <b><?= (int)$bn ?></b></button><?php endforeach; ?>
         </div>
         <div class="bx-kinds">
-            <?php foreach (($ar ? ['' => 'كل الأنواع', 'stop' => '⛔ إيقاف', 'wrong' => '🔑 إدخال غير صحيح', 'far' => '📍 بعيد عن الفرع', 'forgot' => '⏰ نسي الانصراف', 'miss' => '❗ لم تصل']
-                               : ['' => 'All kinds', 'stop' => '⛔ Stops', 'wrong' => '🔑 Wrong entries', 'far' => '📍 Far away', 'forgot' => '⏰ Forgot out', 'miss' => '❗ Did not arrive']) as $kk => $kl): ?>
+            <?php foreach (($ar ? ['' => 'كل الأنواع', 'stop' => '⛔ إيقاف', 'wrong' => '🔑 إدخال غير صحيح', 'far' => '📍 بعيد عن الفرع', 'forgot' => '⏰ نسي الانصراف', 'miss' => '❗ لم تصل', 'loc' => '📡 تأكيد التواجد']
+                               : ['' => 'All kinds', 'stop' => '⛔ Stops', 'wrong' => '🔑 Wrong entries', 'far' => '📍 Far away', 'forgot' => '⏰ Forgot out', 'miss' => '❗ Did not arrive', 'loc' => '📡 Location checks']) as $kk => $kl): ?>
             <button type="button" class="bx-k<?= $kk === '' ? ' on' : '' ?>" data-k="<?= $kk ?>"><?= $kl ?></button><?php endforeach; ?>
         </div>
         <div class="bx-list">
@@ -547,6 +596,11 @@ function ldEditReason(btn) {
         const r = await post({ action: 'lock', uids, reason: $('ldReason').value, basma, cd_mins: cdMins(), cd_k: cdK(), cd_msg: $('ldCdMsg').value, watch: [...document.querySelectorAll('.ld-p.w:not(.rw).on')].map(b => +b.dataset.u) });
         if (r.ok) location.reload(); else { $('ldGo').disabled = false; msg('ldMsg', '✗ ' + (r.error || ''), false); }
     });
+    document.querySelectorAll('[data-ping]').forEach(b => b.addEventListener('click', async () => {
+        b.disabled = true;
+        const r = await post({ action: 'ping', uid: +b.dataset.ping });
+        if (r.ok) setTimeout(() => location.reload(), 600); else { b.disabled = false; alert(AR ? 'تعذّر إرسال الطلب (ربما سجّل انصرافه أو يوجد طلب قائم)' : 'Could not send (clocked out, or already being asked)'); }
+    }));
     document.querySelectorAll('[data-unlock]').forEach(b => b.addEventListener('click', async () => {
         if (!confirm((AR ? 'فتح النظام لـ ' : 'Unlock ') + b.dataset.name + '؟')) return;
         b.disabled = true; const r = await post({ action: 'unlock', uid: +b.dataset.unlock }); if (r.ok) location.reload(); else b.disabled = false;

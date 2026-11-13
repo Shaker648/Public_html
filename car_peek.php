@@ -53,6 +53,13 @@ try {
         if (!empty($c['created_at'])) $hist[] = ['what' => $ar ? '➕ أُضيفت إلى المخزون' : '➕ Added to stock', 'by' => (string)($c['created_by'] ?? ''), 'when' => $when($c['created_at'])];
     }
     $days = $c['days_in'] !== null ? max(0, (int)$c['days_in']) : null;
+    // the last time somebody physically confirmed this car — admins and managers only
+    $seen = '';
+    if (in_array($_SESSION['role'] ?? '', ['admin', 'manager'], true)) {
+        $how = $ar ? ['receive' => 'عند الاستلام', 'check' => 'في جرد', 'spot' => 'في فحص سريع'] : ['receive' => 'on receiving', 'check' => 'in a stock check', 'spot' => 'in a spot check'];
+        $seen = !empty($c['last_seen_at']) ? $when($c['last_seen_at']) . ' · ' . ($how[$c['last_seen_how'] ?? ''] ?? '') . ' · ' . ($c['last_seen_by'] ?? '')
+                                           : ($ar ? 'لم يؤكد أحد وجودها فعلياً بعد' : 'Nobody has physically confirmed it yet');
+    }
     echo json_encode(['ok' => true, 'car' => [
         'id'      => (int)$c['id'],
         'title'   => trim($c['brand'] . ' ' . $c['model']),
@@ -64,6 +71,7 @@ try {
         'status'  => (string)$c['status'],
         'age'     => $days === null ? '' : ($ar ? ($days === 0 ? 'أُضيفت اليوم' : 'في المخزون منذ ' . ($days === 1 ? 'يوم واحد' : ($days === 2 ? 'يومين' : $days . ($days <= 10 ? ' أيام' : ' يوماً')))) : ($days === 0 ? 'Added today' : $days . ' days in stock')),
         'notes'   => (string)($c['notes'] ?? ''),
+        'seen'    => $seen,
     ], 'history' => $hist, 'timeline' => can('page.vehicle_timeline') ? 'vehicle_timeline.php?id=' . (int)$c['id'] . '&lang=' . $lang : ''], JSON_UNESCAPED_UNICODE);
 } catch (Throwable $e) {
     error_log('car_peek: ' . $e->getMessage());

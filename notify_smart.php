@@ -113,7 +113,7 @@ function smart_receive(PDO $pdo, array $mids, string $by): int
                              FROM movements m JOIN cars c ON c.id = m.car_id WHERE m.event_type = 'transfer' AND m.id IN ($in)")->fetchAll(PDO::FETCH_ASSOC);
         $ins = $pdo->prepare("INSERT IGNORE INTO transfer_receipts (movement_id, received_by, received_at) VALUES (?, ?, NOW())");
         $new = [];
-        foreach ($rows as $r) { $ins->execute([(int)$r['mid'], $by]); if ($ins->rowCount()) $new[] = $r; }
+        foreach ($rows as $r) { $ins->execute([(int)$r['mid'], $by]); if ($ins->rowCount()) { $new[] = $r; car_seen($pdo, (int)$r['car_id'], $by, 'receive'); } }
         if (!$new) return 0;
         // tell whoever moved them (grouped by the branch they reached)
         $byTo = [];
@@ -887,7 +887,9 @@ function smart_run(PDO $pdo): array
 
         /* 📋 surprise stock checks: warnings, time up → lock */
         $done = array_merge($done, smart_check_scan($pdo));
-        if (function_exists('check_auto_scan')) $done = array_merge($done, check_auto_scan($pdo));   // proposals for the admin (nothing is sent without approval)
+        if (function_exists('check_auto_scan')) $done = array_merge($done, check_auto_scan($pdo));
+        if (function_exists('loc_ping_scan')) $done = array_merge($done, loc_ping_scan($pdo));       // pings nobody answered
+        if (function_exists('weekly_cards')) $done = array_merge($done, weekly_cards($pdo));         // Saturday morning   // proposals for the admin (nothing is sent without approval)
         /* 🚚 receiving transferred cars: countdowns, warnings, locks (any time of day) */
         $done = array_merge($done, smart_duty_scan($pdo));
 

@@ -47,6 +47,7 @@ function check_auto_rules(PDO $pdo): array
         'on'   => !empty($o['on']),
         'full' => max(0, min(7, (int)($o['full'] ?? 1))),
         'spot' => max(0, min(14, (int)($o['spot'] ?? 2))),
+        'ping' => max(0, min(21, (int)($o['ping'] ?? 0))),   // «تأكيد التواجد» proposals per branch per week
         'from' => max(0, min(22, (int)($o['from'] ?? 11))),
         'to'   => max(1, min(23, (int)($o['to'] ?? 20))),
     ];
@@ -84,7 +85,7 @@ function check_auto_scan(PDO $pdo): array
             $end = strtotime('next monday', $now);                       // ISO weeks end on Sunday night
             $span = max(1, (int)floor(($end - $now) / 86400));
             foreach (check_auto_branches($pdo) as $b) {
-                foreach (['full' => $r['full'], 'spot' => $r['spot']] as $kind => $n) {
+                foreach (['full' => $r['full'], 'spot' => $r['spot'], 'ping' => $r['ping']] as $kind => $n) {
                     for ($i = 0; $i < $n; $i++) {
                         $day = strtotime(date('Y-m-d', $now)) + random_int(0, $span - 1) * 86400;
                         $at  = $day + random_int($r['from'] * 3600, max($r['from'] * 3600 + 900, $r['to'] * 3600 - 1));
@@ -114,7 +115,7 @@ function check_auto_scan(PDO $pdo): array
             }
             $cars = $pdo->prepare("SELECT COUNT(*) FROM cars WHERE branch = ? AND status IN ('available', 'reserved')");
             $cars->execute([(string)$p['branch']]);
-            if (!$here || !(int)$cars->fetchColumn()) { $later(); continue; }
+            if (!$here || ($p['kind'] !== 'ping' && !(int)$cars->fetchColumn())) { $later(); continue; }
             $uid = array_rand($here);
             $pdo->prepare("UPDATE stock_check_plans SET status = 'pending', user_id = ?, asked_at = NOW() WHERE id = ? AND status = 'planned'")->execute([$uid, $id]);
             $admins = array_map('strval', $pdo->query("SELECT username FROM users WHERE active = 1 AND role = 'admin'")->fetchAll(PDO::FETCH_COLUMN));
@@ -140,9 +141,20 @@ function check_auto_pending(PDO $pdo): array
 function check_spot_create(PDO $pdo, string $branch, int $uid, int $minutes, string $by): int
 {
     check_auto_tables($pdo);
-    $st = $pdo->prepare("SELECT id FROM cars WHERE branch = ? AND status IN ('available', 'reserved') ORDER BY RAND() LIMIT 1");
-    $st->execute([$branch]);
-    $car = (int)$st->fetchColumn();
+    // one of the four cars nobody has physically confirmed for the longest time (never confirmed first), at random
+    $car = 0;
+    try {
+        car_seen_cols($pdo);
+        $st = $pdo->prepare("SELECT id FROM cars WHERE branch = ? AND status IN ('available', 'reserved') ORDER BY (last_seen_at IS NULL) DESC, last_seen_at ASC, RAND() LIMIT 4");
+        $st->execute([$branch]);
+        $ids = $st->fetchAll(PDO::FETCH_COLUMN);
+        if ($ids) $car = (int)$ids[array_rand($ids)];
+    } catch (Throwable $e) {}
+    if (!$car) {
+        $st = $pdo->prepare("SELECT id FROM cars WHERE branch = ? AND status IN ('available', 'reserved') ORDER BY RAND() LIMIT 1");
+        $st->execute([$branch]);
+        $car = (int)$st->fetchColumn();
+    }
     if (!$car) return 0;
     return smart_check_create($pdo, $branch, [$uid], max(3, min(60, $minutes)), '', true, $by, [], [$car], true);
 }
@@ -156,6 +168,11 @@ function check_auto_decide(PDO $pdo, int $planId, bool $send, string $by, int $m
     $p = $st->fetch(PDO::FETCH_ASSOC);
     if (!$p) return 0;
     $cid = 0;
+    if ($send && $p['kind'] === 'ping') {
+        $ok = loc_ping_create($pdo, (int)$p['user_id'], $by);
+        $pdo->prepare("UPDATE stock_check_plans SET status = ?, decided_by = ?, decided_at = NOW() WHERE id = ?")->execute([$ok ? 'sent' : 'skipped', $by, $planId]);
+        return 0;
+    }
     if ($send) {
         $cid = $p['kind'] === 'spot' ? check_spot_create($pdo, (string)$p['branch'], (int)$p['user_id'], $minutes ?: 5, $by)
                                      : smart_check_create($pdo, (string)$p['branch'], [(int)$p['user_id']], $minutes ?: 30, '', true, $by, []);
@@ -214,4 +231,164 @@ function branch_trust_label(string $key, int $n, string $lang): string
         'far'     => $ar ? 'بصمة من مكان بعيد عن الفرع' : 'clock-ins far from the branch',
     ];
     return $n . ' × ' . ($t[$key] ?? $key);
+}
+
+/* ════════════════════════ 📍 location pings (تأكيد التواجد) ════════════════════════ */
+/*
+ * An admin asks where a clocked-in person is right now. If their app is open it
+ * answers by itself; otherwise they get a notification and opening the app
+ * answers. No answer within the time → recorded as «لم يرد». The result (how far
+ * from the branch) goes to the admins and into the admin record.
+ */
+const LOC_PING_MINUTES = 10;
+
+function loc_ping_tables(PDO $pdo): void
+{
+    static $done = false; if ($done) return; $done = true;
+    $pdo->exec("CREATE TABLE IF NOT EXISTS loc_pings (
+        id          INT AUTO_INCREMENT PRIMARY KEY,
+        user_id     INT NOT NULL,
+        branch      VARCHAR(100) NULL,
+        asked_by    VARCHAR(100) NULL,
+        asked_at    DATETIME NOT NULL,
+        deadline    DATETIME NOT NULL,
+        answered_at DATETIME NULL,
+        lat         DECIMAL(10,7) NULL,
+        lng         DECIMAL(10,7) NULL,
+        acc         INT NULL,
+        dist_m      INT NULL,
+        status      VARCHAR(10) NOT NULL DEFAULT 'pending',
+        KEY k_user (user_id, status), KEY k_time (asked_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+}
+
+function loc_fence(PDO $pdo): int
+{
+    try { $fs = json_decode((string)$pdo->query("SELECT setting_value FROM settings WHERE setting_key = 'attendance_settings'")->fetchColumn(), true); return max(10, (int)($fs['fence'] ?? 50)); }
+    catch (Throwable $e) { return 50; }
+}
+
+/** Ask one clocked-in person. Returns the ping id (0 = not clocked in, an admin, or already being asked). */
+function loc_ping_create(PDO $pdo, int $uid, string $by): int
+{
+    loc_ping_tables($pdo);
+    $u = $pdo->prepare("SELECT username, role, TIMESTAMPDIFF(SECOND, last_seen, NOW()) AS idle FROM users WHERE id = ? AND active = 1");
+    $u->execute([$uid]);
+    $u = $u->fetch(PDO::FETCH_ASSOC);
+    $att = lock_open_attendance($pdo, $uid);
+    if (!$u || $u['role'] === 'admin' || !$att) return 0;
+    $p = $pdo->prepare("SELECT 1 FROM loc_pings WHERE user_id = ? AND status = 'pending'");
+    $p->execute([$uid]);
+    if ($p->fetchColumn()) return 0;
+    $pdo->prepare("INSERT INTO loc_pings (user_id, branch, asked_by, asked_at, deadline) VALUES (?, ?, ?, NOW(), NOW() + INTERVAL " . LOC_PING_MINUTES . " MINUTE)")
+        ->execute([$uid, (string)$att['branch_name'], $by !== '' ? $by : null]);
+    $id = (int)$pdo->lastInsertId();
+    // the app answers by itself when it is open; a notification only when it does not look open
+    if ($u['idle'] === null || (int)$u['idle'] > 90) {
+        notify_event($pdo, 'loc_ping', ['only' => [(string)$u['username']], 'mins' => LOC_PING_MINUTES, 'actor' => '', 'tag' => 'loc-ping-' . $id, 'force' => true, 'now' => true]);
+    }
+    return $id;
+}
+
+/** The ping this person has to answer now (or null). */
+function loc_ping_due(PDO $pdo, int $uid): ?array
+{
+    try {
+        loc_ping_tables($pdo);
+        $st = $pdo->prepare("SELECT id FROM loc_pings WHERE user_id = ? AND status = 'pending' AND deadline > NOW() ORDER BY id LIMIT 1");
+        $st->execute([$uid]);
+        $r = $st->fetch(PDO::FETCH_ASSOC);
+        return $r ?: null;
+    } catch (Throwable $e) { return null; }
+}
+
+function loc_ping_tell(PDO $pdo, int $pingId): void
+{
+    $st = $pdo->prepare("SELECT p.*, u.username FROM loc_pings p JOIN users u ON u.id = p.user_id WHERE p.id = ?");
+    $st->execute([$pingId]);
+    $p = $st->fetch(PDO::FETCH_ASSOC);
+    if (!$p) return;
+    $admins = array_map('strval', $pdo->query("SELECT username FROM users WHERE active = 1 AND role = 'admin'")->fetchAll(PDO::FETCH_COLUMN));
+    if ($admins) notify_event($pdo, 'loc_result', ['user' => $p['username'], 'branch' => $p['branch'], 'status' => $p['status'], 'dist' => $p['dist_m'], 'acc' => $p['acc'],
+        'only' => $admins, 'actor' => '', 'tag' => 'loc-res-' . $pingId, 'force' => true, 'now' => true]);
+}
+
+/** The person's phone answers. $lat / $lng null = the phone refused to give the location. */
+function loc_ping_answer(PDO $pdo, int $uid, int $pingId, ?float $lat, ?float $lng, int $acc): bool
+{
+    loc_ping_tables($pdo);
+    $st = $pdo->prepare("SELECT * FROM loc_pings WHERE id = ? AND user_id = ? AND status = 'pending'");
+    $st->execute([$pingId, $uid]);
+    $p = $st->fetch(PDO::FETCH_ASSOC);
+    if (!$p) return false;
+    $status = 'denied'; $dist = null;
+    if ($lat !== null && $lng !== null) {
+        $b = $pdo->prepare("SELECT lat, lng FROM branches WHERE name = ?");
+        $b->execute([(string)$p['branch']]);
+        $b = $b->fetch(PDO::FETCH_ASSOC);
+        $status = 'ok';
+        if ($b && $b['lat'] !== null && $b['lng'] !== null) {
+            $R = 6371000; $dLat = deg2rad((float)$b['lat'] - $lat); $dLng = deg2rad((float)$b['lng'] - $lng);
+            $a = sin($dLat / 2) ** 2 + cos(deg2rad($lat)) * cos(deg2rad((float)$b['lat'])) * sin($dLng / 2) ** 2;
+            $dist = (int)round($R * 2 * atan2(sqrt($a), sqrt(1 - $a)));
+            if ($dist > loc_fence($pdo) + min(150, max(0, $acc))) $status = 'far';   // the phone's own inaccuracy is not held against them
+        }
+    }
+    $pdo->prepare("UPDATE loc_pings SET status = ?, answered_at = NOW(), lat = ?, lng = ?, acc = ?, dist_m = ? WHERE id = ? AND status = 'pending'")
+        ->execute([$status, $lat, $lng, $acc ?: null, $dist, $pingId]);
+    loc_ping_tell($pdo, $pingId);
+    return true;
+}
+
+/** Pings nobody answered in time → «لم يرد». Called by the timed run and by the pages that show pings. */
+function loc_ping_scan(PDO $pdo): array
+{
+    $log = [];
+    try {
+        loc_ping_tables($pdo);
+        foreach ($pdo->query("SELECT id FROM loc_pings WHERE status = 'pending' AND deadline <= NOW()")->fetchAll(PDO::FETCH_COLUMN) as $id) {
+            $up = $pdo->prepare("UPDATE loc_pings SET status = 'missed' WHERE id = ? AND status = 'pending'");
+            $up->execute([(int)$id]);
+            if ($up->rowCount()) { loc_ping_tell($pdo, (int)$id); $log[] = 'loc_ping missed #' . $id; }
+        }
+    } catch (Throwable $e) { error_log('loc_ping_scan: ' . $e->getMessage()); }
+    return $log;
+}
+
+/* ════════════════════════ 🗓️ the weekly report card (Saturday morning, admins) ════════════════════════ */
+function weekly_cards(PDO $pdo): array
+{
+    $log = [];
+    try {
+        $now = (int)strtotime((string)$pdo->query("SELECT NOW()")->fetchColumn());
+        if ((int)date('w', $now) !== 6 || (int)date('G', $now) < 9) return $log;       // Saturday, from 9 in the morning
+        $week = date('o-W', $now);
+        if (push_setting($pdo, 'weekly_card_week', '') === $week) return $log;
+        push_setting_set($pdo, 'weekly_card_week', $week, 'system');
+        $admins = array_map('strval', $pdo->query("SELECT username FROM users WHERE active = 1 AND role = 'admin'")->fetchAll(PDO::FETCH_COLUMN));
+        if (!$admins) return $log;
+        $trust = branch_trust($pdo);
+        $prev  = json_decode(push_setting($pdo, 'weekly_card_trust', ''), true) ?: [];
+        $one = function (string $sql, array $a) use ($pdo) { try { $st = $pdo->prepare($sql); $st->execute($a); return $st->fetchColumn(); } catch (Throwable $e) { return 0; } };
+        foreach (check_auto_branches($pdo) as $b) {
+            $secs  = (int)$one("SELECT COALESCE(SUM(CASE WHEN auto_closed = 1 THEN 0 ELSE TIMESTAMPDIFF(SECOND, clock_in, COALESCE(clock_out, NOW())) END), 0) FROM attendance_logs WHERE branch_name = ? AND clock_in >= NOW() - INTERVAL 7 DAY", [$b]);
+            $late  = (int)$one("SELECT COUNT(DISTINCT d.movement_id) FROM transfer_duty d JOIN movements m ON m.id = d.movement_id WHERE d.locked = 1 AND m.to_branch = ? AND d.deadline >= NOW() - INTERVAL 7 DAY", [$b]);
+            $wrong = (int)$one("SELECT COUNT(*) FROM chassis_tries WHERE ok = 0 AND place = ? AND created_at >= NOW() - INTERVAL 7 DAY", [$b]);
+            $ppl = [];
+            try {
+                $st = $pdo->prepare("SELECT u.username, COUNT(DISTINCT DATE(a.clock_in)) AS d FROM attendance_logs a JOIN users u ON u.id = a.user_id
+                                     WHERE a.branch_name = ? AND a.clock_in >= NOW() - INTERVAL 7 DAY AND u.active = 1 AND u.role <> 'admin' GROUP BY u.id ORDER BY d DESC, u.username");
+                $st->execute([$b]);
+                $ppl = $st->fetchAll(PDO::FETCH_ASSOC);
+            } catch (Throwable $e) {}
+            $score = (int)($trust[$b]['score'] ?? 100);
+            notify_event($pdo, 'weekly_card', ['branch' => $b, 'score' => $score, 'delta' => isset($prev[$b]) ? $score - (int)$prev[$b] : null, 'hours' => (int)round($secs / 3600),
+                'late' => $late, 'wrong' => $wrong, 'best' => $ppl ? $ppl[0]['username'] . ' (' . (int)$ppl[0]['d'] . ')' : '',
+                'least' => count($ppl) > 1 ? end($ppl)['username'] . ' (' . (int)end($ppl)['d'] . ')' : '',
+                'only' => $admins, 'actor' => '', 'tag' => 'weekly-' . $week . '-' . $b, 'force' => true, 'now' => true]);
+            $log[] = 'weekly_card ' . $b;
+        }
+        push_setting_set($pdo, 'weekly_card_trust', json_encode(array_map(fn($t) => (int)$t['score'], $trust)), 'system');
+    } catch (Throwable $e) { error_log('weekly_cards: ' . $e->getMessage()); }
+    return $log;
 }
