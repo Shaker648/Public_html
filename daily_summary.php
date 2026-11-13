@@ -23,6 +23,13 @@ define('LOW_STOCK',  10);   // warn when available cars drop below this number
 // ── Bootstrap ─────────────────────────────────────────────────────────────────
 // Works whether called from cron (absolute path) or browser
 $root = dirname(__FILE__);
+// Only the scheduled job (cron) runs this page — or an admin who is signed in. Nobody else:
+// it shows stock and sales numbers.
+if (PHP_SAPI !== 'cli') {
+    require_once $root . '/auth_remember.php';
+    f1c_session_start();
+    if (($_SESSION['role'] ?? '') !== 'admin') { http_response_code(404); exit('Not found'); }
+}
 require $root . '/config.php';
 
 // ── Queries ───────────────────────────────────────────────────────────────────

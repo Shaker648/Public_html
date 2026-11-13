@@ -64,6 +64,7 @@ function notify_events(): array
         'transfer_received'=> ['تأكيد استلام سيارة منقولة',       'Transferred car received',   '📥', ['admin'], true, true, 'transfer'],
         'transfer_unconfirmed' => ['لم يكن أحد في الفرع للاستلام (24 ساعة)', 'Nobody at the branch to receive (24 h)', '🏖️', ['admin'], true, null, 'transfer'],
         // surprise stock check (جرد مفاجئ)
+        'login_new'        => ['تسجيل دخول من جهاز جديد',         'Sign-in from a new device',  '🔐', ['admin'], true, null, 'live'],
         'check_plan'       => ['اقتراح جرد مفاجئ ينتظر موافقتك',  'A surprise check waiting for your approval', '🎲', ['admin'], true, null, 'check'],
         'check_start'      => ['بدء جرد مفاجئ',                 'Surprise stock check started', '📋', ['admin'], true, true, 'check'],
         'check_item'       => ['تأكيد كل سيارة أثناء الجرد',    'Each car confirmed during a check', '🔎', ['admin'], true, null, 'check'],
@@ -849,6 +850,12 @@ function notify_message(PDO $pdo, string $event, array $d, string $lang): array
                 $url = 'transfer_receive.php?lang=' . $lang;
             }
             break;
+        case 'login_new':
+            $title = '🔐 ' . ($ar ? 'تسجيل دخول من جهاز جديد: ' : 'Sign-in from a new device: ') . ($d['user'] ?? '');
+            $body[] = '📱 ' . ($d['device'] ?? '') . (!empty($d['ip']) ? ' · IP ' . $d['ip'] : '');
+            $body[] = $ar ? 'إذا لم يكن هذا متوقعاً، سجّل خروج الجهاز من صفحة الأجهزة' : 'If this is unexpected, sign the device out on the devices page';
+            $url = 'devices.php?lang=' . $lang;
+            break;
         case 'check_plan':
             $bn = push_branch_label($pdo, (string)($d['branch'] ?? ''), $lang);
             $sp = ($d['kind'] ?? '') === 'spot';
@@ -1017,7 +1024,7 @@ function notify_message(PDO $pdo, string $event, array $d, string $lang): array
         default:
             $title = $ev[2] . ' ' . ($ar ? $ev[0] : $ev[1]);
     }
-    $noBy = ['test', 'check_plan', 'user_locked', 'check_tick', 'transfer_missing', 'transfer_resolved', 'check_start', 'check_warn', 'check_locked', 'check_done', 'transfer_received', 'duty_start', 'duty_warn', 'duty_locked', 'duty_done', 'duty_unlocked', 'sale_celebrate', 'last_car', 'reserve_old', 'stock_aged', 'transfer_unconfirmed',
+    $noBy = ['test', 'login_new', 'check_plan', 'user_locked', 'check_tick', 'transfer_missing', 'transfer_resolved', 'check_start', 'check_warn', 'check_locked', 'check_done', 'transfer_received', 'duty_start', 'duty_warn', 'duty_locked', 'duty_done', 'duty_unlocked', 'sale_celebrate', 'last_car', 'reserve_old', 'stock_aged', 'transfer_unconfirmed',
              'amana_long', 'bank_waiting', 'clockout_forgot', 'login_failed', 'price_reserved'];
     if ($by !== '' && !in_array($event, $noBy, true) && strpos($event, 'att_') !== 0) $body[] = ($ar ? '✍️ بواسطة ' : '✍️ by ') . $by;
     return [

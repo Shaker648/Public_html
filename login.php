@@ -82,6 +82,15 @@ if ($valid) {
         ->execute([$user['id']]);
     f1c_log_attempt($pdo, $username, true);
 
+    // ── this device: the admins are told the first time an account is used on a new one ──
+    if (is_file(__DIR__ . '/devices_helpers.php')) try {
+        require_once __DIR__ . '/devices_helpers.php';
+        if (dev_touch($pdo, (int)$user['id'], true) === 'new' && dev_should_alert($pdo, (int)$user['id']) && is_file(__DIR__ . '/push_helpers.php')) {
+            require_once __DIR__ . '/push_helpers.php';
+            notify_event($pdo, 'login_new', ['user' => $user['username'], 'device' => dev_label((string)($_SERVER['HTTP_USER_AGENT'] ?? '')), 'ip' => f1c_client_ip(), 'actor' => '', 'force' => true, 'now' => true]);
+        }
+    } catch (Throwable $e) { error_log('device check failed: ' . $e->getMessage()); }
+
     // ── stay signed in on this device ──
     if (!empty($_POST['remember'])) {
         try { f1c_remember_issue($pdo, (int)$user['id']); }
