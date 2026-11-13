@@ -9,10 +9,16 @@
 
 date_default_timezone_set('Africa/Cairo');
 
-$host     = 'localhost';
-$dbname   = 'u935149902_inventory';
-$username = 'u935149902_Shaker';
-$password = 'First1car';
+// The database name, user and password are NOT in this file (the code repository must never hold them).
+// They live in config.local.php, next to this file, on the server only.
+$host = 'localhost'; $dbname = ''; $username = ''; $password = '';
+if (is_file(__DIR__ . '/config.local.php')) {
+    require __DIR__ . '/config.local.php';
+} else {
+    error_log('config.local.php is missing — the database settings are kept in that file');
+    http_response_code(503);
+    die('Setup incomplete: the file config.local.php is missing on the server.');
+}
 
 try {
     $pdo = new PDO(

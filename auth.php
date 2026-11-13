@@ -44,6 +44,18 @@ if (!$currentUser || (int)$currentUser['active'] !== 1) {
     exit;
 }
 
+// Step 2b: this device — an admin may have signed it out (devices.php)
+if (is_file(__DIR__ . '/devices_helpers.php')) {
+    require_once __DIR__ . '/devices_helpers.php';
+    if (dev_touch($pdo, (int)$currentUser['id']) === 'revoked') {
+        f1c_remember_forget($pdo);
+        session_unset();
+        session_destroy();
+        header('Location: index.php?signedout=1');
+        exit;
+    }
+}
+
 // Step 3: Refresh session data in case role changed
 $_SESSION['username'] = $currentUser['username'];
 $_SESSION['role']     = $currentUser['role'];

@@ -2012,6 +2012,11 @@ body:has(#npCard.on) #f1c-chat-bubble { opacity:0; pointer-events:none; }
             <a href="#" class="more-item" id="moreTextSize" onclick="event.preventDefault(); if (window.F1App) { F1App.textSize(F1App.isBig() ? 'normal' : 'big'); this.querySelector('b').textContent = F1App.isBig() ? '<?= $lang === 'ar' ? 'كبير' : 'Large' ?>' : '<?= $lang === 'ar' ? 'عادي' : 'Normal' ?>'; }">
                 <span class="mi-icon">🔠</span><?= $lang === 'ar' ? 'حجم الخط' : 'Text size' ?>: <b><?= $lang === 'ar' ? 'عادي' : 'Normal' ?></b>
             </a>
+            <?php if ($isAdmin): ?>
+            <a href="devices.php?lang=<?= $lang ?>" class="more-item">
+                <span class="mi-icon">🔐</span><?= $lang === 'ar' ? 'الأجهزة' : 'Devices' ?>
+            </a>
+            <?php endif; ?>
             <a href="#" class="more-item" id="moreSound" onclick="event.preventDefault(); if (window.F1App) { F1App.sounds(!F1App.soundsOn()); this.querySelector('b').textContent = F1App.soundsOn() ? '<?= $lang === 'ar' ? 'تشغيل' : 'On' ?>' : '<?= $lang === 'ar' ? 'إيقاف' : 'Off' ?>'; }">
                 <span class="mi-icon">🔔</span><?= $lang === 'ar' ? 'الأصوات' : 'Sounds' ?>: <b><?= $lang === 'ar' ? 'تشغيل' : 'On' ?></b>
             </a>
