@@ -294,6 +294,11 @@ $stmt->execute($params);
 $cars = $stmt->fetchAll(PDO::FETCH_ASSOC);
 // a car on its way to a branch, or being counted in a stock check, is confirmed by typing its chassis off the car — so it is hidden until then (admins see it)
 if (is_file(__DIR__ . '/chassis_gate.php')) { require_once __DIR__ . '/chassis_gate.php'; chassis_mask_rows($pdo, $cars); }
+// «آخر تأكيد فعلي»: days since somebody last physically confirmed each car (receiving, stock check, spot check). Admins and managers only.
+$seenDays = [];
+if (in_array($_SESSION['role'] ?? '', ['admin', 'manager'], true) && function_exists('car_seen_cols')) {
+    try { car_seen_cols($pdo); foreach ($pdo->query("SELECT id, TIMESTAMPDIFF(DAY, last_seen_at, NOW()) AS d FROM cars WHERE status IN ('available', 'reserved')") as $__s) $seenDays[(int)$__s['id']] = $__s['d'] === null ? -1 : (int)$__s['d']; } catch (Throwable $e) {}
+}
 
 $availableCarsList = [];
 $soldCarsList      = [];
@@ -1682,6 +1687,7 @@ body:has(#npCard.on) #f1c-chat-bubble { opacity:0; pointer-events:none; }
             <?php endif; ?>
 
             <button type="button" class="chip chip-age" data-age="new">✨ <?= $lang === 'ar' ? 'جديدة' : 'New' ?> <span class="chip-n"></span></button>
+            <?php if ($seenDays): ?><button type="button" class="chip chip-age" data-age="unseen" title="<?= $lang === 'ar' ? 'لم يؤكد أحد وجودها فعلياً منذ 30 يوماً أو أكثر (للإدارة والمدراء فقط)' : 'Nobody has physically confirmed it for 30+ days (admins and managers only)' ?>">👁 <?= $lang === 'ar' ? 'لم تُؤكَّد +30 يوماً' : 'Unconfirmed 30+ days' ?> <span class="chip-n"></span></button><?php endif; ?>
             <button type="button" class="chip chip-age" data-age="old">⏳ <?= $lang === 'ar' ? '+60 يوماً' : '60+ days' ?> <span class="chip-n"></span></button>
             <?php if (count($branchChips) > 1): ?>
                 <span class="chip-sep"></span>
@@ -1815,6 +1821,7 @@ body:has(#npCard.on) #f1c-chat-bubble { opacity:0; pointer-events:none; }
                  data-days="<?= $daysIn === null ? -1 : $daysIn ?>"
                  data-brand="<?= htmlspecialchars((string)$car['brand'], ENT_QUOTES) ?>"
                  data-road="<?= isset($roadIds[(int)$car['id']]) ? 1 : 0 ?>"
+                 <?php if ($seenDays): ?>data-seen="<?= $seenDays[(int)$car['id']] ?? -1 ?>"<?php endif; ?>
                  data-resdays="<?= ($isReserved && $resInfo && !empty($resInfo['at'])) ? max(0, (int)floor((time() - strtotime($resInfo['at'])) / 86400)) : -1 ?>"
                  data-price="<?= (float)($officialNum ?? 0) ?>"
                  data-model="<?= htmlspecialchars(mb_strtolower($car['brand'] . ' ' . $car['model'] . ' ' . $car['trim_name']), ENT_QUOTES) ?>">
@@ -2134,7 +2141,8 @@ body:has(#npCard.on) #f1c-chat-bubble { opacity:0; pointer-events:none; }
         let fAge = '';      // '' | new (added in the last 3 days) | old (60+ days) | resold (reserved 7+ days)
         let fBrand = '';
         let emptyMsg = null;
-        const ageOk = c => fAge === '' || (fAge === 'new' ? (+c.dataset.days >= 0 && +c.dataset.days <= 3) : fAge === 'old' ? +c.dataset.days >= 60 : +c.dataset.resdays >= 7);
+        const unseen = c => c.dataset.seen !== undefined && (+c.dataset.seen < 0 ? +c.dataset.days >= 30 : +c.dataset.seen >= 30);   // never confirmed counts once the car is 30 days old
+        const ageOk = c => fAge === '' || (fAge === 'new' ? (+c.dataset.days >= 0 && +c.dataset.days <= 3) : fAge === 'old' ? +c.dataset.days >= 60 : fAge === 'unseen' ? unseen(c) : +c.dataset.resdays >= 7);
         /* the filters are remembered while the app is open, so an automatic refresh keeps your place */
         const keep = () => { try { sessionStorage.setItem('f1cDashF', JSON.stringify({ s: fStatus, b: fBranch, a: fAge, r: fBrand, q: input ? input.value : '' })); } catch (e) {} };
 
@@ -2182,7 +2190,7 @@ body:has(#npCard.on) #f1c-chat-bubble { opacity:0; pointer-events:none; }
         function setBrand(v) { fBrand = fBrand === v ? '' : v; apply(); }
         /* «جديدة» / «+60 يوماً» chips with their counts (hidden when there are none) */
         document.querySelectorAll('.chip-age').forEach(function (c) {
-            const n = cards.filter(x => c.dataset.age === 'new' ? (+x.dataset.days >= 0 && +x.dataset.days <= 3) : +x.dataset.days >= 60).length;
+            const n = cards.filter(x => c.dataset.age === 'new' ? (+x.dataset.days >= 0 && +x.dataset.days <= 3) : c.dataset.age === 'unseen' ? unseen(x) : +x.dataset.days >= 60).length;
             c.querySelector('.chip-n').textContent = n; c.hidden = n === 0;
             c.addEventListener('click', () => setAge(c.dataset.age));
         });
@@ -2406,7 +2414,7 @@ body:has(#npCard.on) #f1c-chat-bubble { opacity:0; pointer-events:none; }
             if (!r || !r.ok) { box.innerHTML = '<div class="pk-handle"></div><div class="pk-head"><h3></h3><button type="button" class="pk-x">✕</button></div><div class="pk-msg">' + L.fail + '</div>'; return; }
             const c = r.car, f = (l, v, cls, wide) => v ? '<div class="pk-f' + (wide ? ' wide' : '') + '"><label>' + l + '</label><div' + (cls ? ' class="' + cls + '"' : '') + '>' + esc(v) + '</div></div>' : '';
             box.innerHTML = '<div class="pk-handle"></div><div class="pk-head"><div><h3>' + (c.status === 'reserved' ? '🔒 ' : '🚗 ') + esc(c.title) + '</h3><small>' + esc(c.age) + '</small></div><button type="button" class="pk-x" aria-label="close">✕</button></div>' +
-                '<div class="pk-grid">' + f(L.trim, c.trim) + f(L.year, c.year) + f(L.color, c.color) + f(L.branch, c.branch) + f(L.chassis, c.chassis, 'ch', true) + f(L.notes, c.notes, '', true) + '</div>' +
+                '<div class="pk-grid">' + f(L.trim, c.trim) + f(L.year, c.year) + f(L.color, c.color) + f(L.branch, c.branch) + f(L.chassis, c.chassis, 'ch', true) + f(AR ? '👁 آخر تأكيد فعلي' : '👁 Last physically confirmed', c.seen, '', true) + f(L.notes, c.notes, '', true) + '</div>' +
                 (r.history.length ? '<div class="pk-h4">' + L.hist + '</div>' + r.history.map(h => '<div class="pk-ev"><div><b>' + esc(h.what) + '</b>' + (h.by ? '<span>' + L.by + ' ' + esc(h.by) + '</span>' : '') + '</div><small>' + esc(h.when) + '</small></div>').join('') : '') +
                 (r.timeline ? '<div class="pk-acts"><a href="' + esc(r.timeline) + '">' + L.full + '</a></div>' : '');
         }

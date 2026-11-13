@@ -153,5 +153,27 @@
     window.addEventListener('offline', net); window.addEventListener('online', net);
     if (!navigator.onLine) net();
 
+    /* ── 📍 «تأكيد التواجد»: when an admin asks, the phone answers by itself while the system is open ── */
+    var pingBusy = false;
+    function pingCheck() {
+        if (pingBusy || document.hidden || !navigator.onLine) return;
+        if (/^(index|sold_login|transfer_lock|stock_check)\.php$/.test(location.pathname.split('/').pop() || '')) return;
+        pingBusy = true;
+        fetch('loc_ping.php', { credentials: 'same-origin', cache: 'no-store', headers: { Accept: 'application/json' } }).then(function (r) { return r.ok ? r.json() : null; }).then(function (r) {
+            if (!r || !r.ping) { pingBusy = false; return; }
+            var send = function (body) {
+                body.id = r.ping; body.csrf = r.csrf;
+                fetch('loc_ping.php', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify(body) })
+                    .catch(function () {}).then(function () { pingBusy = false; });
+            };
+            if (!navigator.geolocation) return send({ denied: true });
+            navigator.geolocation.getCurrentPosition(
+                function (p) { send({ lat: p.coords.latitude, lng: p.coords.longitude, acc: p.coords.accuracy || 0 }); },
+                function (e) { if (e && e.code === 1) send({ denied: true }); else pingBusy = false; },      // no fix yet: it is tried again on the next round
+                { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 });
+        }).catch(function () { pingBusy = false; });
+    }
+    ready(function () { setTimeout(pingCheck, 2500); setInterval(pingCheck, 45000); document.addEventListener('visibilitychange', function () { if (!document.hidden) pingCheck(); }); });
+
     window.F1App = { search: open, textSize: textSize, isBig: isBig, sound: sound, soundFor: soundFor, sounds: sounds, soundsOn: function () { return sndOn; } };
 })();

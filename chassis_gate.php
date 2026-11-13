@@ -223,3 +223,23 @@ function check_count_try(PDO $pdo, int $checkId, int $uid, string $uname, int $t
     $pdo->prepare("UPDATE chassis_tries SET cleared = 1, lock_id = ? WHERE user_id = ? AND ok = 0 AND cleared = 0")->execute([$lockId ?: null, $uid]);
     return ['ok' => false, 'locked' => $lockId > 0];
 }
+
+/* ════════ «آخر تأكيد فعلي»: the last time somebody physically confirmed a car ════════ */
+function car_seen_cols(PDO $pdo): void
+{
+    static $done = false;
+    if ($done) return;
+    $done = true;
+    try { $pdo->query("SELECT last_seen_at FROM cars LIMIT 1"); }
+    catch (Throwable $e) { try { $pdo->exec("ALTER TABLE cars ADD last_seen_at DATETIME NULL, ADD last_seen_by VARCHAR(100) NULL, ADD last_seen_how VARCHAR(20) NULL"); } catch (Throwable $e2) {} }
+}
+
+/** $how: 'receive' (a transferred car received) | 'check' (stock check) | 'spot' (spot check) */
+function car_seen(PDO $pdo, int $carId, string $by, string $how): void
+{
+    if ($carId < 1) return;
+    try {
+        car_seen_cols($pdo);
+        $pdo->prepare("UPDATE cars SET last_seen_at = NOW(), last_seen_by = ?, last_seen_how = ? WHERE id = ?")->execute([mb_substr($by, 0, 100), $how, $carId]);
+    } catch (Throwable $e) { error_log('car_seen: ' . $e->getMessage()); }
+}

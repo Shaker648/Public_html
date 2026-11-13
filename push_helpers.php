@@ -64,6 +64,9 @@ function notify_events(): array
         'transfer_received'=> ['تأكيد استلام سيارة منقولة',       'Transferred car received',   '📥', ['admin'], true, true, 'transfer'],
         'transfer_unconfirmed' => ['لم يكن أحد في الفرع للاستلام (24 ساعة)', 'Nobody at the branch to receive (24 h)', '🏖️', ['admin'], true, null, 'transfer'],
         // surprise stock check (جرد مفاجئ)
+        'loc_ping'         => ['طلب تأكيد التواجد في الفرع',       'Asked to confirm you are at the branch', '📍', [], true, true, 'live'],
+        'loc_result'       => ['نتيجة تأكيد التواجد',              'Location confirmation result', '📍', ['admin'], true, null, 'live'],
+        'weekly_card'      => ['التقرير الأسبوعي لكل فرع (السبت)', 'Weekly branch report (Saturday)', '🗓️', ['admin'], true, null, 'live'],
         'login_new'        => ['تسجيل دخول من جهاز جديد',         'Sign-in from a new device',  '🔐', ['admin'], true, null, 'live'],
         'check_plan'       => ['اقتراح جرد مفاجئ ينتظر موافقتك',  'A surprise check waiting for your approval', '🎲', ['admin'], true, null, 'check'],
         'check_start'      => ['بدء جرد مفاجئ',                 'Surprise stock check started', '📋', ['admin'], true, true, 'check'],
@@ -850,6 +853,32 @@ function notify_message(PDO $pdo, string $event, array $d, string $lang): array
                 $url = 'transfer_receive.php?lang=' . $lang;
             }
             break;
+        case 'loc_ping':
+            $title = '📍 ' . ($ar ? 'مطلوب تأكيد تواجدك في الفرع' : 'Please confirm you are at the branch');
+            $body[] = $ar ? 'افتح النظام الآن — يتم التأكيد تلقائياً خلال ثوانٍ' : 'Open the system now — it is confirmed by itself in seconds';
+            $body[] = $ar ? '⏱️ خلال ' . push_ar_mins((int)($d['mins'] ?? 10)) : '⏱️ within ' . (int)($d['mins'] ?? 10) . ' min';
+            $url = 'dashboard.php?lang=' . $lang;
+            break;
+        case 'loc_result':
+            $bn = push_branch_label($pdo, (string)($d['branch'] ?? ''), $lang);
+            $stt = (string)($d['status'] ?? '');
+            $dm = $d['dist'] === null ? '' : ((int)$d['dist'] < 1000 ? (int)$d['dist'] . ($ar ? ' م' : ' m') : round((int)$d['dist'] / 1000, 1) . ($ar ? ' كم' : ' km'));
+            $title = ['ok' => '✅ ', 'far' => '⚠️ ', 'missed' => '⏰ ', 'denied' => '⛔ '][$stt] ?? '📍 ';
+            $title .= ($d['user'] ?? '') . ' — ' . ($ar ? ['ok' => 'موجود في فرع ' . $bn, 'far' => 'بعيد عن فرع ' . $bn, 'missed' => 'لم يرد على تأكيد التواجد', 'denied' => 'هاتفه رفض إرسال الموقع'][$stt] ?? ''
+                                                       : ['ok' => 'is at ' . $bn, 'far' => 'is far from ' . $bn, 'missed' => 'did not answer the location check', 'denied' => 'phone refused to share the location'][$stt] ?? '');
+            if ($dm !== '') $body[] = ($ar ? '📏 على بعد ' : '📏 ') . $dm . (!empty($d['acc']) ? ($ar ? ' (دقة ±' . (int)$d['acc'] . ' م)' : ' (±' . (int)$d['acc'] . ' m)') : '');
+            if ($stt === 'missed') $body[] = $ar ? 'مسجَّل حضوره في فرع ' . $bn . ' ولم يفتح النظام خلال المهلة' : 'Clocked in at ' . $bn . ' and did not open the system in time';
+            $url = 'lockdown.php?lang=' . $lang . '#ldBox';
+            break;
+        case 'weekly_card':
+            $bn = push_branch_label($pdo, (string)($d['branch'] ?? ''), $lang);
+            $dl = $d['delta'] ?? null;
+            $title = '🗓️ ' . ($ar ? 'تقرير الأسبوع — فرع ' . $bn . ': ثقة ' . (int)$d['score'] . '/100' : 'Weekly report — ' . $bn . ': trust ' . (int)$d['score'] . '/100')
+                   . ($dl === null || (int)$dl === 0 ? '' : ((int)$dl > 0 ? ' ▲' . (int)$dl : ' ▼' . abs((int)$dl)));
+            $body[] = ($ar ? '⏱️ ساعات العمل: ' : '⏱️ Hours worked: ') . (int)$d['hours'] . ' · ' . ($ar ? '🚚 استلام متأخر: ' : '🚚 late receipts: ') . (int)$d['late'] . ' · ' . ($ar ? '🔑 إدخال غير صحيح: ' : '🔑 wrong entries: ') . (int)$d['wrong'];
+            if (!empty($d['best'])) $body[] = ($ar ? '🥇 الأكثر حضوراً (أيام): ' : '🥇 Most days: ') . $d['best'] . (!empty($d['least']) ? ' · ' . ($ar ? 'الأقل: ' : 'fewest: ') . $d['least'] : '');
+            $url = 'lockdown.php?lang=' . $lang . '#ldBox';
+            break;
         case 'login_new':
             $title = '🔐 ' . ($ar ? 'تسجيل دخول من جهاز جديد: ' : 'Sign-in from a new device: ') . ($d['user'] ?? '');
             $body[] = '📱 ' . ($d['device'] ?? '') . (!empty($d['ip']) ? ' · IP ' . $d['ip'] : '');
@@ -858,8 +887,8 @@ function notify_message(PDO $pdo, string $event, array $d, string $lang): array
             break;
         case 'check_plan':
             $bn = push_branch_label($pdo, (string)($d['branch'] ?? ''), $lang);
-            $sp = ($d['kind'] ?? '') === 'spot';
-            $title = '🎲 ' . ($ar ? ($sp ? 'اقتراح فحص سريع لسيارة: فرع ' : 'اقتراح جرد مفاجئ: فرع ') . $bn : ($sp ? 'Proposed spot check: ' : 'Proposed surprise check: ') . $bn);
+            $sp = ($d['kind'] ?? '') === 'spot'; $pg = ($d['kind'] ?? '') === 'ping';
+            $title = '🎲 ' . ($ar ? ($pg ? 'اقتراح تأكيد تواجد: فرع ' : ($sp ? 'اقتراح فحص سريع لسيارة: فرع ' : 'اقتراح جرد مفاجئ: فرع ')) . $bn : ($pg ? 'Proposed location check: ' : ($sp ? 'Proposed spot check: ' : 'Proposed surprise check: ')) . $bn);
             $body[] = ($ar ? '👤 المكلَّف المقترح: ' : '👤 Proposed for: ') . ($d['user'] ?? '');
             $body[] = $ar ? '⏳ لن يُرسل شيء للفرع قبل موافقتك — ينتهي الاقتراح بعد ساعتين' : '⏳ Nothing is sent to the branch until you approve — the proposal expires in two hours';
             $url = 'stock_check.php?lang=' . $lang . '#plans';
@@ -1024,7 +1053,7 @@ function notify_message(PDO $pdo, string $event, array $d, string $lang): array
         default:
             $title = $ev[2] . ' ' . ($ar ? $ev[0] : $ev[1]);
     }
-    $noBy = ['test', 'login_new', 'check_plan', 'user_locked', 'check_tick', 'transfer_missing', 'transfer_resolved', 'check_start', 'check_warn', 'check_locked', 'check_done', 'transfer_received', 'duty_start', 'duty_warn', 'duty_locked', 'duty_done', 'duty_unlocked', 'sale_celebrate', 'last_car', 'reserve_old', 'stock_aged', 'transfer_unconfirmed',
+    $noBy = ['test', 'loc_ping', 'loc_result', 'weekly_card', 'login_new', 'check_plan', 'user_locked', 'check_tick', 'transfer_missing', 'transfer_resolved', 'check_start', 'check_warn', 'check_locked', 'check_done', 'transfer_received', 'duty_start', 'duty_warn', 'duty_locked', 'duty_done', 'duty_unlocked', 'sale_celebrate', 'last_car', 'reserve_old', 'stock_aged', 'transfer_unconfirmed',
              'amana_long', 'bank_waiting', 'clockout_forgot', 'login_failed', 'price_reserved'];
     if ($by !== '' && !in_array($event, $noBy, true) && strpos($event, 'att_') !== 0) $body[] = ($ar ? '✍️ بواسطة ' : '✍️ by ') . $by;
     return [
@@ -1134,7 +1163,7 @@ function notify_deliver(PDO $pdo, int $logId, string $event, array $msg, array $
 
     // same kind, not seen yet, in the last 15 minutes → one grouped notification
     $group = [];
-    if (!in_array($event, ['message', 'test', 'transfer_incoming', 'check_plan', 'check_item', 'check_start', 'check_tick', 'check_warn', 'check_locked', 'check_done', 'transfer_missing', 'user_locked', 'lock_basma', 'lock_reason', 'lock_countdown', 'duty_unlocked'], true)) {
+    if (!in_array($event, ['message', 'test', 'transfer_incoming', 'loc_ping', 'loc_result', 'weekly_card', 'login_new', 'check_plan', 'check_item', 'check_start', 'check_tick', 'check_warn', 'check_locked', 'check_done', 'transfer_missing', 'user_locked', 'lock_basma', 'lock_reason', 'lock_countdown', 'duty_unlocked'], true)) {
         $in2 = implode(',', $withDev);
         $gs = $pdo->prepare("SELECT i.user_id, l.title FROM notify_inbox i JOIN notify_log l ON l.id = i.log_id
                              WHERE i.user_id IN ($in2) AND l.event = ? AND i.seen_at IS NULL AND l.created_at >= NOW() - INTERVAL 15 MINUTE
