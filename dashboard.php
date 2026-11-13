@@ -671,6 +671,32 @@ function arDate($dt, $lang) {
         .md-bd em { font-style:normal; font-size:11.5px; font-weight:800; padding:4px 9px; border-radius:999px; background:rgba(255,255,255,.05); border:1px dashed rgba(255,255,255,.18); color:#cbd5e1; }
         .myday.party { animation:mdParty 1.6s ease 2; }
         @keyframes mdParty { 30% { box-shadow:0 0 0 3px rgba(250,204,21,.7), 0 0 40px rgba(250,204,21,.45); transform:scale(1.015); } }
+        /* attendance board */
+        .board { margin:-4px 0 12px; border-radius:16px; background:rgba(15,23,42,.6); border:1px solid rgba(148,163,184,.16); }
+        .board summary { list-style:none; cursor:pointer; padding:11px 14px; font-size:13.5px; font-weight:900; display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+        .board summary::-webkit-details-marker { display:none; }
+        .board summary i { font-style:normal; margin-inline-start:auto; color:#94a3b8; transition:transform .2s; }
+        .board[open] summary i { transform:rotate(180deg); }
+        .bd-my { font-size:11.5px; font-weight:800; padding:3px 9px; border-radius:999px; background:rgba(56,189,248,.14); border:1px solid rgba(56,189,248,.35); color:#bae6fd; }
+        .bd-list { padding:0 12px 12px; }
+        .bd-r { display:flex; align-items:center; gap:10px; padding:8px 6px; border-top:1px solid rgba(255,255,255,.06); font-size:13.5px; }
+        .bd-r.me { background:rgba(34,197,94,.08); border-radius:10px; }
+        .bd-k { width:26px; text-align:center; font-weight:900; color:#94a3b8; }
+        .bd-r b { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-weight:800; }
+        .bd-r b small { color:#86efac; font-weight:800; }
+        .bd-v { min-width:44px; text-align:end; font-weight:900; font-variant-numeric:tabular-nums; white-space:nowrap; }
+        .bd-v.sh { min-width:62px; color:#7dd3fc; }
+        .bd-leg { font-size:11px; color:#94a3b8; font-weight:700; padding-top:8px; border-top:1px solid rgba(255,255,255,.06); }
+        /* ▶ replay on the branch map */
+        .rp-bar { grid-column:1/-1; display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+        .rp-go { height:40px; padding:0 16px; border-radius:12px; border:0; background:linear-gradient(90deg,#7c3aed,#2563eb); color:#fff; font:inherit; font-size:13.5px; font-weight:900; cursor:pointer; white-space:nowrap; }
+        .rp-go:disabled { opacity:.6; }
+        .rp-cap { flex:1; min-width:180px; font-size:13.5px; font-weight:800; color:#e2e8f0; min-height:20px; }
+        .rp-cap small { color:#94a3b8; font-weight:700; margin-inline-start:6px; }
+        .lot.rp-on { border-color:#a78bfa; box-shadow:0 0 0 2px rgba(167,139,250,.5), 0 0 30px rgba(167,139,250,.35); transition:box-shadow .2s, border-color .2s; }
+        .lot.rp-gold { border-color:#fbbf24; box-shadow:0 0 0 2px rgba(251,191,36,.55), 0 0 30px rgba(251,191,36,.4); }
+        .rp-dot { position:fixed; z-index:1190; width:34px; height:34px; margin:-17px 0 0 -17px; border-radius:11px 11px 8px 8px; border:2px solid #fff; display:grid; place-items:center; font-size:16px; pointer-events:none;
+                  box-shadow:0 0 0 4px rgba(255,255,255,.18), 0 10px 26px rgba(0,0,0,.6); }
         /* morning brief */
         .brief-ov { position:fixed; inset:0; z-index:9150; background:rgba(2,6,23,.84); backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px); display:none; align-items:center; justify-content:center; padding:18px; }
         .brief-ov.on { display:flex; }
@@ -1578,6 +1604,27 @@ body:has(#npCard.on) #f1c-chat-bubble { opacity:0; pointer-events:none; }
             </div><?php endif; ?>
         </div>
     </a>
+    <?php
+        /* 🏆 the attendance board. «دقة الجرد» appears only for checks a person has already finished — nothing here says whether a check is coming. */
+        $myScore = function_exists('my_check_score') ? my_check_score($pdo, (int)$_SESSION['user_id']) : null;
+        $board = function_exists('my_day_board') ? my_day_board($pdo, $lang) : [];
+        if ($board): ?>
+    <details class="board" id="board">
+        <summary>🏆 <?= $lang === 'ar' ? 'لوحة الحضور' : 'Attendance board' ?><?php if ($myScore !== null): ?> <span class="bd-my">🛡️ <?= $lang === 'ar' ? 'دقة الجرد لديك' : 'Your check accuracy' ?> <?= $myScore ?>%</span><?php endif; ?><i>▾</i></summary>
+        <div class="bd-list">
+            <?php foreach ($board as $bi => $bw): $meRow = $bw['id'] === (int)$_SESSION['user_id']; ?>
+            <div class="bd-r<?= $meRow ? ' me' : '' ?>">
+                <span class="bd-k"><?= ['🥇', '🥈', '🥉'][$bi] ?? ($bi + 1) ?></span>
+                <b><?= htmlspecialchars($bw['name']) ?><?= $meRow ? ' <small>(' . ($lang === 'ar' ? 'أنت' : 'you') . ')</small>' : '' ?></b>
+                <span class="bd-v" title="<?= $lang === 'ar' ? 'أيام حضور متتالية' : 'days in a row' ?>">🔥 <?= $bw['streak'] ?></span>
+                <span class="bd-v" title="<?= $lang === 'ar' ? 'أيام أكمل فيها ساعات العمل هذا الشهر' : 'full days this month' ?>">⏱️ <?= $bw['full'] ?></span>
+                <span class="bd-v sh" title="<?= $lang === 'ar' ? 'دقة الجرد (للجرد المكتمل فقط)' : 'check accuracy (finished checks only)' ?>"><?= $bw['check'] === null ? '' : '🛡️ ' . $bw['check'] . '%' ?></span>
+            </div>
+            <?php endforeach; ?>
+            <div class="bd-leg">🔥 <?= $lang === 'ar' ? 'أيام متتالية' : 'days in a row' ?> · ⏱️ <?= $lang === 'ar' ? 'أيام كاملة هذا الشهر' : 'full days this month' ?> · 🛡️ <?= $lang === 'ar' ? 'دقة الجرد المكتمل' : 'accuracy in finished checks' ?></div>
+        </div>
+    </details>
+        <?php endif; ?>
     <?php endif; ?>
     <?php if ($brief): $bItems = [];
         if ($canStatSold) $bItems[] = ['💰', $brief['sold'], $lang === 'ar' ? 'بيعت أمس' : 'sold yesterday'];
@@ -3188,20 +3235,61 @@ priceLine + '\n' +
                 lots[b].push(c);
             });
             order.sort(function (a, b) { return lots[b].length - lots[a].length; });
-            wrap.innerHTML = order.length ? order.map(function (b) {
+            var rpBar = '<div class="rp-bar"><button type="button" class="rp-go" id="rpGo">▶ ' + (AR ? 'ما تحرّك اليوم' : 'What moved today') + '</button><span class="rp-cap" id="rpCap"></span></div>';
+            wrap.innerHTML = order.length ? rpBar + order.map(function (b) {
                 var cars = lots[b], res = 0, old = 0, road = 0;
                 var dots = cars.map(function (c, i) {
                     var d = +c.dataset.days, cls = 'lot-d' + (c.dataset.status === 'reserved' ? ' res' : '') + (d >= 60 ? ' old' : '') + (d >= 0 && d <= 3 ? ' new' : '') + (c.dataset.road === '1' ? ' road' : '');
                     if (c.dataset.status === 'reserved') res++; if (d >= 60) old++; if (c.dataset.road === '1') road++;
                     return '<button type="button" class="' + cls + '" data-id="' + c.dataset.id + '" style="--c:' + (c.dataset.hex || '#64748b') + ';--h:' + (c.style.getPropertyValue('--heat') || 210) + ';--i:' + i + '" title="' + esc((c.dataset.title || '') + ' · ' + (c.dataset.colorLabel || '')) + '" aria-label="' + esc(c.dataset.title || '') + '"></button>';
                 }).join('');
-                return '<section class="lot"><header><b>📍 ' + esc(b) + '</b><span class="lot-n">' + cars.length + '</span></header>' +
+                return '<section class="lot" data-lot="' + esc(b) + '"><header><b>📍 ' + esc(b) + '</b><span class="lot-n">' + cars.length + '</span></header>' +
                     '<div class="lot-meta">' + (res ? '<i class="res">🔒 ' + res + '</i>' : '') + (old ? '<i class="old">⏳ ' + old + '</i>' : '') + (road ? '<i class="road">🚚 ' + road + '</i>' : '') + '</div>' +
                     '<div class="lot-grid">' + dots + '</div></section>';
             }).join('') + '<div class="lot-leg"><span><i class="lot-d res" style="--c:#94a3b8"></i>' + (AR ? 'محجوزة' : 'Reserved') + '</span><span><i class="lot-d old" style="--c:#94a3b8"></i>' + (AR ? '+60 يوماً' : '60+ days') + '</span><span><i class="lot-d new" style="--c:#94a3b8"></i>' + (AR ? 'جديدة' : 'New') + '</span><span><i class="lot-d road" style="--c:#94a3b8"></i>' + (AR ? 'في الطريق' : 'On the way') + '</span></div>'
               : '<div style="grid-column:1/-1;text-align:center;color:#64748b;padding:30px">🔍 ' + (AR ? 'لا توجد نتائج' : 'No results') + '</div>';
         }
         wrap.addEventListener('click', function (e) { var d = e.target.closest('.lot-d[data-id]'); if (d && window.F1Peek) F1Peek(d.dataset.id); });
+        /* ▶ «ما تحرّك اليوم»: today's events play on the map — a car drives between branches, drops in when added, leaves when sold, glows gold when reserved */
+        var rpBusy = false;
+        function rpSleep(ms) { return new Promise(function (ok) { setTimeout(ok, ms); }); }
+        function rpLot(name) { var l = null; wrap.querySelectorAll('.lot').forEach(function (x) { if (x.dataset.lot === name) l = x; }); return l; }
+        function rpPoint(lot) { var r = (lot || wrap).getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + Math.min(r.height / 2, 90) }; }
+        function rpFly(from, to, hex, icon, ms) {
+            var d = document.createElement('div'); d.className = 'rp-dot'; d.style.background = hex || '#64748b'; d.textContent = icon || ''; d.style.left = from.x + 'px'; d.style.top = from.y + 'px';
+            document.body.appendChild(d);
+            var a = d.animate([{ transform: 'translate(0,0) scale(.6)', opacity: 0 }, { transform: 'translate(0,0) scale(1.15)', opacity: 1, offset: .15 },
+                               { transform: 'translate(' + (to.x - from.x) + 'px,' + (to.y - from.y) + 'px) scale(1)', opacity: 1, offset: .85 }, { transform: 'translate(' + (to.x - from.x) + 'px,' + (to.y - from.y) + 'px) scale(.6)', opacity: 0 }],
+                              { duration: ms, easing: 'cubic-bezier(.4,0,.2,1)' });
+            return new Promise(function (ok) { a.onfinish = function () { d.remove(); ok(); }; });
+        }
+        async function replay(btn) {
+            if (rpBusy) return; rpBusy = true; btn.disabled = true;
+            var cap = document.getElementById('rpCap'), r = null;
+            try { r = await (await fetch('day_replay.php?lang=' + (AR ? 'ar' : 'en'), { credentials: 'same-origin', cache: 'no-store', headers: { Accept: 'application/json' } })).json(); } catch (e) {}
+            var evs = (r && r.ok) ? r.events : [];
+            if (!evs.length) { cap.textContent = AR ? 'لا توجد حركة في المخزون اليوم حتى الآن' : 'Nothing has moved in the stock today yet'; rpBusy = false; btn.disabled = false; return; }
+            var slow = matchMedia('(prefers-reduced-motion: reduce)').matches ? 300 : 1100;
+            var T = AR ? { move: '🚚 نقل', add: '➕ أُضيفت', sold: '💰 بيعت', res: '🔒 حُجزت', unres: '🔓 أُلغي حجزها' } : { move: '🚚 Moved', add: '➕ Added', sold: '💰 Sold', res: '🔒 Reserved', unres: '🔓 Unreserved' };
+            for (var i = 0; i < evs.length; i++) {
+                var e = evs[i], to = rpLot(e.to), from = e.from ? rpLot(e.from) : null;
+                cap.innerHTML = esc(T[e.k] + ' ' + e.car + (e.k === 'move' ? ': ' + e.from + ' ← ' + e.to : ' · ' + e.to)) + '<small>' + esc(e.at) + ' · ' + (i + 1) + '/' + evs.length + '</small>';
+                [from, to].forEach(function (l) { if (l) l.classList.add(e.k === 'res' ? 'rp-gold' : 'rp-on'); });
+                (to || from || wrap).scrollIntoView({ block: 'center', behavior: 'smooth' });
+                await rpSleep(260);
+                var pt = rpPoint(to), pf = rpPoint(from);
+                if (e.k === 'move') await rpFly(pf, pt, e.hex, '🚚', slow);
+                else if (e.k === 'add') await rpFly({ x: pt.x, y: pt.y - 120 }, pt, e.hex, '➕', slow * .8);
+                else if (e.k === 'sold') await rpFly(pt, { x: pt.x, y: pt.y - 130 }, e.hex, '💰', slow * .8);
+                else await rpFly(pt, pt, e.k === 'res' ? '#fbbf24' : e.hex, e.k === 'res' ? '🔒' : '🔓', slow * .7);
+                if (window.F1App && i < 12) F1App.sound(e.k === 'sold' ? 'ok' : 'msg');
+                [from, to].forEach(function (l) { if (l) l.classList.remove('rp-on', 'rp-gold'); });
+                await rpSleep(140);
+            }
+            cap.textContent = AR ? '✓ انتهى العرض — ' + (evs.length === 1 ? 'حركة واحدة' : evs.length === 2 ? 'حركتان' : evs.length + (evs.length <= 10 ? ' حركات' : ' حركة')) + ' اليوم' : '✓ Done — ' + evs.length + ' events today';
+            rpBusy = false; btn.disabled = false;
+        }
+        wrap.addEventListener('click', function (e) { var b = e.target.closest('#rpGo'); if (b) replay(b); });
         /* 🌡 stock heat: every card (and every dot on the map) is tinted by how long the car has been in stock */
         (function () {
             var hb = document.getElementById('heatBtn'), leg = document.getElementById('heatLeg'); if (!hb) return;
