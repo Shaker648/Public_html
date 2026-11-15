@@ -18,7 +18,7 @@ function inst_banks(): array
 {
     return [
         'abk'      => ['ar' => 'الأهلي الكويتي',                  'en' => 'Al Ahli Kuwaiti (ABK)'],
-        'nbk'      => ['ar' => 'الوطني الكويتي',                   'en' => 'Kuwaiti National (NBK)'],
+        'nbk'      => ['ar' => 'بنك الكويت الوطني',                'en' => 'National Bank of Kuwait (NBK)'],
         'egbank'   => ['ar' => 'إيجي بنك',                        'en' => 'EG Bank'],
         'misr'     => ['ar' => 'بنك مصر',                         'en' => 'Banque Misr'],
         'saib'     => ['ar' => 'بنك سايب',                        'en' => 'SAIB Bank'],
@@ -34,6 +34,7 @@ function inst_banks(): array
         'abc'      => ['ar' => 'بنك ABC',                         'en' => 'Bank ABC'],
         'nbe'      => ['ar' => 'البنك الأهلي المصري',              'en' => 'National Bank of Egypt (NBE)'],
         'qnb'      => ['ar' => 'بنك QNB',                         'en' => 'QNB'],
+        'arab'     => ['ar' => 'البنك العربي',                     'en' => 'Arab Bank'],
     ];
 }
 
