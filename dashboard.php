@@ -2446,6 +2446,7 @@ body:has(#npCard.on) #f1c-chat-bubble { opacity:0; pointer-events:none; }
         if (document.getElementById('liveAct')) setTimeout(pulse, 400);   // fill "happening now" straight away
     })();
 
+<?php if ($isAdmin): /* the «من أين الآن» script is sent to admins only */ ?>
     /* ── 👥 who is where (admins): refreshed every 30 seconds; 📡 asks for a location (closes their system until it is sent) ── */
     (function () {
         const grid = document.getElementById('wwGrid'); if (!grid) return;
@@ -2482,6 +2483,7 @@ body:has(#npCard.on) #f1c-chat-bubble { opacity:0; pointer-events:none; }
         load(); setInterval(() => { if (!document.hidden) load(); }, 30000);
         document.addEventListener('visibilitychange', () => { if (!document.hidden) load(); });
     })();
+<?php endif; ?>
     /* ── 🛡️ branch trust: tap a branch → why it lost points ── */
     (function () {
         const why = document.getElementById('trustWhy'); if (!why) return;
