@@ -854,20 +854,21 @@ function notify_message(PDO $pdo, string $event, array $d, string $lang): array
             }
             break;
         case 'loc_ping':
-            $title = '📍 ' . ($ar ? 'مطلوب تأكيد تواجدك في الفرع' : 'Please confirm you are at the branch');
-            $body[] = $ar ? 'افتح النظام الآن — يتم التأكيد تلقائياً خلال ثوانٍ' : 'Open the system now — it is confirmed by itself in seconds';
+            $title = '📍 ' . ($ar ? 'مطلوب تأكيد تواجدك في الفرع — النظام مغلق' : 'Confirm you are at the branch — your system is closed');
+            $body[] = $ar ? 'افتح النظام الآن واضغط «إرسال موقعي» — يُفتح النظام فور إرسال الموقع' : 'Open the system and press "Send my location" — it opens as soon as the location is sent';
             $body[] = $ar ? '⏱️ خلال ' . push_ar_mins((int)($d['mins'] ?? 10)) : '⏱️ within ' . (int)($d['mins'] ?? 10) . ' min';
-            $url = 'dashboard.php?lang=' . $lang;
+            $url = 'loc_ping.php?lang=' . $lang;
             break;
         case 'loc_result':
             $bn = push_branch_label($pdo, (string)($d['branch'] ?? ''), $lang);
             $stt = (string)($d['status'] ?? '');
             $dm = $d['dist'] === null ? '' : ((int)$d['dist'] < 1000 ? (int)$d['dist'] . ($ar ? ' م' : ' m') : round((int)$d['dist'] / 1000, 1) . ($ar ? ' كم' : ' km'));
             $title = ['ok' => '✅ ', 'far' => '⚠️ ', 'missed' => '⏰ ', 'denied' => '⛔ '][$stt] ?? '📍 ';
-            $title .= ($d['user'] ?? '') . ' — ' . ($ar ? ['ok' => 'موجود في فرع ' . $bn, 'far' => 'بعيد عن فرع ' . $bn, 'missed' => 'لم يرد على تأكيد التواجد', 'denied' => 'هاتفه رفض إرسال الموقع'][$stt] ?? ''
-                                                       : ['ok' => 'is at ' . $bn, 'far' => 'is far from ' . $bn, 'missed' => 'did not answer the location check', 'denied' => 'phone refused to share the location'][$stt] ?? '');
+            $title .= ($d['user'] ?? '') . ' — ' . ($ar ? ['ok' => 'موجود في فرع ' . $bn, 'far' => 'بعيد عن فرع ' . $bn, 'missed' => 'لم يرسل موقعه خلال المهلة', 'denied' => 'هاتفه رفض إرسال الموقع'][$stt] ?? ''
+                                                       : ['ok' => 'is at ' . $bn, 'far' => 'is far from ' . $bn, 'missed' => 'did not send the location in time', 'denied' => 'phone refused to share the location'][$stt] ?? '')
+                    . (!empty($d['late']) && in_array($stt, ['ok', 'far'], true) ? ($ar ? ' (متأخراً)' : ' (late)') : '');
             if ($dm !== '') $body[] = ($ar ? '📏 على بعد ' : '📏 ') . $dm . (!empty($d['acc']) ? ($ar ? ' (دقة ±' . (int)$d['acc'] . ' م)' : ' (±' . (int)$d['acc'] . ' m)') : '');
-            if ($stt === 'missed') $body[] = $ar ? 'مسجَّل حضوره في فرع ' . $bn . ' ولم يفتح النظام خلال المهلة' : 'Clocked in at ' . $bn . ' and did not open the system in time';
+            if ($stt === 'missed' || $stt === 'denied') $body[] = $ar ? '🔒 النظام مغلق عليه حتى يرسل موقعه — يصلك إشعار فور إرساله' : '🔒 His system stays closed until he sends it — you are told the moment he does';
             $url = 'lockdown.php?lang=' . $lang . '#ldBox';
             break;
         case 'weekly_card':

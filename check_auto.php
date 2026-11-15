@@ -235,10 +235,17 @@ function branch_trust_label(string $key, int $n, string $lang): string
 
 /* ════════════════════════ 📍 location pings (تأكيد التواجد) ════════════════════════ */
 /*
- * An admin asks where a clocked-in person is right now. If their app is open it
- * answers by itself; otherwise they get a notification and opening the app
- * answers. No answer within the time → recorded as «لم يرد». The result (how far
- * from the branch) goes to the admins and into the admin record.
+ * An admin asks where a clocked-in person is right now. From that moment the
+ * person's system is closed (auth.php) on one screen, loc_ping.php, until their
+ * phone sends its location — whatever they open, that screen comes first. If the
+ * system is already open on their phone it answers by itself in seconds.
+ *
+ *   - no answer within LOC_PING_MINUTES → the admins are told («لم يرد»), the
+ *     system stays closed until the location arrives (the answer is marked late)
+ *   - the phone refuses the location → the admins are told once, the system
+ *     stays closed with instructions to allow it
+ *   - an admin can cancel the request from lockdown.php
+ * The result (distance from the branch) goes to the admins and into the record.
  */
 const LOC_PING_MINUTES = 10;
 
@@ -260,6 +267,10 @@ function loc_ping_tables(PDO $pdo): void
         status      VARCHAR(10) NOT NULL DEFAULT 'pending',
         KEY k_user (user_id, status), KEY k_time (asked_at)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    // late: answered after the time · missed_told / denied_told: the admins were already told
+    try { $pdo->query("SELECT late, missed_told, denied_told FROM loc_pings LIMIT 1"); }
+    catch (Throwable $e) { try { $pdo->exec("ALTER TABLE loc_pings ADD late TINYINT NOT NULL DEFAULT 0, ADD missed_told TINYINT NOT NULL DEFAULT 0, ADD denied_told TINYINT NOT NULL DEFAULT 0"); } catch (Throwable $e2) {} }
+    // requests from before the system closed on them that ended as «لم يرد» / «رفض»: nothing more to wait for
 }
 
 function loc_fence(PDO $pdo): int
@@ -272,7 +283,7 @@ function loc_fence(PDO $pdo): int
 function loc_ping_create(PDO $pdo, int $uid, string $by): int
 {
     loc_ping_tables($pdo);
-    $u = $pdo->prepare("SELECT username, role, TIMESTAMPDIFF(SECOND, last_seen, NOW()) AS idle FROM users WHERE id = ? AND active = 1");
+    $u = $pdo->prepare("SELECT username, role FROM users WHERE id = ? AND active = 1");
     $u->execute([$uid]);
     $u = $u->fetch(PDO::FETCH_ASSOC);
     $att = lock_open_attendance($pdo, $uid);
@@ -283,73 +294,90 @@ function loc_ping_create(PDO $pdo, int $uid, string $by): int
     $pdo->prepare("INSERT INTO loc_pings (user_id, branch, asked_by, asked_at, deadline) VALUES (?, ?, ?, NOW(), NOW() + INTERVAL " . LOC_PING_MINUTES . " MINUTE)")
         ->execute([$uid, (string)$att['branch_name'], $by !== '' ? $by : null]);
     $id = (int)$pdo->lastInsertId();
-    // the app answers by itself when it is open; a notification only when it does not look open
-    if ($u['idle'] === null || (int)$u['idle'] > 90) {
-        notify_event($pdo, 'loc_ping', ['only' => [(string)$u['username']], 'mins' => LOC_PING_MINUTES, 'actor' => '', 'tag' => 'loc-ping-' . $id, 'force' => true, 'now' => true]);
-    }
+    // always a notification too: the screen opens by itself only if the system is already open
+    notify_event($pdo, 'loc_ping', ['only' => [(string)$u['username']], 'mins' => LOC_PING_MINUTES, 'actor' => '', 'tag' => 'loc-ping-' . $id, 'force' => true, 'now' => true]);
     return $id;
 }
 
-/** The ping this person has to answer now (or null). */
+/** The request this person still has to answer (or null) — while it is open, their system is closed. */
 function loc_ping_due(PDO $pdo, int $uid): ?array
 {
     try {
         loc_ping_tables($pdo);
-        $st = $pdo->prepare("SELECT id FROM loc_pings WHERE user_id = ? AND status = 'pending' AND deadline > NOW() ORDER BY id LIMIT 1");
+        $st = $pdo->prepare("SELECT *, TIMESTAMPDIFF(SECOND, NOW(), deadline) AS secs FROM loc_pings WHERE user_id = ? AND status = 'pending' ORDER BY id LIMIT 1");
         $st->execute([$uid]);
         $r = $st->fetch(PDO::FETCH_ASSOC);
         return $r ?: null;
     } catch (Throwable $e) { return null; }
 }
 
-function loc_ping_tell(PDO $pdo, int $pingId): void
+/** $what: 'done' (the answer) | 'missed' (no answer in time) | 'denied' (the phone refused) */
+function loc_ping_tell(PDO $pdo, int $pingId, string $what = 'done'): void
 {
     $st = $pdo->prepare("SELECT p.*, u.username FROM loc_pings p JOIN users u ON u.id = p.user_id WHERE p.id = ?");
     $st->execute([$pingId]);
     $p = $st->fetch(PDO::FETCH_ASSOC);
     if (!$p) return;
     $admins = array_map('strval', $pdo->query("SELECT username FROM users WHERE active = 1 AND role = 'admin'")->fetchAll(PDO::FETCH_COLUMN));
-    if ($admins) notify_event($pdo, 'loc_result', ['user' => $p['username'], 'branch' => $p['branch'], 'status' => $p['status'], 'dist' => $p['dist_m'], 'acc' => $p['acc'],
-        'only' => $admins, 'actor' => '', 'tag' => 'loc-res-' . $pingId, 'force' => true, 'now' => true]);
+    $status = $what === 'done' ? (string)$p['status'] : $what;
+    if ($admins) notify_event($pdo, 'loc_result', ['user' => $p['username'], 'branch' => $p['branch'], 'status' => $status, 'late' => (int)$p['late'], 'dist' => $p['dist_m'], 'acc' => $p['acc'],
+        'only' => $admins, 'actor' => '', 'tag' => 'loc-res-' . $pingId . '-' . $status, 'force' => true, 'now' => true]);
 }
 
-/** The person's phone answers. $lat / $lng null = the phone refused to give the location. */
-function loc_ping_answer(PDO $pdo, int $uid, int $pingId, ?float $lat, ?float $lng, int $acc): bool
+/**
+ * The person's phone answers. $lat / $lng null = the phone refused: nothing is
+ * answered, the system stays closed, the admins are told once.
+ * Returns 'ok' | 'far' | 'denied' | '' (no open request).
+ */
+function loc_ping_answer(PDO $pdo, int $uid, int $pingId, ?float $lat, ?float $lng, int $acc): string
 {
     loc_ping_tables($pdo);
-    $st = $pdo->prepare("SELECT * FROM loc_pings WHERE id = ? AND user_id = ? AND status = 'pending'");
+    $st = $pdo->prepare("SELECT *, deadline < NOW() AS past_due FROM loc_pings WHERE id = ? AND user_id = ? AND status = 'pending'");
     $st->execute([$pingId, $uid]);
     $p = $st->fetch(PDO::FETCH_ASSOC);
-    if (!$p) return false;
-    $status = 'denied'; $dist = null;
-    if ($lat !== null && $lng !== null) {
-        $b = $pdo->prepare("SELECT lat, lng FROM branches WHERE name = ?");
-        $b->execute([(string)$p['branch']]);
-        $b = $b->fetch(PDO::FETCH_ASSOC);
-        $status = 'ok';
-        if ($b && $b['lat'] !== null && $b['lng'] !== null) {
-            $R = 6371000; $dLat = deg2rad((float)$b['lat'] - $lat); $dLng = deg2rad((float)$b['lng'] - $lng);
-            $a = sin($dLat / 2) ** 2 + cos(deg2rad($lat)) * cos(deg2rad((float)$b['lat'])) * sin($dLng / 2) ** 2;
-            $dist = (int)round($R * 2 * atan2(sqrt($a), sqrt(1 - $a)));
-            if ($dist > loc_fence($pdo) + min(150, max(0, $acc))) $status = 'far';   // the phone's own inaccuracy is not held against them
+    if (!$p) return '';
+    if ($lat === null || $lng === null) {
+        if (!(int)$p['denied_told']) {
+            $pdo->prepare("UPDATE loc_pings SET denied_told = 1 WHERE id = ?")->execute([$pingId]);
+            loc_ping_tell($pdo, $pingId, 'denied');
         }
+        return 'denied';
     }
-    $pdo->prepare("UPDATE loc_pings SET status = ?, answered_at = NOW(), lat = ?, lng = ?, acc = ?, dist_m = ? WHERE id = ? AND status = 'pending'")
-        ->execute([$status, $lat, $lng, $acc ?: null, $dist, $pingId]);
-    loc_ping_tell($pdo, $pingId);
-    return true;
+    $status = 'ok'; $dist = null;
+    $b = $pdo->prepare("SELECT lat, lng FROM branches WHERE name = ?");
+    $b->execute([(string)$p['branch']]);
+    $b = $b->fetch(PDO::FETCH_ASSOC);
+    if ($b && $b['lat'] !== null && $b['lng'] !== null) {
+        $R = 6371000; $dLat = deg2rad((float)$b['lat'] - $lat); $dLng = deg2rad((float)$b['lng'] - $lng);
+        $a = sin($dLat / 2) ** 2 + cos(deg2rad($lat)) * cos(deg2rad((float)$b['lat'])) * sin($dLng / 2) ** 2;
+        $dist = (int)round($R * 2 * atan2(sqrt($a), sqrt(1 - $a)));
+        if ($dist > loc_fence($pdo) + min(150, max(0, $acc))) $status = 'far';   // the phone's own inaccuracy is not held against them
+    }
+    $up = $pdo->prepare("UPDATE loc_pings SET status = ?, answered_at = NOW(), lat = ?, lng = ?, acc = ?, dist_m = ?, late = ? WHERE id = ? AND status = 'pending'");
+    $up->execute([$status, $lat, $lng, $acc ?: null, $dist, (int)$p['past_due'] || (int)$p['missed_told'] ? 1 : 0, $pingId]);
+    if ($up->rowCount()) loc_ping_tell($pdo, $pingId);
+    return $status;
 }
 
-/** Pings nobody answered in time → «لم يرد». Called by the timed run and by the pages that show pings. */
+/** An admin calls a request off: the person's system opens again. */
+function loc_ping_cancel(PDO $pdo, int $pingId, string $by): bool
+{
+    loc_ping_tables($pdo);
+    $up = $pdo->prepare("UPDATE loc_pings SET status = 'cancelled', answered_at = NOW() WHERE id = ? AND status = 'pending'");
+    $up->execute([$pingId]);
+    return $up->rowCount() > 0;
+}
+
+/** Time is up and no answer yet → the admins are told once; the system stays closed until the location arrives. */
 function loc_ping_scan(PDO $pdo): array
 {
     $log = [];
     try {
         loc_ping_tables($pdo);
-        foreach ($pdo->query("SELECT id FROM loc_pings WHERE status = 'pending' AND deadline <= NOW()")->fetchAll(PDO::FETCH_COLUMN) as $id) {
-            $up = $pdo->prepare("UPDATE loc_pings SET status = 'missed' WHERE id = ? AND status = 'pending'");
+        foreach ($pdo->query("SELECT id FROM loc_pings WHERE status = 'pending' AND missed_told = 0 AND deadline <= NOW()")->fetchAll(PDO::FETCH_COLUMN) as $id) {
+            $up = $pdo->prepare("UPDATE loc_pings SET missed_told = 1 WHERE id = ? AND missed_told = 0");
             $up->execute([(int)$id]);
-            if ($up->rowCount()) { loc_ping_tell($pdo, (int)$id); $log[] = 'loc_ping missed #' . $id; }
+            if ($up->rowCount()) { loc_ping_tell($pdo, (int)$id, 'missed'); $log[] = 'loc_ping missed #' . $id; }
         }
     } catch (Throwable $e) { error_log('loc_ping_scan: ' . $e->getMessage()); }
     return $log;
