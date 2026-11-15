@@ -634,6 +634,35 @@ function arDate($dt, $lang) {
         .chip.on { background:#9333ea; border-color:transparent; color:#fff; }
         .chip-n { font-size:10.5px; font-weight:800; opacity:.75; }
         .chip[hidden] { display:none !important; }
+        /* who is where (admins) */
+        .ww { margin:0 0 12px; border-radius:18px; background:rgba(15,23,42,.6); border:1px solid rgba(45,212,191,.25); }
+        .ww summary { list-style:none; cursor:pointer; padding:12px 14px; font-size:13.5px; font-weight:900; display:flex; align-items:center; gap:8px; }
+        .ww summary::-webkit-details-marker { display:none; }
+        .ww summary small { font-size:11px; color:#94a3b8; font-weight:700; }
+        .ww summary i { font-style:normal; margin-inline-start:auto; color:#94a3b8; transition:transform .2s; }
+        .ww[open] summary i { transform:rotate(180deg); }
+        .ww-n { font-size:12px; font-weight:900; padding:2px 10px; border-radius:999px; background:rgba(45,212,191,.18); color:#99f6e4; font-variant-numeric:tabular-nums; }
+        .ww-leg { display:flex; flex-wrap:wrap; gap:6px 14px; padding:0 14px 8px; font-size:11px; font-weight:800; color:#94a3b8; }
+        .ww-leg span { display:inline-flex; align-items:center; gap:5px; }
+        .ww-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(250px,1fr)); gap:10px; padding:0 12px 12px; }
+        .ww-b { border-radius:14px; padding:10px 12px; background:rgba(0,0,0,.25); border:1px solid rgba(255,255,255,.07); }
+        .ww-b.empty { opacity:.55; }
+        .ww-bh { display:flex; align-items:center; justify-content:space-between; font-size:13.5px; font-weight:900; margin-bottom:4px; }
+        .ww-bh span { font-size:11.5px; color:#94a3b8; font-weight:800; }
+        .ww-p { display:flex; align-items:center; gap:9px; padding:7px 0; border-top:1px solid rgba(255,255,255,.06); }
+        .ww-d { width:11px; height:11px; border-radius:50%; flex-shrink:0; display:inline-block; }
+        .ww-d.in { background:#22c55e; box-shadow:0 0 8px #22c55e; } .ww-d.far { background:#ef4444; box-shadow:0 0 8px #ef4444; animation:wwFar 1.4s ease-in-out infinite; }
+        .ww-d.unknown { background:#f59e0b; } .ww-d.wait { background:#38bdf8; animation:wwFar 1s ease-in-out infinite; }
+        @keyframes wwFar { 50% { opacity:.35; } }
+        .ww-p .t { flex:1; min-width:0; }
+        .ww-p b { display:block; font-size:13.5px; font-weight:800; }
+        .ww-p b em { font-style:normal; font-size:10.5px; font-weight:800; margin-inline-start:5px; padding:1px 7px; border-radius:999px; }
+        .ww-p b em.on { background:rgba(34,197,94,.15); color:#86efac; } .ww-p b em.st { background:rgba(239,68,68,.15); color:#fca5a5; }
+        .ww-p small { display:block; font-size:11.5px; color:#94a3b8; font-weight:700; margin-top:1px; }
+        .ww-ask { height:32px; padding:0 10px; border-radius:9px; border:0; background:linear-gradient(90deg,#0d9488,#0ea5e9); color:#fff; font:inherit; font-size:12px; font-weight:900; cursor:pointer; white-space:nowrap; }
+        .ww-ask:disabled { opacity:.5; cursor:default; }
+        .ww-none { font-size:12px; color:#64748b; font-weight:700; padding:6px 0 2px; }
+        .ww-msg { grid-column:1/-1; text-align:center; color:#94a3b8; font-weight:700; padding:14px; }
         /* branch trust (admins) */
         .duty-bar.plan { border-color:rgba(250,204,21,.55); background:linear-gradient(120deg,rgba(250,204,21,.16),rgba(147,51,234,.12)); }
         .trust { margin:0 0 12px; padding:12px 14px; border-radius:18px; background:rgba(15,23,42,.6); border:1px solid rgba(148,163,184,.18); }
@@ -1580,8 +1609,14 @@ body:has(#npCard.on) #f1c-chat-bubble { opacity:0; pointer-events:none; }
         </div>
         <div class="tr-why" id="trustWhy" hidden></div>
     </div>
-        <?php endif;
-    endif; ?>
+        <?php endif; ?>
+    <!-- 👥 who is where right now (admins) — filled and refreshed by the script below -->
+    <details class="ww" id="whoWhere" open>
+        <summary>👥 <?= $lang === 'ar' ? 'من أين الآن' : 'Who is where' ?> <span class="ww-n" id="wwN">…</span><small id="wwAt"></small><i>▾</i></summary>
+        <div class="ww-leg"><span><i class="ww-d in"></i><?= $lang === 'ar' ? 'في الفرع' : 'At the branch' ?></span><span><i class="ww-d far"></i><?= $lang === 'ar' ? 'بعيد' : 'Far' ?></span><span><i class="ww-d unknown"></i><?= $lang === 'ar' ? 'غير معروف' : 'Unknown' ?></span><span><i class="ww-d wait"></i><?= $lang === 'ar' ? 'بانتظار موقعه' : 'Waiting' ?></span></div>
+        <div class="ww-grid" id="wwGrid"><div class="ww-msg"><?= $lang === 'ar' ? 'جاري التحميل…' : 'Loading…' ?></div></div>
+    </details>
+    <?php endif; ?>
     <?php
     /* ── my day: hours today, attendance streak and badges (from attendance only) + the morning brief ── */
     $myDay = null; $brief = null; $roadIds = [];
@@ -2404,6 +2439,37 @@ body:has(#npCard.on) #f1c-chat-bubble { opacity:0; pointer-events:none; }
         if (document.getElementById('liveAct')) setTimeout(pulse, 400);   // fill "happening now" straight away
     })();
 
+    /* ── 👥 who is where (admins): refreshed every 30 seconds; 📡 asks for a location (closes their system until it is sent) ── */
+    (function () {
+        const grid = document.getElementById('wwGrid'); if (!grid) return;
+        const AR = <?= json_encode($lang === 'ar') ?>, LANG = <?= json_encode($lang) ?>, CSRF = <?= json_encode((string)($_SESSION['csrf_token'] ?? '')) ?>;
+        const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+        const box = document.getElementById('whoWhere');
+        try { if (localStorage.getItem('f1cWW') === '0') box.open = false; } catch (e) {}
+        box.addEventListener('toggle', () => { try { localStorage.setItem('f1cWW', box.open ? '1' : '0'); } catch (e) {} });
+        async function load() {
+            let r = null;
+            try { r = await (await fetch('who_where.php?lang=' + LANG, { credentials: 'same-origin', cache: 'no-store', headers: { Accept: 'application/json' } })).json(); } catch (e) {}
+            if (!r || !r.ok) return;
+            document.getElementById('wwN').textContent = r.total;
+            document.getElementById('wwAt').textContent = (AR ? 'آخر تحديث ' : 'updated ') + r.at;
+            grid.innerHTML = r.branches.map(b => '<div class="ww-b' + (b.people.length ? '' : ' empty') + '"><div class="ww-bh">📍 ' + esc(b.name) + '<span>' + b.people.length + '</span></div>' +
+                (b.people.length ? b.people.map(p => '<div class="ww-p"><i class="ww-d ' + p.st + '"></i><div class="t"><b>' + esc(p.name) +
+                    (p.online ? '<em class="on">' + (AR ? 'متصل' : 'online') + '</em>' : '') + (p.stopped ? '<em class="st">' + (AR ? 'موقوف' : 'stopped') + '</em>' : '') + '</b>' +
+                    '<small>🕘 ' + esc(p.since) + ' · ' + esc(p.for) + '</small><small>' + esc(p.why) + '</small></div>' +
+                    '<button type="button" class="ww-ask" data-u="' + p.id + '"' + (p.asking ? ' disabled' : '') + '>📡 ' + (p.asking ? (AR ? 'مطلوب' : 'asked') : (AR ? 'موقعه' : 'locate')) + '</button></div>').join('')
+                  : '<div class="ww-none">' + (AR ? 'لا يوجد أحد الآن' : 'Nobody right now') + '</div>') + '</div>').join('');
+        }
+        grid.addEventListener('click', async e => {
+            const b = e.target.closest('.ww-ask'); if (!b || b.disabled) return;
+            if (!confirm(AR ? 'طلب موقعه الآن؟ سيُغلق النظام عليه حتى يرسل موقعه.' : 'Ask for his location now? His system closes until he sends it.')) return;
+            b.disabled = true;
+            try { await fetch('lockdown.php', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ csrf: CSRF, action: 'ping', uid: +b.dataset.u }) }); } catch (x) {}
+            load();
+        });
+        load(); setInterval(() => { if (!document.hidden) load(); }, 30000);
+        document.addEventListener('visibilitychange', () => { if (!document.hidden) load(); });
+    })();
     /* ── 🛡️ branch trust: tap a branch → why it lost points ── */
     (function () {
         const why = document.getElementById('trustWhy'); if (!why) return;
