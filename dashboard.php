@@ -635,13 +635,19 @@ function arDate($dt, $lang) {
         .chip-n { font-size:10.5px; font-weight:800; opacity:.75; }
         .chip[hidden] { display:none !important; }
         /* who is where (admins) */
-        .ww { margin:0 0 12px; border-radius:18px; background:rgba(15,23,42,.6); border:1px solid rgba(45,212,191,.25); }
-        .ww summary { list-style:none; cursor:pointer; padding:12px 14px; font-size:13.5px; font-weight:900; display:flex; align-items:center; gap:8px; }
-        .ww summary::-webkit-details-marker { display:none; }
-        .ww summary small { font-size:11px; color:#94a3b8; font-weight:700; }
-        .ww summary i { font-style:normal; margin-inline-start:auto; color:#94a3b8; transition:transform .2s; }
-        .ww[open] summary i { transform:rotate(180deg); }
-        .ww-n { font-size:12px; font-weight:900; padding:2px 10px; border-radius:999px; background:rgba(45,212,191,.18); color:#99f6e4; font-variant-numeric:tabular-nums; }
+        .ww-btn { display:inline-flex; align-items:center; gap:7px; margin:0 0 12px; height:38px; padding:0 14px; border-radius:999px; border:1px solid rgba(45,212,191,.4);
+                  background:rgba(45,212,191,.1); color:#ccfbf1; font:inherit; font-size:13px; font-weight:900; cursor:pointer; position:relative; }
+        .ww-btn:active { transform:scale(.96); }
+        .ww-alert { position:absolute; top:-3px; inset-inline-end:-3px; width:12px; height:12px; border-radius:50%; background:#ef4444; border:2px solid #020617; animation:wwFar 1.4s ease-in-out infinite; }
+        .ww-alert[hidden] { display:none; }
+        .ww-ov { position:fixed; inset:0; z-index:9150; background:rgba(2,6,23,.8); backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px); display:none; align-items:flex-end; justify-content:center; padding:12px; padding-bottom:calc(12px + env(safe-area-inset-bottom)); }
+        .ww-ov.on { display:flex; }
+        .ww { width:100%; max-width:760px; max-height:calc(100vh - 40px); overflow:auto; border-radius:24px; background:linear-gradient(170deg,#141c35,#0a1122); border:1px solid rgba(45,212,191,.3); box-shadow:0 30px 70px rgba(0,0,0,.55); animation:pkUp .3s cubic-bezier(.22,1,.36,1); }
+        .ww-top { position:sticky; top:0; z-index:1; display:flex; align-items:center; gap:8px; padding:14px; background:#111a33; border-bottom:1px solid rgba(255,255,255,.07); }
+        .ww-top b { font-size:15px; font-weight:900; } .ww-top small { font-size:11px; color:#94a3b8; font-weight:700; }
+        .ww-x { margin-inline-start:auto; width:36px; height:36px; border-radius:11px; border:0; background:rgba(255,255,255,.07); color:#e2e8f0; font-size:15px; cursor:pointer; }
+        .ww-n { font-size:12px; font-weight:900; padding:1px 9px; border-radius:999px; background:rgba(45,212,191,.22); color:#99f6e4; font-variant-numeric:tabular-nums; }
+        .ww .ww-leg { padding-top:10px; }
         .ww-leg { display:flex; flex-wrap:wrap; gap:6px 14px; padding:0 14px 8px; font-size:11px; font-weight:800; color:#94a3b8; }
         .ww-leg span { display:inline-flex; align-items:center; gap:5px; }
         .ww-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(250px,1fr)); gap:10px; padding:0 12px 12px; }
@@ -1611,11 +1617,12 @@ body:has(#npCard.on) #f1c-chat-bubble { opacity:0; pointer-events:none; }
     </div>
         <?php endif; ?>
     <!-- 👥 who is where right now (admins) — filled and refreshed by the script below -->
-    <details class="ww" id="whoWhere" open>
-        <summary>👥 <?= $lang === 'ar' ? 'من أين الآن' : 'Who is where' ?> <span class="ww-n" id="wwN">…</span><small id="wwAt"></small><i>▾</i></summary>
+    <button type="button" class="ww-btn" id="wwBtn" aria-haspopup="dialog">👥 <?= $lang === 'ar' ? 'من أين الآن' : 'Who is where' ?> <span class="ww-n" id="wwN">…</span><i class="ww-alert" id="wwAlert" hidden></i></button>
+    <div class="ww-ov" id="whoWhere" role="dialog" aria-label="<?= $lang === 'ar' ? 'من أين الآن' : 'Who is where' ?>"><div class="ww">
+        <div class="ww-top"><b>👥 <?= $lang === 'ar' ? 'من أين الآن' : 'Who is where' ?></b><small id="wwAt"></small><button type="button" class="ww-x" id="wwX" aria-label="close">✕</button></div>
         <div class="ww-leg"><span><i class="ww-d in"></i><?= $lang === 'ar' ? 'في الفرع' : 'At the branch' ?></span><span><i class="ww-d far"></i><?= $lang === 'ar' ? 'بعيد' : 'Far' ?></span><span><i class="ww-d unknown"></i><?= $lang === 'ar' ? 'غير معروف' : 'Unknown' ?></span><span><i class="ww-d wait"></i><?= $lang === 'ar' ? 'بانتظار موقعه' : 'Waiting' ?></span></div>
         <div class="ww-grid" id="wwGrid"><div class="ww-msg"><?= $lang === 'ar' ? 'جاري التحميل…' : 'Loading…' ?></div></div>
-    </details>
+    </div></div>
     <?php endif; ?>
     <?php
     /* ── my day: hours today, attendance streak and badges (from attendance only) + the morning brief ── */
@@ -2416,7 +2423,7 @@ body:has(#npCard.on) #f1c-chat-bubble { opacity:0; pointer-events:none; }
                         try { sessionStorage.setItem('f1cDashBack', JSON.stringify({ y: window.scrollY, ids: ids, t: Date.now() })); } catch (e) {}
                         // nothing open and nothing being typed → the page refreshes itself and comes back to the same place; otherwise the bar asks first
                         const typing = document.activeElement && /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName);
-                        const open = document.querySelector('.vc-more[open], .more-overlay.open, .pk-ov.on, .modal.open, .modal-overlay.open, .modal-overlay.show, .f1s-ov.on, [class*="overlay"].active, [class*="modal"].active, dialog[open]');
+                        const open = document.querySelector('.vc-more[open], .more-overlay.open, .pk-ov.on, .ww-ov.on, .brief-ov.on, .modal.open, .modal-overlay.open, .modal-overlay.show, .f1s-ov.on, [class*="overlay"].active, [class*="modal"].active, dialog[open]');
                         if (!typing && !open) { location.reload(); return; }
                         txt.textContent = AR ? (n === 1 ? 'في تغيير جديد في المخزون' : n + ' تغييرات جديدة في المخزون') : (n === 1 ? '1 change in the stock' : n + ' changes in the stock');
                         bar.classList.add('on');
@@ -2444,14 +2451,19 @@ body:has(#npCard.on) #f1c-chat-bubble { opacity:0; pointer-events:none; }
         const grid = document.getElementById('wwGrid'); if (!grid) return;
         const AR = <?= json_encode($lang === 'ar') ?>, LANG = <?= json_encode($lang) ?>, CSRF = <?= json_encode((string)($_SESSION['csrf_token'] ?? '')) ?>;
         const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-        const box = document.getElementById('whoWhere');
-        try { if (localStorage.getItem('f1cWW') === '0') box.open = false; } catch (e) {}
-        box.addEventListener('toggle', () => { try { localStorage.setItem('f1cWW', box.open ? '1' : '0'); } catch (e) {} });
+        const ov = document.getElementById('whoWhere');
+        const close = () => ov.classList.remove('on');
+        document.getElementById('wwBtn').addEventListener('click', () => { ov.classList.add('on'); load(); });
+        document.getElementById('wwX').addEventListener('click', close);
+        ov.addEventListener('click', e => { if (e.target === ov) close(); });
+        document.addEventListener('keydown', e => { if (e.key === 'Escape') close(); });
         async function load() {
             let r = null;
             try { r = await (await fetch('who_where.php?lang=' + LANG, { credentials: 'same-origin', cache: 'no-store', headers: { Accept: 'application/json' } })).json(); } catch (e) {}
             if (!r || !r.ok) return;
             document.getElementById('wwN').textContent = r.total;
+            // a red dot on the button when someone is far from their branch or a location is awaited
+            document.getElementById('wwAlert').hidden = !r.branches.some(b => b.people.some(p => p.st === 'far' || p.st === 'wait'));
             document.getElementById('wwAt').textContent = (AR ? 'آخر تحديث ' : 'updated ') + r.at;
             grid.innerHTML = r.branches.map(b => '<div class="ww-b' + (b.people.length ? '' : ' empty') + '"><div class="ww-bh">📍 ' + esc(b.name) + '<span>' + b.people.length + '</span></div>' +
                 (b.people.length ? b.people.map(p => '<div class="ww-p"><i class="ww-d ' + p.st + '"></i><div class="t"><b>' + esc(p.name) +
