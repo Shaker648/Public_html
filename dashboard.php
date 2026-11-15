@@ -1592,6 +1592,7 @@ body:has(#npCard.on) #f1c-chat-bubble { opacity:0; pointer-events:none; }
     }
     $hmTxt = fn($secs) => sprintf($lang === 'ar' ? '%dس %02dد' : '%dh %02dm', intdiv(max(0, (int)$secs), 3600), intdiv(max(0, (int)$secs) % 3600, 60));
     if ($myDay): $mdPct = min(100, (int)round($myDay['today'] * 100 / max(1, $myDay['target']))); $mdGold = $myDay['today'] >= $myDay['target']; ?>
+    <?php if (!$isAdmin): /* the personal card (streak, hours, badges) is for the staff — an admin does not clock in */ ?>
     <a class="myday<?= $mdGold ? ' gold' : '' ?>" href="attendance.php?lang=<?= $lang ?>" id="myDay" data-streak="<?= (int)$myDay['streak'] ?>">
         <div class="md-ring" style="--p:<?= $mdPct ?>"><span><?= $myDay['streak'] ?></span><small>🔥</small></div>
         <div class="md-tx">
@@ -1604,9 +1605,10 @@ body:has(#npCard.on) #f1c-chat-bubble { opacity:0; pointer-events:none; }
             </div><?php endif; ?>
         </div>
     </a>
+    <?php endif; ?>
     <?php
-        /* 🏆 the attendance board. «دقة الجرد» appears only for checks a person has already finished — nothing here says whether a check is coming. */
-        $myScore = function_exists('my_check_score') ? my_check_score($pdo, (int)$_SESSION['user_id']) : null;
+        /* 🏆 the attendance board (admins see it too, without a personal line). «دقة الجرد» appears only for checks a person has already finished — nothing here says whether a check is coming. */
+        $myScore = (!$isAdmin && function_exists('my_check_score')) ? my_check_score($pdo, (int)$_SESSION['user_id']) : null;
         $board = function_exists('my_day_board') ? my_day_board($pdo, $lang) : [];
         if ($board): ?>
     <details class="board" id="board">
@@ -1641,7 +1643,7 @@ body:has(#npCard.on) #f1c-chat-bubble { opacity:0; pointer-events:none; }
             <div class="br-grid">
                 <?php foreach ($bItems as $bi): ?><div class="br-i"><span><?= $bi[0] ?></span><b><?= (int)$bi[1] ?></b><small><?= $bi[2] ?></small></div><?php endforeach; ?>
             </div>
-            <?php if ($myDay && $myDay['streak'] > 0): ?><div class="br-st">🔥 <?= $lang === 'ar' ? 'سلسلة حضورك: ' . $myDay['streak'] . ($myDay['streak'] <= 10 && $myDay['streak'] > 2 ? ' أيام' : ' يوم') : 'Your streak: ' . $myDay['streak'] . ' days' ?></div><?php endif; ?>
+            <?php if (!$isAdmin && $myDay && $myDay['streak'] > 0): ?><div class="br-st">🔥 <?= $lang === 'ar' ? 'سلسلة حضورك: ' . $myDay['streak'] . ($myDay['streak'] <= 10 && $myDay['streak'] > 2 ? ' أيام' : ' يوم') : 'Your streak: ' . $myDay['streak'] . ' days' ?></div><?php endif; ?>
             <button type="button" id="briefGo"><?= $lang === 'ar' ? 'ابدأ يومك 🚀' : 'Start the day 🚀' ?></button>
         </div>
     </div>

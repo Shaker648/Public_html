@@ -73,12 +73,34 @@ if (time() - (int)($_SESSION['seen_t'] ?? 0) >= 60) {
 // Step 4: Load the permission engine — every protected page gets can() / perm_require().
 require_once __DIR__ . '/permissions.php';
 
+// Step 4b: an admin asked where this person is («تأكيد التواجد»): nothing opens until the phone sends its
+// location — whatever page is opened, the request screen comes first. Never an admin.
+if ($currentUser['role'] !== 'admin' && is_file(__DIR__ . '/check_auto.php')) {
+    $__page = basename($_SERVER['SCRIPT_NAME'] ?? '');
+    if (!in_array($__page, ['loc_ping.php', 'logout.php', 'push_subscribe.php'], true)) {
+        try {
+            $__lp = $pdo->prepare("SELECT 1 FROM loc_pings WHERE user_id = ? AND status = 'pending' LIMIT 1");
+            $__lp->execute([$currentUser['id']]);
+            if ($__lp->fetchColumn()) {
+                $lang = ($_GET['lang'] ?? 'ar') === 'en' ? 'en' : 'ar';
+                if (stripos($_SERVER['HTTP_ACCEPT'] ?? '', 'text/html') === false) {
+                    http_response_code(423);
+                    header('Content-Type: application/json; charset=utf-8');
+                    exit(json_encode(['ok' => false, 'error' => 'loc_ping', 'go' => 'loc_ping.php?lang=' . $lang]));
+                }
+                header('Location: loc_ping.php?lang=' . $lang);
+                exit;
+            }
+        } catch (Throwable $e) {}   // table not created yet → nobody has been asked
+    }
+}
+
 // Step 5: locked (transferred cars not confirmed in time, or a surprise stock check not
 // finished) → only the lock screen, the stock check and signing out until the admin
 // unlocks. No clocking in or out while locked. Never an admin.
 if ($currentUser['role'] !== 'admin') {
     $__page = basename($_SERVER['SCRIPT_NAME'] ?? '');
-    if (!in_array($__page, ['transfer_lock.php', 'stock_check.php', 'logout.php', 'push_subscribe.php', 'notify_feed.php'], true)) {
+    if (!in_array($__page, ['transfer_lock.php', 'stock_check.php', 'logout.php', 'push_subscribe.php', 'notify_feed.php', 'loc_ping.php'], true)) {   // loc_ping.php: a location request comes first (step 4b)
         try {
             $__lk = $pdo->prepare("SELECT 1 FROM user_locks WHERE user_id = ? AND unlocked_at IS NULL LIMIT 1");
             $__lk->execute([$currentUser['id']]);
@@ -97,7 +119,7 @@ if ($currentUser['role'] !== 'admin') {
     // a surprise stock check in progress: the system is closed for whoever is doing it. Only the check
     // itself (and signing out) opens until it is finished — not even the notifications list, because
     // old notifications can carry chassis numbers. The numbers can only come from the cars.
-    if (!in_array($__page, ['stock_check.php', 'logout.php', 'push_subscribe.php', 'transfer_lock.php'], true)) {
+    if (!in_array($__page, ['stock_check.php', 'logout.php', 'push_subscribe.php', 'transfer_lock.php', 'loc_ping.php'], true)) {
         try {
             $__ck = $pdo->prepare("SELECT c.id FROM stock_checks c JOIN stock_check_users u ON u.check_id = c.id WHERE u.user_id = ? AND c.status IN ('active', 'expired') ORDER BY c.deadline LIMIT 1");
             $__ck->execute([$currentUser['id']]);
