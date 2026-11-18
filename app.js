@@ -124,7 +124,7 @@
         if (document.querySelector('.bn2, .bottom-nav')) document.body.classList.add('f1c-has-bn');
         // the round search button — not on pages that are not part of the everyday system (locked screen, stock check in progress)
         var page = (location.pathname.split('/').pop() || '');
-        if (!/^(transfer_lock|stock_check|loc_ping|index|sold_login|qr_stickers|diagnose)\.php$/.test(page)) {
+        if (!/^(transfer_lock|stock_check|loc_ping|must_read|index|sold_login|qr_stickers|diagnose)\.php$/.test(page)) {
             var b = document.createElement('button'); b.type = 'button'; b.className = 'f1s-fab'; b.setAttribute('aria-label', T.search); b.title = T.search + ' ( / )';
             b.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>';
             b.addEventListener('click', open);
@@ -159,7 +159,14 @@
         if (/^(index|sold_login|loc_ping)\.php$/.test(location.pathname.split('/').pop() || '')) return;
         fetch('loc_ping.php?json=1', { credentials: 'same-origin', cache: 'no-store', headers: { Accept: 'application/json' } })
             .then(function (r) { return r.json(); })
-            .then(function (r) { if (r && (r.ping || r.error === 'loc_ping')) location.href = 'loc_ping.php?lang=' + LANG; })
+            .then(function (r) {
+                if (r && (r.ping || r.error === 'loc_ping')) { location.href = 'loc_ping.php?lang=' + LANG; return; }
+                // a mandatory message: the reading screen opens straight away
+                if (/^must_read\.php$/.test(location.pathname.split('/').pop() || '')) return;
+                return fetch('must_read.php?json=1', { credentials: 'same-origin', cache: 'no-store', headers: { Accept: 'application/json' } })
+                    .then(function (x) { return x.json(); })
+                    .then(function (x) { if (x && (x.must || x.error === 'must_read')) location.href = 'must_read.php?lang=' + LANG; });
+            })
             .catch(function () {});
     }
     ready(function () { setTimeout(pingCheck, 2500); setInterval(pingCheck, 30000); document.addEventListener('visibilitychange', function () { if (!document.hidden) pingCheck(); }); });
