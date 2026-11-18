@@ -15,7 +15,7 @@
  * Editing a message raises its version: everyone has to read and confirm it again.
  * The admin sees, per person: delivered to a phone, opened, reading time, wrong
  * answers, confirmed (which version, which device) — notifications_admin.php.
- * Everyone chosen is closed out — managers, admins, and the sender too if they chose themselves.
+ * Everyone chosen is closed out — managers and admins too — except the sender.
  * The admins are told on their phones: whom the system closed on (must_locked),
  * each wrong answer (must_wrong), and each confirmation with the reply (must_answer).
  *
@@ -108,8 +108,8 @@ function must_device(): string
 
 /**
  * Send a mandatory message now. Everyone in $userIds is closed out until they confirm —
- * managers, admins, and the sender too if they chose themselves.
- * Returns [people, devices, delivered, failed, logId].
+ * managers and admins too — except the sender (if they chose themselves, they get it
+ * as a normal message with «تم الاطلاع»). Returns [people, devices, delivered, failed, logId].
  */
 function must_send(PDO $pdo, array $userIds, string $title, string $body, string $actor, ?array $quiz): array
 {
@@ -127,6 +127,7 @@ function must_send(PDO $pdo, array $userIds, string $title, string $body, string
     $ins = $pdo->prepare("INSERT IGNORE INTO must_reads (log_id, user_id) VALUES (?, ?)");
     $locked = [];
     foreach ($people as $uid => $name) {
+        if ($actor !== '' && (string)$name === $actor) continue;                     // the sender has read it
         $ins->execute([$logId, (int)$uid]);
         $locked[(int)$uid] = (string)$name;
     }
