@@ -491,6 +491,12 @@ $rate = ($today['d'] + $today['f']) > 0 ? round($today['d'] * 100 / ($today['d']
 .qz-c .rt.on{border-color:#22c55e;background:rgba(34,197,94,.14);color:#86efac}
 .qz-c .in{flex:1;min-width:0}
 .qz-c .x{flex-shrink:0;width:34px;height:34px;border-radius:10px;border:0;background:rgba(239,68,68,.12);color:#fca5a5;cursor:pointer}
+.qz-mode{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.qz-mode button{display:flex;flex-direction:column;align-items:center;gap:2px;padding:9px 6px;border-radius:12px;border:1.5px solid var(--line);background:rgba(255,255,255,.03);color:var(--mut);font:inherit;font-size:13px;font-weight:900;cursor:pointer;text-align:center;line-height:1.4}
+.qz-mode button small{font-size:11px;font-weight:700;opacity:.85}
+.qz-mode button.on{border-color:#22c55e;background:rgba(34,197,94,.12);color:#bbf7d0}
+.qz-mode button[data-m="poll"].on{border-color:#38bdf8;background:rgba(56,189,248,.12);color:#bae6fd}
+.qz.poll .qz-c .rt{display:none}
 .qz-add{justify-self:start;height:34px;padding:0 12px;border-radius:10px;border:1px dashed rgba(168,85,247,.55);background:none;color:#d8b4fe;font:inherit;font-size:12.5px;font-weight:800;cursor:pointer}
 .nm-bub .lk{display:block;margin-top:4px;font-size:11.5px;color:#fca5a5;font-weight:800}
 /* the report */
@@ -514,6 +520,17 @@ $rate = ($today['d'] + $today['f']) > 0 ? round($today['d'] * 100 / ($today['d']
 .mq-quiz b{flex-basis:100%;font-weight:800}
 .mq-quiz span{padding:4px 10px;border-radius:999px;background:rgba(255,255,255,.05);border:1px solid var(--line);font-weight:700;color:var(--mut)}
 .mq-quiz span.r{background:rgba(34,197,94,.12);border-color:rgba(34,197,94,.45);color:#86efac}
+.mq-poll{display:grid;gap:7px;padding:12px;border-radius:14px;background:rgba(56,189,248,.05);border:1px solid rgba(56,189,248,.3)}
+.mq-poll>b{font-size:13.5px;font-weight:800;line-height:1.7}
+.mq-poll>b em{font-style:normal;display:inline-block;margin-inline-start:6px;padding:2px 8px;border-radius:999px;background:rgba(56,189,248,.15);color:#7dd3fc;font-size:11px;font-weight:900;vertical-align:middle}
+.mq-poll>small{font-size:11.5px;color:var(--mut);font-weight:700}
+.mq-tl{position:relative;display:flex;align-items:center;gap:10px;width:100%;min-height:40px;padding:8px 12px;border-radius:11px;border:1.5px solid var(--line);background:rgba(255,255,255,.03);color:var(--txt);font:inherit;font-size:13px;font-weight:800;text-align:start;cursor:pointer;overflow:hidden}
+.mq-tl i{position:absolute;inset-block:0;inset-inline-start:0;width:var(--w);background:linear-gradient(90deg,rgba(56,189,248,.28),rgba(56,189,248,.12));transition:width .5s}
+[dir=rtl] .mq-tl i{background:linear-gradient(270deg,rgba(56,189,248,.28),rgba(56,189,248,.12))}
+.mq-tl span,.mq-tl b{position:relative}.mq-tl span{flex:1;min-width:0}
+.mq-tl b{flex-shrink:0;font-size:12.5px;font-variant-numeric:tabular-nums;color:#bae6fd}
+.mq-tl.on{border-color:#38bdf8;box-shadow:0 0 0 2px rgba(56,189,248,.25)}
+.mq-p .ans{font-size:12px;font-weight:800;padding:4px 10px;border-radius:999px;background:rgba(56,189,248,.12);color:#bae6fd;border:1px solid rgba(56,189,248,.35)}
 .mq-f{display:flex;gap:6px;flex-wrap:wrap}
 .mq-f button{height:32px;padding:0 12px;border-radius:999px;border:1px solid var(--line);background:rgba(255,255,255,.04);color:var(--txt);font:inherit;font-size:12.5px;font-weight:800;cursor:pointer}
 .mq-f button.on{background:rgba(168,85,247,.25);border-color:rgba(168,85,247,.6);color:#f3e8ff}
@@ -637,12 +654,12 @@ $rate = ($today['d'] + $today['f']) > 0 ? round($today['d'] * 100 / ($today['d']
                             <ol>
                                 <li><?= $lang === 'ar' ? 'يُغلق النظام فوراً على كل مستلم — حتى البصمة — على شاشة الرسالة فقط' : 'Each person\'s system closes at once — clock-in too — on the message screen' ?></li>
                                 <li><?= $lang === 'ar' ? 'يجب أن يمرّر حتى نهاية الرسالة ويبقى عليها وقتاً كافياً للقراءة' : 'They must scroll to the end and stay on it long enough to read it' ?></li>
-                                <li><?= $lang === 'ar' ? 'إذا أضفت سؤالاً: يجب أن يجيب صحيحاً، والإجابة الخاطئة تعيده للقراءة' : 'If you add a question, they must answer it right — a wrong answer sends them back to read' ?></li>
+                                <li><?= $lang === 'ar' ? 'إذا أضفت سؤالاً: إما له إجابة صحيحة (الخاطئة تعيده للقراءة)، أو بدون إجابة صحيحة — يختار ما يناسبه وترى إجابته' : 'If you add a question: either it has a right answer (a wrong one sends them back to read), or it has none — they pick and you see each answer' ?></li>
                                 <li><?= $lang === 'ar' ? 'بعد «قرأت وفهمت» يُفتح النظام، وترى أنت كل التفاصيل' : 'After «I have read and understood» the system opens, and you see every detail' ?></li>
                             </ol>
                         </div>
                         <div class="nm-must-t">⏱️ <?= $lang === 'ar' ? 'أقل وقت للقراءة' : 'Minimum reading time' ?>: <b id="nmMin">—</b> <small><?= $lang === 'ar' ? '(يُحسب من طول الرسالة)' : '(from the length)' ?></small></div>
-                        <label class="nm-opt"><span class="tg"><input type="checkbox" id="nmQon"><span></span></span> ❓ <?= $lang === 'ar' ? 'إضافة سؤال للتأكد من القراءة' : 'Add a question to check it was read' ?></label>
+                        <label class="nm-opt"><span class="tg"><input type="checkbox" id="nmQon"><span></span></span> ❓ <?= $lang === 'ar' ? 'إضافة سؤال (اختبار أو اختيار رأي)' : 'Add a question (a check or a choice)' ?></label>
                         <div class="qz" id="nmQuiz" hidden></div>
                         <small class="nm-must-n">👑 <?= $lang === 'ar' ? 'الأدمن من بين المستلمين تصلهم كرسالة عادية مع «👍 تم الاطلاع» ولا يُغلق النظام عليهم.' : 'Admins among the recipients get it as a normal message with «👍 OK»; their system is not closed.' ?></small>
                     </div>
@@ -681,19 +698,26 @@ $rate = ($today['d'] + $today['f']) > 0 ? round($today['d'] * 100 / ($today['d']
     <!-- «رسالة إلزامية»: who read what, in detail -->
     <section class="nf-card mq-sec" id="mustRep">
         <h2>🔒 <?= $lang === 'ar' ? 'الرسائل الإلزامية' : 'Mandatory messages' ?> <span class="nf-count"><?= count($mustRep) ?></span></h2>
-        <p class="nf-note"><?= $lang === 'ar' ? 'لكل شخص: هل فتحها، كم دقيقة قرأها، كم مرة أخطأ في السؤال، ومتى أكّد ومن أي جهاز. النظام مغلق على من لم يؤكد حتى الآن.' : 'For each person: opened it, how long they read, wrong answers, when they confirmed and from which device. The system stays closed for whoever has not confirmed.' ?></p>
+        <p class="nf-note"><?= $lang === 'ar' ? 'لكل شخص: هل فتحها، كم دقيقة قرأها، كم مرة أخطأ في السؤال أو ماذا اختار، ومتى أكّد ومن أي جهاز. النظام مغلق على من لم يؤكد حتى الآن.' : 'For each person: opened it, how long they read, wrong answers or what they picked, when they confirmed and from which device. The system stays closed for whoever has not confirmed.' ?></p>
         <div class="mq-list">
         <?php foreach ($mustRep as $mi => $mq): $n = max(1, (int)$mq['n']); $pc = (int)round((int)$mq['done'] * 100 / $n); $wait = (int)$mq['n'] - (int)$mq['done']; ?>
             <details class="mq<?= $wait ? '' : ' all' ?>" <?= $mi === 0 ? 'open' : '' ?> data-id="<?= (int)$mq['log_id'] ?>">
                 <summary>
                     <span class="mq-ring" style="--p:<?= $pc ?>"><b><?= (int)$mq['done'] ?>/<?= (int)$mq['n'] ?></b></span>
                     <span class="mq-t"><b dir="auto"><?= htmlspecialchars((string)$mq['title']) ?></b>
-                        <small>🕐 <?= htmlspecialchars($ago($mq['age'])) ?><?= $mq['actor'] ? ' · 👤 ' . htmlspecialchars((string)$mq['actor']) : '' ?><?= (int)$mq['ver'] > 1 ? ' · ✏️ ' . ($lang === 'ar' ? 'النسخة ' : 'version ') . (int)$mq['ver'] : '' ?><?= $mq['quiz'] ? ' · ❓' : '' ?></small></span>
+                        <small>🕐 <?= htmlspecialchars($ago($mq['age'])) ?><?= $mq['actor'] ? ' · 👤 ' . htmlspecialchars((string)$mq['actor']) : '' ?><?= (int)$mq['ver'] > 1 ? ' · ✏️ ' . ($lang === 'ar' ? 'النسخة ' : 'version ') . (int)$mq['ver'] : '' ?><?= $mq['quiz'] ? ($mq['poll'] ? ' · 💬' : ' · ❓') : '' ?></small></span>
                     <span class="mq-st <?= $wait ? 'wait' : 'ok' ?>"><?= $wait ? '🔒 ' . ($lang === 'ar' ? $wait . ' لم يؤكد' : $wait . ' waiting') : '✅ ' . ($lang === 'ar' ? 'الكل أكّد' : 'All confirmed') ?></span>
                 </summary>
                 <div class="mq-in">
                     <div class="mq-text" dir="auto"><?= nl2br(htmlspecialchars((string)$mq['body'])) ?></div>
-                    <?php if ($mq['quiz']): ?><div class="mq-quiz"><b dir="auto">❓ <?= htmlspecialchars((string)$mq['quiz']['q']) ?></b>
+                    <?php if ($mq['poll']): $tlA = max(1, (int)$mq['answered']); ?>
+                    <div class="mq-poll"><b dir="auto">💬 <?= htmlspecialchars((string)$mq['quiz']['q']) ?><em><?= $lang === 'ar' ? 'بدون إجابة صحيحة' : 'No right answer' ?></em></b>
+                        <?php foreach ($mq['quiz']['choices'] as $ci => $ct): $tlN = (int)($mq['tally'][$ci] ?? 0); $tlP = (int)round($tlN * 100 / $tlA); ?>
+                        <button type="button" class="mq-tl" data-a="<?= $ci ?>" style="--w:<?= $mq['answered'] ? $tlP : 0 ?>%"><i></i><span dir="auto"><?= htmlspecialchars((string)$ct) ?></span><b><?= $tlN ?> · <?= $mq['answered'] ? $tlP : 0 ?>%</b></button>
+                        <?php endforeach; ?>
+                        <small><?= $lang === 'ar' ? 'أجاب ' . (int)$mq['answered'] . ' من ' . (int)$mq['n'] . ' — اضغط على أي خيار لترى من اختاره' : (int)$mq['answered'] . ' of ' . (int)$mq['n'] . ' answered — tap a choice to see who picked it' ?></small>
+                    </div>
+                    <?php elseif ($mq['quiz']): ?><div class="mq-quiz"><b dir="auto">❓ <?= htmlspecialchars((string)$mq['quiz']['q']) ?></b>
                         <?php foreach ($mq['quiz']['choices'] as $ci => $ct): ?><span class="<?= $ci === (int)$mq['quiz']['right'] ? 'r' : '' ?>"><?= $ci === (int)$mq['quiz']['right'] ? '✓ ' : '' ?><?= htmlspecialchars((string)$ct) ?></span><?php endforeach; ?></div><?php endif; ?>
                     <div class="mq-f">
                         <button type="button" class="on" data-f="">👥 <?= $lang === 'ar' ? 'الكل' : 'All' ?> <?= (int)$mq['n'] ?></button>
@@ -704,7 +728,7 @@ $rate = ($today['d'] + $today['f']) > 0 ? round($today['d'] * 100 / ($today['d']
                     <?php foreach ($mq['people'] as $pp):
                         $okNow = (int)$pp['ok_ver'] >= (int)$mq['ver']; $oldOk = !$okNow && (int)$pp['ok_ver'] > 0;
                         $stc = $okNow ? 'ok' : ($pp['opened_at'] ? 'open' : 'none'); ?>
-                        <div class="mq-p <?= $stc ?>" data-s="<?= $okNow ? 'ok' : 'wait' ?>">
+                        <div class="mq-p <?= $stc ?>" data-s="<?= $okNow ? 'ok' : 'wait' ?>" data-a="<?= $pp['answer'] === null ? '' : (int)$pp['answer'] ?>">
                             <span class="av"><?= htmlspecialchars(mb_strtoupper(mb_substr((string)$pp['username'], 0, 1))) ?></span>
                             <div class="who"><b><?= htmlspecialchars((string)$pp['username']) ?></b>
                                 <small class="<?= (int)$pp['phones'] ? '' : 'no' ?>"><?= (int)$pp['phones'] ? '📲 ' . ($lang === 'ar' ? 'وصلت لهاتفه' : 'sent to phone') : '🔕 ' . ($lang === 'ar' ? 'بدون إشعارات — يراها عند فتح النظام' : 'no notifications — sees it when opening the system') ?></small></div>
@@ -712,7 +736,8 @@ $rate = ($today['d'] + $today['f']) > 0 ? round($today['d'] * 100 / ($today['d']
                                 : ($oldOk ? '↻ ' . ($lang === 'ar' ? 'أكّد نسخة سابقة — مطلوب من جديد' : 'confirmed an older version')
                                 : ($pp['opened_at'] ? '👀 ' . ($lang === 'ar' ? 'فتحها ' : 'Opened ') . htmlspecialchars($tl($pp['opened_at'])) . ($lang === 'ar' ? ' ولم يؤكد' : ', not confirmed') : '📭 ' . ($lang === 'ar' ? 'لم يفتحها بعد' : 'Not opened yet'))) ?></span>
                             <span class="mt" title="<?= $lang === 'ar' ? 'وقت القراءة' : 'Reading time' ?>">⏱️ <?= (int)$pp['read_secs'] ? $dur($pp['read_secs']) : '—' ?></span>
-                            <?php if ($mq['quiz']): ?><span class="mt<?= (int)$pp['wrong_n'] ? ' bad' : '' ?>" title="<?= $lang === 'ar' ? 'إجابات خاطئة' : 'Wrong answers' ?>">❌ <?= (int)$pp['wrong_n'] ?></span><?php endif; ?>
+                            <?php if ($mq['poll']): ?><?php if ($pp['answer'] !== null && isset($mq['quiz']['choices'][(int)$pp['answer']])): ?><span class="ans" dir="auto" title="<?= $lang === 'ar' ? 'إجابته' : 'Their answer' ?>">💬 <?= htmlspecialchars((string)$mq['quiz']['choices'][(int)$pp['answer']]) ?></span><?php endif; ?>
+                            <?php elseif ($mq['quiz']): ?><span class="mt<?= (int)$pp['wrong_n'] ? ' bad' : '' ?>" title="<?= $lang === 'ar' ? 'إجابات خاطئة' : 'Wrong answers' ?>">❌ <?= (int)$pp['wrong_n'] ?></span><?php endif; ?>
                             <?php if ($pp['device']): ?><span class="mt">📱 <?= htmlspecialchars((string)$pp['device']) ?></span><?php endif; ?>
                             <?php if ((int)$pp['reminded']): ?><span class="mt">🔔 ×<?= (int)$pp['reminded'] ?></span><?php endif; ?>
                         </div>
@@ -728,7 +753,7 @@ $rate = ($today['d'] + $today['f']) > 0 ? round($today['d'] * 100 / ($today['d']
                         <div class="mq-edit-w">⚠️ <?= $lang === 'ar' ? 'بعد الحفظ يُطلب من الجميع قراءة الرسالة وتأكيدها من جديد، ويُغلق النظام عليهم حتى ذلك.' : 'After saving, everyone must read and confirm it again; their system closes until then.' ?></div>
                         <input class="in" data-et maxlength="80">
                         <textarea data-eb maxlength="2000"></textarea>
-                        <label class="nm-opt"><span class="tg"><input type="checkbox" data-eqon><span></span></span> ❓ <?= $lang === 'ar' ? 'سؤال للتأكد من القراءة' : 'A question to check it was read' ?></label>
+                        <label class="nm-opt"><span class="tg"><input type="checkbox" data-eqon><span></span></span> ❓ <?= $lang === 'ar' ? 'سؤال (اختبار أو اختيار رأي)' : 'A question (a check or a choice)' ?></label>
                         <div class="qz" data-eq hidden></div>
                         <div class="mq-acts"><button type="button" class="mq-b save" data-esave>💾 <?= $lang === 'ar' ? 'حفظ وطلب التأكيد من جديد' : 'Save and ask everyone again' ?></button><button type="button" class="mq-b" data-ecancel><?= $lang === 'ar' ? 'إلغاء' : 'Cancel' ?></button></div>
                     </div>
@@ -1056,25 +1081,43 @@ $rate = ($today['d'] + $today['f']) > 0 ? round($today['d'] * 100 / ($today['d']
         'lockLine' => '🔒 النظام مغلق حتى تقرأها وتؤكدها', 'sec' => ' ث', 'min' => ' دقيقة',
         'quizBad' => 'أكمل السؤال: نص السؤال، خياران على الأقل، واختر الإجابة الصحيحة ✓',
         'mustConfirm' => 'إرسال رسالة إلزامية إلى %p؟ سيُغلق النظام عليهم فوراً حتى يقرأوها ويؤكدوها.',
-        'qPh' => 'السؤال — مثال: ما آخر موعد لتسليم السيارات؟', 'cPh' => 'خيار', 'right' => 'الصحيحة', 'add' => '+ خيار آخر', 'qh' => 'اكتب السؤال والخيارات، واضغط «الصحيحة» بجانب الإجابة الصحيحة. تظهر الخيارات للموظف بترتيب عشوائي.',
+        'qPh' => 'السؤال — مثال: ما آخر موعد لتسليم السيارات؟', 'cPh' => 'خيار', 'right' => 'الصحيحة', 'add' => '+ خيار آخر', 'qh' => 'اكتب السؤال والخيارات، واضغط «الصحيحة» بجانب الإجابة الصحيحة. الإجابة الخاطئة تعيده للقراءة، وتظهر الخيارات بترتيب عشوائي.',
+        'quizBadPoll' => 'أكمل السؤال: نص السؤال وخياران على الأقل',
+        'mRight' => '✓ له إجابة صحيحة', 'mRightS' => 'اختبار — الخطأ يعيده للقراءة', 'mPoll' => '💬 بدون إجابة صحيحة', 'mPollS' => 'يختار ما يناسبه وترى إجابته',
+        'pPh' => 'السؤال — مثال: هل يناسبك موعد الاجتماع يوم السبت؟', 'ph' => 'اكتب السؤال والخيارات — لا توجد إجابة صحيحة. يختار الموظف ما يناسبه، وترى في التقرير إجابة كل شخص وعدد من اختار كل خيار.',
         'remOk' => '🔔 تم تذكير %n', 'editOk' => '✓ تم الحفظ — طُلب من الجميع التأكيد من جديد', 'editConfirm' => 'حفظ التعديل؟ سيُطلب من كل المستلمين قراءتها وتأكيدها من جديد.',
         'remConfirm' => 'إرسال تذكير لمن لم يؤكد؟'
     ] : [
         'lockLine' => '🔒 The system is closed until you read and confirm it', 'sec' => ' s', 'min' => ' min',
         'quizBad' => 'Finish the question: its text, at least two choices, and mark the right answer ✓',
         'mustConfirm' => 'Send a mandatory message to %p? Their system closes at once until they read and confirm it.',
-        'qPh' => 'The question — e.g. What is the deadline?', 'cPh' => 'Choice', 'right' => 'Right', 'add' => '+ Another choice', 'qh' => 'Write the question and the choices, then press «Right» next to the right answer. Staff see the choices in a random order.',
+        'qPh' => 'The question — e.g. What is the deadline?', 'cPh' => 'Choice', 'right' => 'Right', 'add' => '+ Another choice', 'qh' => 'Write the question and the choices, then press «Right» next to the right answer. A wrong answer sends them back to read; the choices show in a random order.',
+        'quizBadPoll' => 'Finish the question: its text and at least two choices',
+        'mRight' => '✓ Has a right answer', 'mRightS' => 'A check — wrong sends them back', 'mPoll' => '💬 No right answer', 'mPollS' => 'They pick; you see each answer',
+        'pPh' => 'The question — e.g. Does Saturday suit you for the meeting?', 'ph' => 'Write the question and the choices — there is no right answer. Staff pick what fits them; the report shows each person\'s answer and how many picked each choice.',
         'remOk' => '🔔 Reminded %n', 'editOk' => '✓ Saved — everyone has to confirm again', 'editConfirm' => 'Save the change? Everyone has to read and confirm it again.',
         'remConfirm' => 'Send a reminder to whoever has not confirmed?'
     ], JSON_UNESCAPED_UNICODE | JSON_HEX_TAG) ?>;
-    /* a question with 2–4 choices and one right answer: F1Quiz(box, {q, choices, right}) → {get, valid, focus} */
+    /* a question with 2–4 choices — with one right answer, or none (they just pick):
+       F1Quiz(box, {q, choices, right, poll}) → {get, valid, bad, focus} */
     window.F1Quiz = function (box, init) {
         init = init || { q: '', choices: ['', ''], right: -1 };
         let right = typeof init.right === 'number' ? init.right : -1;
-        box.innerHTML = '<div class="qz-h"></div><input class="in qz-q" maxlength="200"><div class="qz-cs"></div><button type="button" class="qz-add"></button>';
-        box.querySelector('.qz-h').textContent = MK.qh;
+        let poll = !!init.poll;
+        box.innerHTML = '<div class="qz-mode" role="radiogroup"><button type="button" data-m="right" role="radio"><span></span><small></small></button><button type="button" data-m="poll" role="radio"><span></span><small></small></button></div>'
+            + '<div class="qz-h"></div><input class="in qz-q" maxlength="200"><div class="qz-cs"></div><button type="button" class="qz-add"></button>';
+        const mb = box.querySelectorAll('.qz-mode button');
+        mb[0].querySelector('span').textContent = MK.mRight; mb[0].querySelector('small').textContent = MK.mRightS;
+        mb[1].querySelector('span').textContent = MK.mPoll; mb[1].querySelector('small').textContent = MK.mPollS;
         const q = box.querySelector('.qz-q'), cs = box.querySelector('.qz-cs'), add = box.querySelector('.qz-add');
-        q.placeholder = MK.qPh; q.value = init.q || ''; add.textContent = MK.add;
+        q.value = init.q || ''; add.textContent = MK.add;
+        function mode() {
+            box.classList.toggle('poll', poll);
+            mb.forEach(b => { const on = (b.dataset.m === 'poll') === poll; b.classList.toggle('on', on); b.setAttribute('aria-checked', on ? 'true' : 'false'); });
+            box.querySelector('.qz-h').textContent = poll ? MK.ph : MK.qh;
+            q.placeholder = poll ? MK.pPh : MK.qPh;
+        }
+        mb.forEach(b => b.addEventListener('click', () => { poll = b.dataset.m === 'poll'; mode(); }));
         function row(v) {
             const r = document.createElement('div'); r.className = 'qz-c';
             r.innerHTML = '<button type="button" class="rt">✓ <span></span></button><input class="in" maxlength="120"><button type="button" class="x" aria-label="remove">✕</button>';
@@ -1090,11 +1133,12 @@ $rate = ($today['d'] + $today['f']) > 0 ? round($today['d'] * 100 / ($today['d']
         }
         (init.choices && init.choices.length >= 2 ? init.choices : ['', '']).forEach(row);
         add.addEventListener('click', () => { if (cs.children.length < 4) { row(''); paint(); cs.lastChild.querySelector('.in').focus(); } });
-        paint();
-        const get = () => ({ q: q.value.trim(), choices: [...cs.querySelectorAll('.in')].map(i => i.value.trim()), right });
+        paint(); mode();
+        const get = () => ({ q: q.value.trim(), choices: [...cs.querySelectorAll('.in')].map(i => i.value.trim()), right: poll ? -1 : right, poll });
         return {
             get,
-            valid: () => { const g = get(); const filled = g.choices.filter(Boolean); return g.q !== '' && filled.length >= 2 && right >= 0 && g.choices[right] !== ''; },
+            valid: () => { const g = get(); const filled = g.choices.filter(Boolean); return g.q !== '' && filled.length >= 2 && (poll || (right >= 0 && g.choices[right] !== '')); },
+            bad: () => poll ? MK.quizBadPoll : MK.quizBad,
             focus: () => q.focus(),
         };
     };
@@ -1103,10 +1147,19 @@ $rate = ($today['d'] + $today['f']) > 0 ? round($today['d'] * 100 / ($today['d']
     document.querySelectorAll('.mq').forEach(card => {
         const id = +card.dataset.id, out = card.querySelector('[data-mqmsg]');
         const say = (t, ok) => { out.textContent = t; out.className = 'nf-msg ' + (ok ? 'ok' : 'bad'); };
+        const show = test => { let n = 0; card.querySelectorAll('.mq-p').forEach(p => { const s = test(p); p.hidden = !s; if (s) n++; }); card.querySelector('.mq-none').hidden = n > 0; };
+        const fAll = card.querySelector('.mq-f button[data-f=""]');
         card.querySelectorAll('.mq-f button').forEach(b => b.addEventListener('click', () => {
             card.querySelectorAll('.mq-f button').forEach(x => x.classList.toggle('on', x === b));
-            let n = 0; card.querySelectorAll('.mq-p').forEach(p => { const show = !b.dataset.f || p.dataset.s === b.dataset.f; p.hidden = !show; if (show) n++; });
-            card.querySelector('.mq-none').hidden = n > 0;
+            card.querySelectorAll('.mq-tl').forEach(x => x.classList.remove('on'));
+            show(p => !b.dataset.f || p.dataset.s === b.dataset.f);
+        }));
+        card.querySelectorAll('.mq-tl').forEach(b => b.addEventListener('click', () => {         // who picked this choice
+            if (b.classList.contains('on')) { fAll.click(); return; }
+            card.querySelectorAll('.mq-tl').forEach(x => x.classList.toggle('on', x === b));
+            card.querySelectorAll('.mq-f button').forEach(x => x.classList.remove('on'));
+            show(p => p.dataset.a === b.dataset.a);
+            card.querySelector('.mq-ppl').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
         }));
         const rem = card.querySelector('[data-remind]');
         if (rem) rem.addEventListener('click', async () => {
@@ -1129,12 +1182,12 @@ $rate = ($today['d'] + $today['f']) > 0 ? round($today['d'] * 100 / ($today['d']
         ed.querySelector('[data-ecancel]').addEventListener('click', () => { ed.hidden = true; });
         ed.querySelector('[data-esave]').addEventListener('click', async () => {
             const qOn = ed.querySelector('[data-eqon]').checked;
-            if (qOn && !eq.valid()) { say(MK.quizBad, false); return; }
+            if (qOn && !eq.valid()) { say(eq.bad(), false); return; }
             if (!confirm(MK.editConfirm)) return;
             const b = ed.querySelector('[data-esave]'); b.disabled = true;
             const r = await post({ action: 'must_edit', id, title: ed.querySelector('[data-et]').value, body: ed.querySelector('[data-eb]').value, quiz_on: qOn, quiz: eq ? eq.get() : null }).catch(() => ({ ok: false }));
             if (r.ok) { say(MK.editOk, true); setTimeout(() => location.reload(), 1400); }
-            else { b.disabled = false; say(r.error === 'quiz' ? MK.quizBad : T.fail + (r.error || ''), false); }
+            else { b.disabled = false; say(r.error === 'quiz' ? (eq ? eq.bad() : MK.quizBad) : T.fail + (r.error || ''), false); }
         });
     });
 
@@ -1237,7 +1290,7 @@ $rate = ($today['d'] + $today['f']) > 0 ? round($today['d'] * 100 / ($today['d']
             if (!body.value.trim()) { msg('nmMsg', M.m_empty, false); body.focus(); return; }
             if (!sel.size) { msg('nmMsg', M.m_pick, false); return; }
             if (later && (!$('nmAt').value || new Date($('nmAt').value) < new Date())) { msg('nmMsg', M.sch_bad, false); $('nmAt').focus(); return; }
-            if (kind === 'must' && $('nmQon').checked && !nmQuiz.valid()) { msg('nmMsg', MK.quizBad, false); nmQuiz.focus(); return; }
+            if (kind === 'must' && $('nmQon').checked && !nmQuiz.valid()) { msg('nmMsg', nmQuiz.bad(), false); nmQuiz.focus(); return; }
             if (!later && !confirm((kind === 'must' ? MK.mustConfirm : M.m_confirm).replace('%p', sel.size))) return;
             const b = $('nmSend'), label = b.innerHTML; b.disabled = true; b.innerHTML = '<span class="nf-spin"></span>';
             try {
@@ -1253,7 +1306,7 @@ $rate = ($today['d'] + $today['f']) > 0 ? round($today['d'] * 100 / ($today['d']
                     m.className = 'nf-msg ' + (r.devices && !r.sent ? 'bad' : 'ok');
                     title.value = ''; body.value = ''; preview();
                     if (r.must) setTimeout(() => location.reload(), 1800);   // the new message appears in «الرسائل الإلزامية»
-                } else msg('nmMsg', r.error === 'empty' ? M.m_empty : r.error === 'nobody' ? M.m_pick : r.error === 'time' ? M.sch_bad : r.error === 'quiz' ? MK.quizBad : T.fail + r.error, false);
+                } else msg('nmMsg', r.error === 'empty' ? M.m_empty : r.error === 'nobody' ? M.m_pick : r.error === 'time' ? M.sch_bad : r.error === 'quiz' ? nmQuiz.bad() : T.fail + r.error, false);
             } catch (e) { msg('nmMsg', T.fail + e, false); }
             b.disabled = false; b.innerHTML = label;
         });

@@ -6,8 +6,9 @@
  * screen, must_read.php, until they:
  *   1. scroll to the end of the message and stay on it for a minimum reading
  *      time (worked out from the length, checked on the server too),
- *   2. answer the question the admin added, if any (the right answer never
- *      leaves the server; a wrong one sends them back to read again),
+ *   2. answer the question the admin added, if any — either one with a right
+ *      answer (it never leaves the server; a wrong one sends them back to read
+ *      again) or one with no right answer (they pick, the admin sees each reply),
  *   3. press «قرأت وفهمت».
  * That includes البصمة: nothing opens before it, clocking in neither.
  *
@@ -43,9 +44,12 @@ function must_tables(PDO $pdo): void
         ok_ver    INT NOT NULL DEFAULT 0,
         device    VARCHAR(120) NULL,
         reminded  INT NOT NULL DEFAULT 0,
+        answer    INT NULL,
         PRIMARY KEY (log_id, user_id),
         KEY k_user (user_id, ok_ver)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    try { $pdo->query("SELECT answer FROM must_reads LIMIT 1"); }                    // the choice they picked (added later)
+    catch (Throwable $e) { try { $pdo->exec("ALTER TABLE must_reads ADD answer INT NULL"); } catch (Throwable $e2) {} }
     try { $pdo->query("SELECT must FROM notify_scheduled LIMIT 1"); }
     catch (Throwable $e) { try { $pdo->exec("ALTER TABLE notify_scheduled ADD must TEXT NULL"); } catch (Throwable $e2) {} }
 }
@@ -58,18 +62,38 @@ function must_min_secs(string $title, string $body): int
 }
 
 /**
- * The question, cleaned: ['q' => text, 'choices' => [..], 'right' => index] or null.
- * $in: ['q' => '', 'choices' => ['', '', ''], 'right' => 0]
+ * The question, cleaned, or null. Two kinds:
+ *   with a right answer  ['q' => text, 'choices' => [..], 'right' => index]
+ *     — a wrong answer sends them back to read;
+ *   no right answer      ['q' => text, 'choices' => [..], 'right' => -1, 'poll' => true]
+ *     — they pick what fits them and the admin sees each reply.
+ * $in: ['q' => '', 'choices' => ['', '', ''], 'right' => 0, 'poll' => false]
  */
 function must_clean_quiz($in): ?array
 {
     if (!is_array($in)) return null;
     $q = trim(preg_replace('/\s+/u', ' ', (string)($in['q'] ?? '')));
+    $poll = !empty($in['poll']);
     $choices = [];
-    foreach ((array)($in['choices'] ?? []) as $c) { $c = trim(preg_replace('/\s+/u', ' ', (string)$c)); if ($c !== '') $choices[] = mb_substr($c, 0, 120); }
-    $right = (int)($in['right'] ?? -1);
-    if ($q === '' || count($choices) < 2 || $right < 0 || $right >= count($choices)) return null;
-    return ['q' => mb_substr($q, 0, 200), 'choices' => array_slice($choices, 0, 4), 'right' => min($right, 3)];
+    $want = $poll ? -1 : (int)($in['right'] ?? -1);
+    $right = -1;
+    foreach (array_values((array)($in['choices'] ?? [])) as $i => $c) {
+        $c = trim(preg_replace('/\s+/u', ' ', (string)$c));
+        if ($c === '') continue;                                                    // empty boxes are dropped
+        if ($i === $want) $right = count($choices);                                 // …so the right one keeps pointing at its text
+        $choices[] = mb_substr($c, 0, 120);
+    }
+    $choices = array_slice($choices, 0, 4);
+    if ($q === '' || count($choices) < 2) return null;
+    if ($poll) return ['q' => mb_substr($q, 0, 200), 'choices' => $choices, 'right' => -1, 'poll' => true];
+    if ($right < 0 || $right >= count($choices)) return null;
+    return ['q' => mb_substr($q, 0, 200), 'choices' => $choices, 'right' => $right];
+}
+
+/** A question with no right answer (they just pick)? */
+function must_is_poll(?array $quiz): bool
+{
+    return $quiz !== null && (!empty($quiz['poll']) || (int)($quiz['right'] ?? -1) < 0);
 }
 
 /** The person's device in a few words ("iPhone · Safari"). */
@@ -135,11 +159,15 @@ function must_has_pending(PDO $pdo, int $uid): bool
 }
 
 /** The page was opened: first time recorded; the reading clock (server side) starts now for this version. */
-function must_opened(PDO $pdo, int $logId, int $uid): void
+function must_opened(PDO $pdo, int $logId, int $uid, int $ver = 1): void
 {
     $pdo->prepare("UPDATE must_reads SET opened_at = COALESCE(opened_at, NOW()) WHERE log_id = ? AND user_id = ?")->execute([$logId, $uid]);
     $pdo->prepare("UPDATE notify_inbox SET seen_at = COALESCE(seen_at, NOW()), read_at = COALESCE(read_at, NOW()) WHERE log_id = ? AND user_id = ?")->execute([$logId, $uid]);
     $k = $logId . ':' . $uid;
+    if (($_SESSION['must_v'][$k] ?? 0) !== $ver) {                                  // edited while open: read the new text from the start
+        unset($_SESSION['must_t'][$k], $_SESSION['must_order'][$k]);
+        $_SESSION['must_v'][$k] = $ver;
+    }
     if (!isset($_SESSION['must_t'][$k])) $_SESSION['must_t'][$k] = time();
 }
 
@@ -151,8 +179,8 @@ function must_heartbeat(PDO $pdo, int $logId, int $uid, int $secs): void
 }
 
 /**
- * «قرأت وفهمت». $choice: the index of the choice they picked (null when there is no question).
- * Returns 'ok' | 'early' (minimum reading time not reached) | 'wrong' (the answer) | 'none' (nothing to confirm).
+ * «قرأت وفهمت». $choice: the index of the choice they picked, in the order shown (null when there is no question).
+ * Returns 'ok' | 'early' (minimum reading time not reached) | 'wrong' (the answer) | 'pick' (no choice picked) | 'none' (nothing to confirm).
  */
 function must_confirm(PDO $pdo, int $logId, int $uid, ?int $choice): string
 {
@@ -165,17 +193,20 @@ function must_confirm(PDO $pdo, int $logId, int $uid, ?int $choice): string
     $since = (int)($_SESSION['must_t'][$k] ?? time());
     if (time() - $since < (int)$r['min_secs'] - 2) return 'early';                 // the page cannot be hurried from outside
     $quiz = $r['quiz'] ? json_decode((string)$r['quiz'], true) : null;
+    $picked = null;
     if ($quiz) {
-        $order = $_SESSION['must_order'][$k] ?? null;                               // the shuffled order this person was shown
+        $order = $_SESSION['must_order'][$k] ?? null;                               // the order this person was shown
         $picked = ($choice !== null && is_array($order) && isset($order[$choice])) ? (int)$order[$choice] : -1;
-        if ($picked !== (int)$quiz['right']) {
+        if (!isset($quiz['choices'][$picked])) $picked = -1;
+        if (must_is_poll($quiz)) { if ($picked < 0) return 'pick'; }               // no right answer: any choice, it is recorded
+        elseif ($picked !== (int)$quiz['right']) {
             $pdo->prepare("UPDATE must_reads SET wrong_n = wrong_n + 1 WHERE log_id = ? AND user_id = ?")->execute([$logId, $uid]);
             $_SESSION['must_t'][$k] = time() - (int)floor((int)$r['min_secs'] / 2);   // read it again: half the time
             unset($_SESSION['must_order'][$k]);
             return 'wrong';
         }
     }
-    $pdo->prepare("UPDATE must_reads SET ok_at = NOW(), ok_ver = ?, device = ? WHERE log_id = ? AND user_id = ?")->execute([(int)$r['ver'], must_device(), $logId, $uid]);
+    $pdo->prepare("UPDATE must_reads SET ok_at = NOW(), ok_ver = ?, device = ?, answer = ? WHERE log_id = ? AND user_id = ?")->execute([(int)$r['ver'], must_device(), $picked, $logId, $uid]);
     $pdo->prepare("UPDATE notify_inbox SET ack_at = COALESCE(ack_at, NOW()), read_at = COALESCE(read_at, NOW()), seen_at = COALESCE(seen_at, NOW()) WHERE log_id = ? AND user_id = ?")->execute([$logId, $uid]);
     unset($_SESSION['must_t'][$k], $_SESSION['must_order'][$k]);
     return 'ok';
@@ -185,9 +216,12 @@ function must_confirm(PDO $pdo, int $logId, int $uid, ?int $choice): string
 function must_edit(PDO $pdo, int $logId, string $title, string $body, ?array $quiz, string $by): bool
 {
     must_tables($pdo);
-    $st = $pdo->prepare("SELECT 1 FROM must_msgs WHERE log_id = ?");
+    $st = $pdo->prepare("SELECT quiz FROM must_msgs WHERE log_id = ?");
     $st->execute([$logId]);
-    if (!$st->fetchColumn()) return false;
+    $old = $st->fetch(PDO::FETCH_ASSOC);
+    if (!$old) return false;
+    $oldQ = $old['quiz'] ? json_decode((string)$old['quiz'], true) : null;
+    if ($oldQ != $quiz) $pdo->prepare("UPDATE must_reads SET answer = NULL WHERE log_id = ?")->execute([$logId]);   // a new question: old answers no longer fit
     $pdo->prepare("UPDATE notify_log SET title = ?, body = ? WHERE id = ?")->execute([$title, $body, $logId]);
     $pdo->prepare("UPDATE must_msgs SET quiz = ?, min_secs = ?, ver = ver + 1, edited_at = NOW(), edited_by = ? WHERE log_id = ?")
         ->execute([$quiz ? json_encode($quiz, JSON_UNESCAPED_UNICODE) : null, must_min_secs($title, $body), $by, $logId]);
@@ -233,6 +267,10 @@ function must_report(PDO $pdo, int $limit = 10): array
             $m['n'] = count($m['people']);
             $m['done'] = count(array_filter($m['people'], fn($p) => (int)$p['ok_ver'] >= (int)$m['ver']));
             $m['quiz'] = $m['quiz'] ? json_decode((string)$m['quiz'], true) : null;
+            $m['poll'] = must_is_poll($m['quiz']);
+            $m['tally'] = $m['quiz'] ? array_fill(0, count($m['quiz']['choices']), 0) : [];   // how many picked each choice
+            $m['answered'] = 0;
+            foreach ($m['people'] as $p) if ($p['answer'] !== null && isset($m['tally'][(int)$p['answer']])) { $m['tally'][(int)$p['answer']]++; $m['answered']++; }
         }
         unset($m);
         return $msgs;
