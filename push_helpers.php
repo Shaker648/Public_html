@@ -66,6 +66,10 @@ function notify_events(): array
         // surprise stock check (جرد مفاجئ)
         'must_remind'      => ['تذكير برسالة إلزامية لم تُقرأ',      'Reminder: a mandatory message not read', '🔒', [], true, true, 'live'],
         'must_edited'      => ['تعديل رسالة إلزامية',               'A mandatory message was edited', '✏️', [], true, true, 'live'],
+        // to the admins (and the sender): what happened with a mandatory message
+        'must_locked'      => ['إغلاق النظام برسالة إلزامية (على من أُغلق)', 'System closed by a mandatory message (on whom)', '🔒', ['admin'], true, true, 'live'],
+        'must_answer'      => ['تأكيد رسالة إلزامية وإجابة السؤال',  'A mandatory message confirmed, with the answer', '✅', ['admin'], true, true, 'live'],
+        'must_wrong'       => ['إجابة خاطئة على سؤال رسالة إلزامية', 'Wrong answer on a mandatory message', '❌', ['admin'], true, true, 'live'],
         'loc_ping'         => ['طلب تأكيد التواجد في الفرع',       'Asked to confirm you are at the branch', '📍', [], true, true, 'live'],
         'loc_result'       => ['نتيجة تأكيد التواجد',              'Location confirmation result', '📍', ['admin'], true, null, 'live'],
         'weekly_card'      => ['التقرير الأسبوعي لكل فرع (السبت)', 'Weekly branch report (Saturday)', '🗓️', ['admin'], true, null, 'live'],
@@ -862,6 +866,53 @@ function notify_message(PDO $pdo, string $event, array $d, string $lang): array
             $body[] = $ar ? ($ed ? 'يجب قراءتها وتأكيدها من جديد — النظام مغلق حتى ذلك' : 'النظام مغلق حتى تقرأها وتؤكدها') : ($ed ? 'Read and confirm it again — the system is closed until then' : 'The system is closed until you read and confirm it');
             $url = 'must_read.php?lang=' . $lang;
             break;
+        case 'must_locked':
+        case 'must_answer':
+        case 'must_wrong':
+            $u = (string)($d['user'] ?? '');
+            $mt = '«' . ($d['title'] ?? '') . '»';
+            $qz = is_array($d['quiz'] ?? null) ? $d['quiz'] : null;
+            $poll = $qz && (!empty($qz['poll']) || (int)($qz['right'] ?? -1) < 0);
+            $pk = isset($d['picked']) && $d['picked'] !== null && $qz && isset($qz['choices'][(int)$d['picked']]) ? (string)$qz['choices'][(int)$d['picked']] : '';
+            $rt = $qz && !$poll && isset($qz['choices'][(int)$qz['right']]) ? (string)$qz['choices'][(int)$qz['right']] : '';
+            $ppl = function (int $n) use ($ar) { return $ar ? ($n === 1 ? 'شخص واحد' : ($n === 2 ? 'شخصين' : ($n <= 10 ? $n . ' أشخاص' : $n . ' شخصاً'))) : $n . ($n === 1 ? ' person' : ' people'); };
+            $tally = (int)($d['n'] ?? 0) ? '📊 ' . ($ar ? 'أكّد ' . (int)$d['done'] . ' من ' . (int)$d['n'] : (int)$d['done'] . ' of ' . (int)$d['n'] . ' confirmed') : '';
+            $url = 'notifications_admin.php?lang=' . $lang . '#mustRep';
+            if ($event === 'must_locked') {
+                $names = array_values(array_map('strval', (array)($d['names'] ?? [])));
+                $n = count($names);
+                $title = '🔒 ' . (!empty($d['edited']) ? ($ar ? 'أُغلق النظام من جديد على ' . $ppl($n) . ' بعد تعديل الرسالة' : 'System closed again on ' . $ppl($n) . ' after the edit')
+                                                         : ($ar ? 'أُغلق النظام على ' . $ppl($n) : 'System closed on ' . $ppl($n)));
+                $body[] = '📩 ' . $mt;
+                $body[] = '👥 ' . implode($ar ? '، ' : ', ', array_slice($names, 0, 8)) . ($n > 8 ? ($ar ? ' و' . ($n - 8) . ' آخرين' : ' and ' . ($n - 8) . ' more') : '');
+                $body[] = $ar ? '🔓 يُفتح لكل شخص بعد أن يقرأها ويؤكدها — يصلك إشعار بكل رد' : '🔓 It opens for each person once they read and confirm — you are told of every reply';
+            } elseif ($event === 'must_wrong') {
+                $title = '❌ ' . $u . ($ar ? ' أجاب خطأ — النظام ما زال مغلقاً عليه' : ' answered wrong — still closed');
+                if ($qz) $body[] = '❓ ' . $qz['q'];
+                if ($pk !== '') $body[] = ($ar ? '✗ اختار: ' : '✗ Picked: ') . $pk;
+                if ($rt !== '') $body[] = ($ar ? '✓ الصحيحة: ' : '✓ Right: ') . $rt;
+                $body[] = ($ar ? '🔁 الخطأ رقم ' . (int)($d['tries'] ?? 1) . ' — يعيد قراءة ' : '🔁 Wrong answer no. ' . (int)($d['tries'] ?? 1) . ' — reading again ') . $mt;
+            } else {
+                $again = !empty($d['again']) ? ($ar ? ' (بعد التعديل)' : ' (after the edit)') : '';
+                if ($poll && $pk !== '') {
+                    $title = '💬 ' . $u . ($ar ? ' اختار: ' : ' picked: ') . $pk;
+                    $body[] = '❓ ' . $qz['q'];
+                    $body[] = ($ar ? '✅ قرأ ' : '✅ Read ') . $mt . ($ar ? ' وأكّدها' : ' and confirmed') . $again . ($ar ? ' — 🔓 فُتح النظام عليه' : ' — 🔓 unlocked');
+                } elseif ($qz) {
+                    $tr = (int)($d['tries'] ?? 0);
+                    $title = '✅ ' . $u . ($ar ? ' أجاب صحيحاً وأكّد' . ($tr ? ' — بعد ' . ($tr === 1 ? 'محاولة خاطئة واحدة' : ($tr === 2 ? 'محاولتين خاطئتين' : $tr . ' محاولات خاطئة')) : ' من أول مرة')
+                                                : ' answered right and confirmed' . ($tr ? ' — after ' . $tr . ' wrong' : ' — first try'));
+                    $body[] = '❓ ' . $qz['q'] . ($pk !== '' ? ' → ' . $pk : '');
+                    $body[] = '📩 ' . $mt . $again . ($ar ? ' — 🔓 فُتح النظام عليه' : ' — 🔓 unlocked');
+                } else {
+                    $title = '✅ ' . $u . ($ar ? ' قرأ الرسالة الإلزامية وأكّدها' : ' read and confirmed the mandatory message') . $again;
+                    $body[] = '📩 ' . $mt . ($ar ? ' — 🔓 فُتح النظام عليه' : ' — 🔓 unlocked');
+                }
+                if ((int)($d['secs'] ?? 0)) $body[] = ($ar ? '⏱️ قرأها في ' : '⏱️ Read in ') . intdiv((int)$d['secs'], 60) . ':' . str_pad((string)((int)$d['secs'] % 60), 2, '0', STR_PAD_LEFT);
+                if ((int)($d['n'] ?? 0) && (int)$d['done'] >= (int)$d['n']) $body[] = $ar ? '🎉 الجميع أكّد — فُتح النظام على كل المستلمين' : '🎉 Everyone confirmed — the system is open for all';
+                else $body[] = $tally;
+            }
+            break;
         case 'loc_ping':
             $title = '📍 ' . ($ar ? 'مطلوب تأكيد تواجدك في الفرع — النظام مغلق' : 'Confirm you are at the branch — your system is closed');
             $body[] = $ar ? 'افتح النظام الآن واضغط «إرسال موقعي» — يُفتح النظام فور إرسال الموقع' : 'Open the system and press "Send my location" — it opens as soon as the location is sent';
@@ -1063,7 +1114,7 @@ function notify_message(PDO $pdo, string $event, array $d, string $lang): array
         default:
             $title = $ev[2] . ' ' . ($ar ? $ev[0] : $ev[1]);
     }
-    $noBy = ['test', 'must_remind', 'must_edited', 'loc_ping', 'loc_result', 'weekly_card', 'login_new', 'check_plan', 'user_locked', 'check_tick', 'transfer_missing', 'transfer_resolved', 'check_start', 'check_warn', 'check_locked', 'check_done', 'transfer_received', 'duty_start', 'duty_warn', 'duty_locked', 'duty_done', 'duty_unlocked', 'sale_celebrate', 'last_car', 'reserve_old', 'stock_aged', 'transfer_unconfirmed',
+    $noBy = ['test', 'must_remind', 'must_edited', 'must_locked', 'must_answer', 'must_wrong', 'loc_ping', 'loc_result', 'weekly_card', 'login_new', 'check_plan', 'user_locked', 'check_tick', 'transfer_missing', 'transfer_resolved', 'check_start', 'check_warn', 'check_locked', 'check_done', 'transfer_received', 'duty_start', 'duty_warn', 'duty_locked', 'duty_done', 'duty_unlocked', 'sale_celebrate', 'last_car', 'reserve_old', 'stock_aged', 'transfer_unconfirmed',
              'amana_long', 'bank_waiting', 'clockout_forgot', 'login_failed', 'price_reserved'];
     if ($by !== '' && !in_array($event, $noBy, true) && strpos($event, 'att_') !== 0) $body[] = ($ar ? '✍️ بواسطة ' : '✍️ by ') . $by;
     return [
@@ -1173,7 +1224,7 @@ function notify_deliver(PDO $pdo, int $logId, string $event, array $msg, array $
 
     // same kind, not seen yet, in the last 15 minutes → one grouped notification
     $group = [];
-    if (!in_array($event, ['message', 'test', 'transfer_incoming', 'must_remind', 'must_edited', 'loc_ping', 'loc_result', 'weekly_card', 'login_new', 'check_plan', 'check_item', 'check_start', 'check_tick', 'check_warn', 'check_locked', 'check_done', 'transfer_missing', 'user_locked', 'lock_basma', 'lock_reason', 'lock_countdown', 'duty_unlocked'], true)) {
+    if (!in_array($event, ['message', 'test', 'transfer_incoming', 'must_remind', 'must_edited', 'must_locked', 'loc_ping', 'loc_result', 'weekly_card', 'login_new', 'check_plan', 'check_item', 'check_start', 'check_tick', 'check_warn', 'check_locked', 'check_done', 'transfer_missing', 'user_locked', 'lock_basma', 'lock_reason', 'lock_countdown', 'duty_unlocked'], true)) {
         $in2 = implode(',', $withDev);
         $gs = $pdo->prepare("SELECT i.user_id, l.title FROM notify_inbox i JOIN notify_log l ON l.id = i.log_id
                              WHERE i.user_id IN ($in2) AND l.event = ? AND i.seen_at IS NULL AND l.created_at >= NOW() - INTERVAL 15 MINUTE
@@ -1190,7 +1241,8 @@ function notify_deliver(PDO $pdo, int $logId, string $event, array $msg, array $
         $acts = [];
         if ($t !== '') {
             if ($event === 'message' && $needAck)       $acts['ack']  = [$ar ? '👍 تم الاطلاع' : '👍 OK', 'notify_act.php?a=ack&t=' . $t];
-            if ($event === 'message' && !empty($opts['must']) && ($roleOf[$uid] ?? '') !== 'admin') $acts['open'] = [$ar ? '📖 اقرأ الآن' : '📖 Read now', $msg['url']];   // a mandatory message is confirmed only on its own screen
+            $mustLocked = isset($opts['locked']) ? in_array($uid, array_map('intval', (array)$opts['locked']), true) : ($roleOf[$uid] ?? '') !== 'admin';
+            if ($event === 'message' && !empty($opts['must']) && $mustLocked) $acts['open'] = [$ar ? '📖 اقرأ الآن' : '📖 Read now', $msg['url']];   // a mandatory message is confirmed only on its own screen
             elseif ($event === 'message' && !empty($opts['must']))  $acts['ack']  = [$ar ? '👍 تم الاطلاع' : '👍 OK', 'notify_act.php?a=ack&t=' . $t];
             if ($event === 'transfer_incoming')       { if (($roleOf[$uid] ?? '') === 'admin') $acts['recv'] = [$ar ? '✅ تم الاستلام' : '✅ Received', 'notify_act.php?a=recv&t=' . $t];
                                                         else $acts['open'] = [$ar ? '🔑 تأكيد الاستلام' : '🔑 Confirm', $msg['url']];   // everyone else types the chassis on the page
