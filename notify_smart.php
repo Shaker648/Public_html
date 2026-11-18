@@ -991,6 +991,11 @@ function smart_run(PDO $pdo): array
             $claim = $pdo->prepare("UPDATE notify_scheduled SET sent_log_id = 0 WHERE id = ? AND sent_log_id IS NULL");
             $claim->execute([(int)$m['id']]);
             if (!$claim->rowCount()) continue;               // another run took it
+            if (!empty($m['must']) && is_file(__DIR__ . '/must_read_helpers.php')) {   // «رسالة إلزامية» scheduled for later
+                require_once __DIR__ . '/must_read_helpers.php';
+                $mj = json_decode((string)$m['must'], true) ?: [];
+                $r = must_send($pdo, (array)json_decode((string)$m['user_ids'], true), (string)$m['title'], (string)$m['body'], (string)$m['created_by'], must_clean_quiz($mj['quiz'] ?? null));
+            } else
             $r = notify_custom($pdo, (array)json_decode((string)$m['user_ids'], true), (string)$m['title'], (string)$m['body'], (string)$m['created_by'], (bool)$m['need_ack']);
             $pdo->prepare("UPDATE notify_scheduled SET sent_log_id = ? WHERE id = ?")->execute([(int)($r[4] ?? 0), (int)$m['id']]);
             $done[] = 'scheduled #' . $m['id'];

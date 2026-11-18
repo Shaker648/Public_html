@@ -64,6 +64,8 @@ function notify_events(): array
         'transfer_received'=> ['تأكيد استلام سيارة منقولة',       'Transferred car received',   '📥', ['admin'], true, true, 'transfer'],
         'transfer_unconfirmed' => ['لم يكن أحد في الفرع للاستلام (24 ساعة)', 'Nobody at the branch to receive (24 h)', '🏖️', ['admin'], true, null, 'transfer'],
         // surprise stock check (جرد مفاجئ)
+        'must_remind'      => ['تذكير برسالة إلزامية لم تُقرأ',      'Reminder: a mandatory message not read', '🔒', [], true, true, 'live'],
+        'must_edited'      => ['تعديل رسالة إلزامية',               'A mandatory message was edited', '✏️', [], true, true, 'live'],
         'loc_ping'         => ['طلب تأكيد التواجد في الفرع',       'Asked to confirm you are at the branch', '📍', [], true, true, 'live'],
         'loc_result'       => ['نتيجة تأكيد التواجد',              'Location confirmation result', '📍', ['admin'], true, null, 'live'],
         'weekly_card'      => ['التقرير الأسبوعي لكل فرع (السبت)', 'Weekly branch report (Saturday)', '🗓️', ['admin'], true, null, 'live'],
@@ -853,6 +855,13 @@ function notify_message(PDO $pdo, string $event, array $d, string $lang): array
                 $url = 'transfer_receive.php?lang=' . $lang;
             }
             break;
+        case 'must_remind':
+        case 'must_edited':
+            $ed = $event === 'must_edited';
+            $title = ($ed ? '✏️ ' : '🔒 ') . ($ar ? ($ed ? 'تم تعديل رسالة إلزامية: ' : 'تذكير: رسالة إلزامية بانتظارك: ') : ($ed ? 'A mandatory message was edited: ' : 'Reminder: a mandatory message is waiting: ')) . ($d['title'] ?? '');
+            $body[] = $ar ? ($ed ? 'يجب قراءتها وتأكيدها من جديد — النظام مغلق حتى ذلك' : 'النظام مغلق حتى تقرأها وتؤكدها') : ($ed ? 'Read and confirm it again — the system is closed until then' : 'The system is closed until you read and confirm it');
+            $url = 'must_read.php?lang=' . $lang;
+            break;
         case 'loc_ping':
             $title = '📍 ' . ($ar ? 'مطلوب تأكيد تواجدك في الفرع — النظام مغلق' : 'Confirm you are at the branch — your system is closed');
             $body[] = $ar ? 'افتح النظام الآن واضغط «إرسال موقعي» — يُفتح النظام فور إرسال الموقع' : 'Open the system and press "Send my location" — it opens as soon as the location is sent';
@@ -1054,7 +1063,7 @@ function notify_message(PDO $pdo, string $event, array $d, string $lang): array
         default:
             $title = $ev[2] . ' ' . ($ar ? $ev[0] : $ev[1]);
     }
-    $noBy = ['test', 'loc_ping', 'loc_result', 'weekly_card', 'login_new', 'check_plan', 'user_locked', 'check_tick', 'transfer_missing', 'transfer_resolved', 'check_start', 'check_warn', 'check_locked', 'check_done', 'transfer_received', 'duty_start', 'duty_warn', 'duty_locked', 'duty_done', 'duty_unlocked', 'sale_celebrate', 'last_car', 'reserve_old', 'stock_aged', 'transfer_unconfirmed',
+    $noBy = ['test', 'must_remind', 'must_edited', 'loc_ping', 'loc_result', 'weekly_card', 'login_new', 'check_plan', 'user_locked', 'check_tick', 'transfer_missing', 'transfer_resolved', 'check_start', 'check_warn', 'check_locked', 'check_done', 'transfer_received', 'duty_start', 'duty_warn', 'duty_locked', 'duty_done', 'duty_unlocked', 'sale_celebrate', 'last_car', 'reserve_old', 'stock_aged', 'transfer_unconfirmed',
              'amana_long', 'bank_waiting', 'clockout_forgot', 'login_failed', 'price_reserved'];
     if ($by !== '' && !in_array($event, $noBy, true) && strpos($event, 'att_') !== 0) $body[] = ($ar ? '✍️ بواسطة ' : '✍️ by ') . $by;
     return [
@@ -1164,7 +1173,7 @@ function notify_deliver(PDO $pdo, int $logId, string $event, array $msg, array $
 
     // same kind, not seen yet, in the last 15 minutes → one grouped notification
     $group = [];
-    if (!in_array($event, ['message', 'test', 'transfer_incoming', 'loc_ping', 'loc_result', 'weekly_card', 'login_new', 'check_plan', 'check_item', 'check_start', 'check_tick', 'check_warn', 'check_locked', 'check_done', 'transfer_missing', 'user_locked', 'lock_basma', 'lock_reason', 'lock_countdown', 'duty_unlocked'], true)) {
+    if (!in_array($event, ['message', 'test', 'transfer_incoming', 'must_remind', 'must_edited', 'loc_ping', 'loc_result', 'weekly_card', 'login_new', 'check_plan', 'check_item', 'check_start', 'check_tick', 'check_warn', 'check_locked', 'check_done', 'transfer_missing', 'user_locked', 'lock_basma', 'lock_reason', 'lock_countdown', 'duty_unlocked'], true)) {
         $in2 = implode(',', $withDev);
         $gs = $pdo->prepare("SELECT i.user_id, l.title FROM notify_inbox i JOIN notify_log l ON l.id = i.log_id
                              WHERE i.user_id IN ($in2) AND l.event = ? AND i.seen_at IS NULL AND l.created_at >= NOW() - INTERVAL 15 MINUTE
@@ -1181,6 +1190,8 @@ function notify_deliver(PDO $pdo, int $logId, string $event, array $msg, array $
         $acts = [];
         if ($t !== '') {
             if ($event === 'message' && $needAck)       $acts['ack']  = [$ar ? '👍 تم الاطلاع' : '👍 OK', 'notify_act.php?a=ack&t=' . $t];
+            if ($event === 'message' && !empty($opts['must']) && ($roleOf[$uid] ?? '') !== 'admin') $acts['open'] = [$ar ? '📖 اقرأ الآن' : '📖 Read now', $msg['url']];   // a mandatory message is confirmed only on its own screen
+            elseif ($event === 'message' && !empty($opts['must']))  $acts['ack']  = [$ar ? '👍 تم الاطلاع' : '👍 OK', 'notify_act.php?a=ack&t=' . $t];
             if ($event === 'transfer_incoming')       { if (($roleOf[$uid] ?? '') === 'admin') $acts['recv'] = [$ar ? '✅ تم الاستلام' : '✅ Received', 'notify_act.php?a=recv&t=' . $t];
                                                         else $acts['open'] = [$ar ? '🔑 تأكيد الاستلام' : '🔑 Confirm', $msg['url']];   // everyone else types the chassis on the page
                                                         $acts['miss'] = [$ar ? '❌ لم تصل' : '❌ Did not arrive', 'notify_act.php?a=miss&t=' . $t]; }
