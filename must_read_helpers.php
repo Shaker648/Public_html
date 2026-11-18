@@ -15,7 +15,9 @@
  * Editing a message raises its version: everyone has to read and confirm it again.
  * The admin sees, per person: delivered to a phone, opened, reading time, wrong
  * answers, confirmed (which version, which device) — notifications_admin.php.
- * Admins are never closed out (they get it as a normal message).
+ * Everyone chosen is closed out — managers and admins too — except the sender.
+ * The admins are told on their phones: whom the system closed on (must_locked),
+ * each wrong answer (must_wrong), and each confirmation with the reply (must_answer).
  *
  * Needs push_helpers.php.
  */
@@ -105,15 +107,16 @@ function must_device(): string
 }
 
 /**
- * Send a mandatory message now. Admins among $userIds get it as a normal message
- * with «تم الاطلاع». Returns [people, devices, delivered, failed, logId].
+ * Send a mandatory message now. Everyone in $userIds is closed out until they confirm —
+ * managers and admins too — except the sender (if they chose themselves, they get it
+ * as a normal message with «تم الاطلاع»). Returns [people, devices, delivered, failed, logId].
  */
 function must_send(PDO $pdo, array $userIds, string $title, string $body, string $actor, ?array $quiz): array
 {
     must_tables($pdo);
     $ids = array_values(array_unique(array_filter(array_map('intval', $userIds))));
     if (!$ids) return [0, 0, 0, 0, 0];
-    $people = $pdo->query("SELECT id, role FROM users WHERE active = 1 AND id IN (" . implode(',', $ids) . ")")->fetchAll(PDO::FETCH_KEY_PAIR);
+    $people = $pdo->query("SELECT id, username FROM users WHERE active = 1 AND id IN (" . implode(',', $ids) . ")")->fetchAll(PDO::FETCH_KEY_PAIR);
     if (!$people) return [0, 0, 0, 0, 0];
     $ids = array_map('intval', array_keys($people));
 
@@ -122,14 +125,43 @@ function must_send(PDO $pdo, array $userIds, string $title, string $body, string
     $pdo->prepare("INSERT INTO must_msgs (log_id, quiz, min_secs, ver) VALUES (?, ?, ?, 1)")
         ->execute([$logId, $quiz ? json_encode($quiz, JSON_UNESCAPED_UNICODE) : null, must_min_secs($title, $body)]);
     $ins = $pdo->prepare("INSERT IGNORE INTO must_reads (log_id, user_id) VALUES (?, ?)");
-    foreach ($people as $uid => $role) if ($role !== 'admin') $ins->execute([$logId, (int)$uid]);
+    $locked = [];
+    foreach ($people as $uid => $name) {
+        if ($actor !== '' && (string)$name === $actor) continue;                     // the sender has read it
+        $ins->execute([$logId, (int)$uid]);
+        $locked[(int)$uid] = (string)$name;
+    }
 
     $rtl = (bool)preg_match('/\p{Arabic}/u', $title . $body);
     $ar  = $rtl;
     $short = mb_strlen($body) > 160 ? mb_substr($body, 0, 160) . '…' : $body;    // the full text is read inside the system
     [$devs, $ok, $bad] = notify_deliver($pdo, $logId, 'message', ['title' => '🔒 ' . $title, 'body' => $short . "\n" . ($ar ? '👆 افتح النظام لقراءتها — النظام مغلق حتى تقرأها وتؤكدها' : '👆 Open the system to read it — it stays closed until you confirm'),
-        'url' => 'must_read.php?id=' . $logId], $ids, $ar ? 'ar' : 'en', 'must-' . $logId, false, true, ['must' => true]);
+        'url' => 'must_read.php?id=' . $logId], $ids, $ar ? 'ar' : 'en', 'must-' . $logId, false, true, ['must' => true, 'locked' => array_keys($locked)]);
+    if ($locked) must_tell($pdo, 'must_locked', $logId, ['names' => array_values($locked), 'edited' => false]);
     return [count($ids), $devs, $ok, $bad, $logId];
+}
+
+/**
+ * Tell the admins (and the sender) on their phones — who gets each one is set on
+ * notifications_admin.php like every other event. $extra goes into the message.
+ */
+function must_tell(PDO $pdo, string $event, int $logId, array $extra, string $actor = ''): void
+{
+    if (!function_exists('notify_event')) return;
+    try {
+        $st = $pdo->prepare("SELECT l.title, l.actor, m.quiz FROM notify_log l JOIN must_msgs m ON m.log_id = l.id WHERE l.id = ?");
+        $st->execute([$logId]);
+        $l = $st->fetch(PDO::FETCH_ASSOC);
+        if (!$l) return;
+        $c = $pdo->prepare("SELECT COUNT(*) AS n, SUM(r.ok_ver >= m.ver) AS done FROM must_reads r JOIN must_msgs m ON m.log_id = r.log_id WHERE r.log_id = ?");
+        $c->execute([$logId]);
+        $cnt = $c->fetch(PDO::FETCH_ASSOC) ?: ['n' => 0, 'done' => 0];
+        notify_event($pdo, $event, $extra + [
+            'id' => $logId, 'title' => (string)$l['title'], 'quiz' => $l['quiz'] ? json_decode((string)$l['quiz'], true) : null,
+            'n' => (int)$cnt['n'], 'done' => (int)$cnt['done'],
+            'owners' => [(string)$l['actor']], 'actor' => $actor, 'tag' => $event . '-' . $logId . '-' . ($extra['uid'] ?? 0), 'force' => true, 'now' => true,
+        ]);
+    } catch (Throwable $e) { error_log('must_tell(' . $event . '): ' . $e->getMessage()); }
 }
 
 /**
@@ -185,7 +217,8 @@ function must_heartbeat(PDO $pdo, int $logId, int $uid, int $secs): void
 function must_confirm(PDO $pdo, int $logId, int $uid, ?int $choice): string
 {
     must_tables($pdo);
-    $st = $pdo->prepare("SELECT r.*, m.quiz, m.min_secs, m.ver FROM must_reads r JOIN must_msgs m ON m.log_id = r.log_id WHERE r.log_id = ? AND r.user_id = ? AND r.ok_ver < m.ver");
+    $st = $pdo->prepare("SELECT r.*, m.quiz, m.min_secs, m.ver, u.username FROM must_reads r JOIN must_msgs m ON m.log_id = r.log_id JOIN users u ON u.id = r.user_id
+                         WHERE r.log_id = ? AND r.user_id = ? AND r.ok_ver < m.ver");
     $st->execute([$logId, $uid]);
     $r = $st->fetch(PDO::FETCH_ASSOC);
     if (!$r) return 'none';
@@ -203,12 +236,15 @@ function must_confirm(PDO $pdo, int $logId, int $uid, ?int $choice): string
             $pdo->prepare("UPDATE must_reads SET wrong_n = wrong_n + 1 WHERE log_id = ? AND user_id = ?")->execute([$logId, $uid]);
             $_SESSION['must_t'][$k] = time() - (int)floor((int)$r['min_secs'] / 2);   // read it again: half the time
             unset($_SESSION['must_order'][$k]);
+            must_tell($pdo, 'must_wrong', $logId, ['user' => (string)$r['username'], 'uid' => $uid, 'picked' => $picked, 'tries' => (int)$r['wrong_n'] + 1], (string)$r['username']);
             return 'wrong';
         }
     }
     $pdo->prepare("UPDATE must_reads SET ok_at = NOW(), ok_ver = ?, device = ?, answer = ? WHERE log_id = ? AND user_id = ?")->execute([(int)$r['ver'], must_device(), $picked, $logId, $uid]);
     $pdo->prepare("UPDATE notify_inbox SET ack_at = COALESCE(ack_at, NOW()), read_at = COALESCE(read_at, NOW()), seen_at = COALESCE(seen_at, NOW()) WHERE log_id = ? AND user_id = ?")->execute([$logId, $uid]);
     unset($_SESSION['must_t'][$k], $_SESSION['must_order'][$k]);
+    must_tell($pdo, 'must_answer', $logId, ['user' => (string)$r['username'], 'uid' => $uid, 'picked' => $picked, 'tries' => (int)$r['wrong_n'],
+        'secs' => (int)$r['read_secs'], 'again' => (int)$r['ok_ver'] > 0], (string)$r['username']);
     return 'ok';
 }
 
@@ -229,7 +265,10 @@ function must_edit(PDO $pdo, int $logId, string $title, string $body, ?array $qu
     $who = $pdo->prepare("SELECT u.username FROM must_reads r JOIN users u ON u.id = r.user_id WHERE r.log_id = ? AND u.active = 1");
     $who->execute([$logId]);
     $names = $who->fetchAll(PDO::FETCH_COLUMN);
-    if ($names) notify_event($pdo, 'must_edited', ['title' => $title, 'id' => $logId, 'only' => array_map('strval', $names), 'actor' => '', 'tag' => 'must-' . $logId, 'force' => true, 'now' => true]);
+    if ($names) {
+        notify_event($pdo, 'must_edited', ['title' => $title, 'id' => $logId, 'only' => array_map('strval', $names), 'actor' => '', 'tag' => 'must-' . $logId, 'force' => true, 'now' => true]);
+        must_tell($pdo, 'must_locked', $logId, ['names' => array_map('strval', $names), 'edited' => true]);
+    }
     return true;
 }
 

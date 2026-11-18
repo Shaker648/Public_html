@@ -257,7 +257,7 @@ $T = $lang === 'ar' ? [
 ];
 $T += $lang === 'ar' ? [
     'g_live' => '⚡ أحداث فورية', 'g_remind' => '⏰ تذكيرات تلقائية', 'g_security' => '🛡️ الأمان', 'g_check' => '📋 الجرد المفاجئ', 'g_lock' => '🔒 إيقاف النظام', 'owner' => 'المعنيّ بالأمر',
-    'ownerTip' => 'من تخصه العملية: من حجز السيارة، أو موظفو الفرع الذي تتجه إليه السيارة، أو صاحب طلب التقسيط…',
+    'ownerTip' => 'من تخصه العملية: من حجز السيارة، أو موظفو الفرع الذي تتجه إليه السيارة، أو صاحب طلب التقسيط، أو من أرسل الرسالة الإلزامية…',
     's_h' => 'إعدادات التذكيرات التلقائية', 's_note' => 'تُرسل التذكيرات في أوقات العمل (١٠ ص – ٩ م) — باستثناء تذكير الانصراف',
     's_res' => 'التذكير بالحجز بعد', 's_aged' => 'تُعد السيارة «قديمة» بعد', 's_dow' => 'تقرير السيارات القديمة كل يوم', 's_amana' => 'التذكير بالأمانة بعد',
     's_bank' => 'التذكير إذا لم يرد البنك بعد', 's_co' => 'تذكير «تسجيل الانصراف» الساعة', 's_fail' => 'تنبيه الإدارة بعد محاولات دخول خاطئة', 'days' => 'يوم', 'times' => 'محاولات',
@@ -277,7 +277,7 @@ $T += $lang === 'ar' ? [
     'o_h' => 'لم يفعّلوا الإشعارات', 'o_note' => 'هؤلاء لم يفعّلوا الإشعارات على أي هاتف — لن تصلهم إلا داخل النظام', 'o_all' => '📣 تذكيرهم جميعاً', 'o_one' => 'تذكير', 'o_done' => '✅ أُرسلت إليهم رسالة بالخطوات', 'o_none' => '🎉 الجميع فعّلوا الإشعارات',
 ] : [
     'g_live' => '⚡ Live events', 'g_remind' => '⏰ Automatic reminders', 'g_security' => '🛡️ Security', 'g_check' => '📋 Surprise stock check', 'g_lock' => '🔒 Stopping the system', 'owner' => 'Person concerned',
-    'ownerTip' => 'Whoever it is about: who reserved the car, the staff of the branch it is going to, the salesperson of the bank request…',
+    'ownerTip' => 'Whoever it is about: who reserved the car, the staff of the branch it is going to, the salesperson of the bank request, the sender of a mandatory message…',
     's_h' => 'Automatic reminder settings', 's_note' => 'Reminders go out in working hours (10 am – 9 pm) — except the clock-out one',
     's_res' => 'Remind about a reservation after', 's_aged' => 'A car is "old" after', 's_dow' => 'Old-cars report every', 's_amana' => 'Remind about a consignment after',
     's_bank' => 'Remind if the bank has not replied after', 's_co' => '"Clock out" reminder at', 's_fail' => 'Tell the admin after wrong passwords', 'days' => 'days', 'times' => 'tries',
@@ -661,7 +661,7 @@ $rate = ($today['d'] + $today['f']) > 0 ? round($today['d'] * 100 / ($today['d']
                         <div class="nm-must-t">⏱️ <?= $lang === 'ar' ? 'أقل وقت للقراءة' : 'Minimum reading time' ?>: <b id="nmMin">—</b> <small><?= $lang === 'ar' ? '(يُحسب من طول الرسالة)' : '(from the length)' ?></small></div>
                         <label class="nm-opt"><span class="tg"><input type="checkbox" id="nmQon"><span></span></span> ❓ <?= $lang === 'ar' ? 'إضافة سؤال (اختبار أو اختيار رأي)' : 'Add a question (a check or a choice)' ?></label>
                         <div class="qz" id="nmQuiz" hidden></div>
-                        <small class="nm-must-n">👑 <?= $lang === 'ar' ? 'الأدمن من بين المستلمين تصلهم كرسالة عادية مع «👍 تم الاطلاع» ولا يُغلق النظام عليهم.' : 'Admins among the recipients get it as a normal message with «👍 OK»; their system is not closed.' ?></small>
+                        <small class="nm-must-n">👥 <?= $lang === 'ar' ? 'يُغلق النظام على كل من تختاره — الموظفين والمدراء ومديري النظام — ما عداك أنت. ويصلك إشعار: على من أُغلق النظام، وكل إجابة خاطئة، وكل تأكيد مع إجابته.' : 'The system closes on everyone you choose — staff, managers and admins — except you. You are notified: whom it closed on, each wrong answer, and each confirmation with the answer.' ?></small>
                     </div>
                     <div class="nm-opt"><span><?= $T['when'] ?>:</span>
                         <div class="seg" id="nmWhen"><button type="button" data-v="now" class="on"><?= $T['w_now'] ?></button><button type="button" data-v="later"><?= $T['w_later'] ?></button></div>
