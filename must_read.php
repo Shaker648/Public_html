@@ -4,7 +4,8 @@
  *
  * While a mandatory message is waiting, auth.php sends the person here from
  * every page. One message at a time: read it to the end for the minimum time,
- * answer the question if there is one, press «قرأت وفهمت». Then the next one,
+ * answer the question if there is one (or just pick, when it has no right
+ * answer), press «قرأت وفهمت». Then the next one,
  * then the system opens.
  *
  *   GET  ?json=1                → {"must": how many are waiting}   (app.js)
@@ -52,14 +53,19 @@ if (!$pending) { header('Location: dashboard.php?lang=' . $lang); exit; }
 $m = $pending[0];
 foreach ($pending as $p) if ((int)$p['log_id'] === (int)($_GET['id'] ?? 0)) { $m = $p; break; }
 $id = (int)$m['log_id'];
-must_opened($pdo, $id, $uid);
+must_opened($pdo, $id, $uid, (int)$m['ver']);
 $k = $id . ':' . $uid;
 $left = max(0, (int)$m['min_secs'] - (time() - (int)$_SESSION['must_t'][$k]));
 $quiz = $m['quiz'] ? json_decode((string)$m['quiz'], true) : null;
+$poll = must_is_poll($quiz);
 $choices = [];
 if ($quiz) {
-    if (!isset($_SESSION['must_order'][$k])) { $o = array_keys($quiz['choices']); shuffle($o); $_SESSION['must_order'][$k] = $o; }
-    foreach ($_SESSION['must_order'][$k] as $orig) $choices[] = (string)$quiz['choices'][$orig];   // the right answer's place is never sent
+    $keys = array_keys($quiz['choices']);
+    $o = $_SESSION['must_order'][$k] ?? null;
+    if ($poll) $o = $keys;                                                          // no right answer: the admin's order
+    elseif (!is_array($o) || count($o) !== count($keys) || array_diff($keys, $o)) { $o = $keys; shuffle($o); }   // a right answer: a random order
+    $_SESSION['must_order'][$k] = $o;
+    foreach ($o as $orig) $choices[] = (string)$quiz['choices'][$orig];             // the right answer's place is never sent
 }
 $pos = array_search($m, $pending, true) + 1;
 $total = count($pending);
@@ -109,6 +115,8 @@ body{min-height:100vh;background:radial-gradient(120% 60% at 50% 0%,#2a1050 0%,#
 .mr-c{display:flex;align-items:center;gap:12px;width:100%;margin-bottom:8px;padding:13px 14px;border-radius:15px;border:1.5px solid rgba(255,255,255,.12);background:rgba(255,255,255,.04);color:#f1f5f9;font:inherit;font-size:15px;font-weight:800;text-align:start;cursor:pointer;transition:border-color .15s,background .15s}
 .mr-c .dot{width:22px;height:22px;flex-shrink:0;border-radius:50%;border:2px solid rgba(255,255,255,.3);display:grid;place-items:center}
 .mr-c.on{border-color:#a855f7;background:rgba(168,85,247,.16)}.mr-c.on .dot{border-color:#a855f7;background:radial-gradient(circle,#a855f7 45%,transparent 50%)}
+.mr-q.poll .mr-c.on{border-color:#38bdf8;background:rgba(56,189,248,.14)}.mr-q.poll .mr-c.on .dot{border-color:#38bdf8;background:radial-gradient(circle,#38bdf8 45%,transparent 50%)}
+.mr-q.poll h3 small{color:#7dd3fc}
 .mr-wrong{margin:0 18px 14px;padding:12px 14px;border-radius:14px;background:rgba(239,68,68,.14);border:1px solid rgba(239,68,68,.5);color:#fecaca;font-size:14px;font-weight:800;line-height:1.7;animation:mrShake .45s}
 @keyframes mrShake{25%{transform:translateX(-6px)}50%{transform:translateX(6px)}75%{transform:translateX(-3px)}}
 .mr-go{position:relative;display:flex;align-items:center;justify-content:center;gap:10px;width:calc(100% - 36px);margin:0 18px 18px;height:62px;border:0;border-radius:18px;font:inherit;font-size:18px;font-weight:900;cursor:pointer;color:#fff;background:linear-gradient(135deg,#16a34a,#22c55e);box-shadow:0 14px 34px rgba(34,197,94,.35);transition:transform .15s,filter .2s}
@@ -147,12 +155,16 @@ body{min-height:100vh;background:radial-gradient(120% 60% at 50% 0%,#2a1050 0%,#
         <div class="mr-checks">
             <span class="mr-ck" id="ckEnd"><i>✓</i><?= $ar ? 'قرأت حتى النهاية' : 'Read to the end' ?></span>
             <span class="mr-ck" id="ckTime"><i>✓</i><span id="ckTimeT"><?= $ar ? 'وقت القراءة' : 'Reading time' ?></span></span>
-            <?php if ($quiz): ?><span class="mr-ck" id="ckQ"><i>✓</i><?= $ar ? 'أجبت على السؤال' : 'Answered the question' ?></span><?php endif; ?>
+            <?php if ($quiz): ?><span class="mr-ck" id="ckQ"><i>✓</i><?= $poll ? ($ar ? 'اخترت إجابتك' : 'Picked your answer') : ($ar ? 'أجبت على السؤال' : 'Answered the question') ?></span><?php endif; ?>
         </div>
         <?php if ($wrong): ?><div class="mr-wrong">❌ <?= $ar ? 'الإجابة غير صحيحة. اقرأ الرسالة مرة أخرى بعناية ثم أجب من جديد.' : 'Wrong answer. Read the message again carefully, then answer again.' ?></div><?php endif; ?>
         <?php if ($quiz): ?>
-        <div class="mr-q off" id="mrQ">
+        <div class="mr-q off<?= $poll ? ' poll' : '' ?>" id="mrQ">
+            <?php if ($poll): ?>
+            <h3>💬 <?= htmlspecialchars((string)$quiz['q']) ?><small><?= $ar ? 'لا توجد إجابة صحيحة أو خاطئة — اختر ما يناسبك، وتصل إجابتك إلى الإدارة. يُفتح بعد إكمال القراءة.' : 'There is no right or wrong answer — pick what fits you; management sees your answer. Opens once you have read it.' ?></small></h3>
+            <?php else: ?>
             <h3>❓ <?= htmlspecialchars((string)$quiz['q']) ?><small><?= $ar ? 'سؤال للتأكد من قراءة الرسالة — يُفتح بعد إكمال القراءة' : 'To make sure the message was read — opens once you have read it' ?></small></h3>
+            <?php endif; ?>
             <?php foreach ($choices as $ci => $ct): ?><button type="button" class="mr-c" data-c="<?= $ci ?>"><span class="dot"></span><span dir="auto"><?= htmlspecialchars($ct) ?></span></button><?php endforeach; ?>
         </div>
         <?php endif; ?>
@@ -164,12 +176,12 @@ body{min-height:100vh;background:radial-gradient(120% 60% at 50% 0%,#2a1050 0%,#
     <div class="mr-foot"><a href="logout.php">🚪 <?= $ar ? 'تسجيل الخروج' : 'Sign out' ?></a></div>
 </div>
 
-<div class="mr-done" id="mrDone"><div class="ck"><svg viewBox="0 0 50 50"><path d="M13 26 l8 8 l16 -18"/></svg></div><b><?= $ar ? 'تم التأكيد — شكراً لك' : 'Confirmed — thank you' ?></b><span id="mrDoneT"></span></div>
+<div class="mr-done" id="mrDone"><div class="ck"><svg viewBox="0 0 50 50"><path d="M13 26 l8 8 l16 -18"/></svg></div><b><?= $poll ? ($ar ? 'تم التأكيد وإرسال إجابتك — شكراً لك' : 'Confirmed and your answer was sent — thank you') : ($ar ? 'تم التأكيد — شكراً لك' : 'Confirmed — thank you') ?></b><span id="mrDoneT"></span></div>
 
 <script>
 (function () {
     const AR = <?= json_encode($ar) ?>, ID = <?= $id ?>, CSRF = <?= json_encode($csrf) ?>, LANG = <?= json_encode($lang) ?>;
-    const NEED = <?= (int)$m['min_secs'] ?>, HAS_Q = <?= $quiz ? 'true' : 'false' ?>;
+    const NEED = <?= (int)$m['min_secs'] ?>, HAS_Q = <?= $quiz ? 'true' : 'false' ?>, HAS_POLL = <?= $poll ? 'true' : 'false' ?>;
     let left = <?= (int)$left ?>, atEnd = false, choice = null, busy = false, onScreen = 0;
     const $ = id => document.getElementById(id);
     const body = $('mrBody'), wrap = $('mrBodyW'), go = $('mrGo'), goT = $('mrGoT'), fg = $('mrRingFg');
@@ -197,7 +209,7 @@ body{min-height:100vh;background:radial-gradient(120% 60% at 50% 0%,#2a1050 0%,#
         goT.textContent = ready ? (AR ? '✅ قرأت وفهمت' : '✅ I have read and understood')
             : !atEnd ? (AR ? 'مرّر حتى نهاية الرسالة' : 'Scroll to the end of the message')
             : left > 0 ? (AR ? 'تابع القراءة… ' : 'Keep reading… ') + fmt(left)
-            : (AR ? 'أجب على السؤال' : 'Answer the question');
+            : HAS_POLL ? (AR ? 'اختر إجابتك' : 'Pick your answer') : (AR ? 'أجب على السؤال' : 'Answer the question');
     }
     // the clock only runs while the message is on screen
     setInterval(() => { if (document.hidden) return; if (left > 0) left--; onScreen++; paint(); }, 1000);
@@ -223,6 +235,7 @@ body{min-height:100vh;background:radial-gradient(120% 60% at 50% 0%,#2a1050 0%,#
         }
         if (r && r.state === 'wrong') { if (window.F1App) F1App.sound('bad'); location.href = 'must_read.php?lang=' + LANG + '&id=' + ID + '&wrong=1'; return; }
         if (r && r.state === 'none') { location.href = 'dashboard.php?lang=' + LANG; return; }
+        if (r && r.state === 'pick') { choice = null; document.querySelectorAll('.mr-c').forEach(x => x.classList.remove('on')); busy = false; paint(); return; }
         if (r && r.state === 'early') left = Math.max(left, 3);
         busy = false; paint();
         if (!r || r.state !== 'early') goT.textContent = AR ? 'تعذّر الحفظ — حاول مرة أخرى' : 'Could not save — try again';
