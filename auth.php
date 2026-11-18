@@ -97,7 +97,7 @@ if ($currentUser['role'] !== 'admin' && is_file(__DIR__ . '/check_auto.php')) {
 
 // Step 4c: a mandatory message («رسالة إلزامية») is waiting: nothing opens — البصمة included — until it is
 // read and confirmed on must_read.php. A location request (4b) comes first. Whoever the sender chose —
-// managers and admins too (the sender never gets a row, see must_send).
+// managers, admins, and the sender too if they chose themselves (see must_send).
 if (is_file(__DIR__ . '/must_read_helpers.php')) {
     $__page = basename($_SERVER['SCRIPT_NAME'] ?? '');
     if (!in_array($__page, ['must_read.php', 'loc_ping.php', 'logout.php', 'push_subscribe.php'], true)) {
