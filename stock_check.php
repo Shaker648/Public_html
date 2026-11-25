@@ -139,6 +139,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                                     array_keys($picks), false, array_keys(array_filter($picks, fn($a) => $a === 'color')), $o];
                 if (!empty($in['double']) && count($users) >= 2) {
                     // 👥 a double check: the same check for each person alone (the followers are told once)
+                    $opt['double_with'] = array_map('strval', $pdo->query("SELECT username FROM users WHERE id IN (" . implode(',', array_map('intval', $users)) . ") ORDER BY FIELD(id, " . implode(',', array_map('intval', $users)) . ")")->fetchAll(PDO::FETCH_COLUMN));
                     $id = smart_check_create(...$args([$users[0]], $opt));
                     if ($id) {
                         $pdo->prepare("UPDATE stock_checks SET group_id = ? WHERE id = ?")->execute([$id, $id]);
@@ -206,12 +207,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 // the number must match the system: a wrong one warns once, the second stops the system (the admin sees typed against real)
                 $t = check_count_try($pdo, $cid, $uid, $me, $n, $bTotal, (string)$branchOf);
                 if ($t['ok'] || $t['locked']) {
-                    // told to the people following the check — never to the people doing it (it carries the system's number)
-                    $doing = array_values(smart_check_users($pdo, $cid));
-                    $tell = array_values(array_diff(array_unique(array_merge(
-                        array_map('strval', $pdo->query("SELECT username FROM users WHERE active = 1 AND role = 'admin'")->fetchAll(PDO::FETCH_COLUMN)), smart_check_watchers($pdo, $cid))), $doing));
+                    // told to the admins and the people following the check — never to anyone doing it, nor a twin of it (it carries the system's number)
+                    $tell = check_not_doing($pdo, $cid, array_merge(check_admin_names($pdo), smart_check_watchers($pdo, $cid)));
                     if ($tell) notify_event($pdo, 'check_item', ['id' => $cid, 'branch' => (string)$branchOf, 'counted' => $n, 'total' => $bTotal, 'actor_name' => $me,
-                        'actor' => $me, 'only' => $tell, 'tag' => 'check-count-' . $cid . '-' . $uid, 'force' => true, 'now' => true]);
+                        'before' => $t['before'] ?? null, 'locked' => $t['locked'], 'actor' => $me, 'only' => $tell, 'tag' => 'check-count-' . $cid . '-' . $uid, 'force' => true, 'now' => true]);
                 }
                 if (!$t['ok']) { echo json_encode(['ok' => false, 'error' => 'count', 'locked' => $t['locked'], 'go' => $t['locked'] ? 'transfer_lock.php?lang=' . $lang : '']); exit; }
                 echo json_encode(['ok' => true]); exit;
@@ -220,11 +219,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 if (chassis_locked($pdo, $uid)) { echo json_encode(['ok' => false, 'error' => 'locked', 'go' => 'transfer_lock.php?lang=' . $lang]); exit; }
                 $n = (int)($in['n'] ?? -1);
                 if (!is_numeric($in['n'] ?? null) || $n < 0 || $n > 5000) { echo json_encode(['ok' => false, 'error' => 'number']); exit; }
-                $ck = $pdo->prepare("SELECT 1 FROM stock_checks WHERE id = ? AND status IN ('active', 'expired')"); $ck->execute([$cid]);
-                if (!$ck->fetchColumn() || check_counted($pdo, $cid, $uid) === null) break;
+                $ck = $pdo->prepare("SELECT branch FROM stock_checks WHERE id = ? AND status IN ('active', 'expired')"); $ck->execute([$cid]);
+                $branchOf = $ck->fetchColumn();
+                if ($branchOf === false || check_counted($pdo, $cid, $uid) === null) break;
                 $qid = (int)($in['q'] ?? 0);
                 if (!in_array($qid, array_map(fn($q) => (int)$q['id'], check_q_pending($pdo, $cid, $uid)), true)) { echo json_encode(['ok' => true]); exit; }   // answered already
                 $t = check_q_try($pdo, $cid, $qid, $uid, $me, $n);
+                if (($t['ok'] || $t['locked']) && isset($t['expected'])) {
+                    // 🔢 the answer, against the system: to the admins and the people following the check — never to anyone doing it, nor a twin of it
+                    $tell = check_not_doing($pdo, $cid, array_merge(check_admin_names($pdo), smart_check_watchers($pdo, $cid)));
+                    $qAll = array_map(fn($q) => (int)$q['id'], check_q_list($pdo, $cid));
+                    if ($tell) notify_event($pdo, 'check_item', ['id' => $cid, 'branch' => (string)$branchOf, 'question' => 1, 'q_ar' => $t['q_ar'], 'q_en' => $t['q_en'], 'qkind' => $t['kind'],
+                        'answer' => $n, 'expected' => $t['expected'], 'before' => $t['before'], 'locked' => $t['locked'], 'qn' => (int)array_search($qid, $qAll, true) + 1, 'qof' => count($qAll),
+                        'actor_name' => $me, 'actor' => $me, 'only' => $tell, 'tag' => 'check-q-' . $cid . '-' . $uid . '-' . $qid, 'force' => true, 'now' => true]);
+                }
                 if (!$t['ok']) { echo json_encode(['ok' => false, 'error' => 'count', 'locked' => $t['locked'], 'go' => $t['locked'] ? 'transfer_lock.php?lang=' . $lang : '']); exit; }
                 echo json_encode(['ok' => true]); exit;
             case 'mark':
@@ -299,11 +307,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
                 $counts = smart_check_counts($pdo, $cid);
                 // the admin follows the check car by car (one notification per check on the phone, updated each time)
-                if ($prev && $state && ($prev['state'] !== $state || ($state === 'missing' && $note !== '' && $note !== (string)$prev['note']))) {
+                $w = smart_check_watchers($pdo, $cid);
+                $to = $w ? check_not_doing($pdo, $cid, $w) : [];   // never anyone doing it, nor a twin of it (a double check: each one checks alone)
+                if ($prev && $state && ($prev['state'] !== $state || ($state === 'missing' && $note !== '' && $note !== (string)$prev['note'])) && (!$w || $to)) {
                     notify_event($pdo, 'check_item', ['id' => $cid, 'branch' => $prev['branch'], 'label' => $prev['label'], 'chassis' => $state === 'present' ? $prev['chassis'] : '', 'state' => $state,
                         'color' => $state === 'present' && ($prev['ask'] ?? '') === 'color' ? push_color_label($pdo, (string)$prev['color'], notify_options($pdo)['lang']) : '',
                         'note' => $note, 'done' => $counts[1], 'total' => $counts[0], 'missing' => $counts[3], 'actor' => $me, 'tag' => 'check-' . $cid]
-                        + (($w = smart_check_watchers($pdo, $cid)) ? ['only' => $w] : []));
+                        + ($to ? ['only' => $to] : []));
                 }
                 echo json_encode(['ok' => true, 'counts' => $counts, 'item' => (int)($in['item'] ?? 0), 'chassis' => $shown ?? null,
                                   'color' => $answer !== null ? push_color_label($pdo, $answer, $lang) : null, 'photo' => $needPhoto]); exit;

@@ -708,11 +708,16 @@ function smart_check_create(PDO $pdo, string $branch, array $userIds, int $minut
     }
     $names = smart_check_users($pdo, $id);
     $dur = $lang === 'ar' ? ($minutes % 60 === 0 ? ($minutes === 60 ? 'ساعة' : ($minutes === 120 ? 'ساعتان' : ($minutes / 60) . ' ساعات')) : push_ar_mins($minutes)) : $minutes . ' min';
-    // the people doing it + the people the admin chose to follow it (the admin included, if chosen)
-    notify_event($pdo, 'check_start', ['id' => $id, 'branch' => $branch, 'count' => count($cars), 'spot' => $spot, 'pick' => (bool)$pick, 'colors' => $nColor,
+    $start = ['id' => $id, 'branch' => $branch, 'count' => count($cars), 'spot' => $spot, 'pick' => (bool)$pick, 'colors' => $nColor,
         'until' => smart_time_label(time() + $minutes * 60, $lang), 'dur' => $dur,
-        'users' => implode('، ', $names), 'note' => $note, 'lock' => $lock, 'only' => array_merge(array_values($names), empty($opt['quiet']) ? smart_check_watchers($pdo, $id) : []),
-        'actor' => $by, 'tag' => 'chk-' . $id, 'force' => true, 'now' => true]);
+        'users' => implode('، ', $names), 'note' => $note, 'lock' => $lock, 'actor' => $by, 'tag' => 'chk-' . $id, 'force' => true, 'now' => true];
+    // the people doing it: only what they need — nothing about chosen cars, questions or photos
+    notify_event($pdo, 'check_start', $start + ['only' => array_values($names)]);
+    // the people the admin chose to follow it (the admin included, if chosen): the same, with what was asked
+    if (empty($opt['quiet'])) {
+        $fol = array_values(array_diff(smart_check_watchers($pdo, $id), array_values($names), array_map('strval', (array)($opt['double_with'] ?? []))));
+        if ($fol) notify_event($pdo, 'check_start', $start + ['only' => $fol, 'detail' => $extras ? check_start_detail($pdo, $id, $opt) : []]);
+    }
     return $id;
 }
 
@@ -766,9 +771,12 @@ function smart_check_finish(PDO $pdo, int $checkId, string $by): bool
     // a case for every car not found (the admins decide; a re-check is proposed for the next day).
     // What looked odd (speed, location) went to the admins alone while it happened — never in this message, which followers get too.
     $cases = function_exists('check_cases_after_finish') ? check_cases_after_finish($pdo, $checkId) : 0;
-    notify_event($pdo, 'check_done', ['id' => $checkId, 'branch' => $c['branch'], 'present' => $p, 'missing' => $x, 'extra' => $e, 'by' => $by, 'cases' => $cases,
+    // the result carries the system's numbers: never to anyone still doing a twin of it (a double check)
+    $to = $w && function_exists('check_not_doing') ? check_not_doing($pdo, $checkId, $w, true) : $w;
+    if (!$w || $to) notify_event($pdo, 'check_done', ['id' => $checkId, 'branch' => $c['branch'], 'present' => $p, 'missing' => $x, 'extra' => $e, 'by' => $by, 'cases' => $cases,
         'late' => $c['status'] === 'expired', 'missing_list' => array_map(fn($r) => $r['chassis'], $ml->fetchAll(PDO::FETCH_ASSOC)), 'actor' => $by, 'tag' => 'chk-' . $checkId, 'force' => true, 'now' => true]
-        + ($w ? ['only' => $w] : []));
+        + (function_exists('check_done_summary') ? check_done_summary($pdo, $checkId) : [])   // 🔢 everyone's count and answers · 🎯 the cars chosen · 📷 the photos
+        + ($to ? ['only' => $to] : []));
     if (function_exists('check_pair_finished')) check_pair_finished($pdo, $checkId);   // a double check: the comparison once everyone is done
     smart_duty_scan($pdo);   // someone locked only because of this check → the admin is told
     return true;
@@ -789,7 +797,8 @@ function smart_check_scan(PDO $pdo): array
             $names = smart_check_users($pdo, $id);
             [$t, $m] = smart_check_counts($pdo, $id);
             $warnAt = min($warnMax, max(5, intdiv((int)$c['minutes'], 3))) * 60;
-            $who = array_merge(array_values($names), smart_check_watchers($pdo, $id));
+            // the people doing it + the people following it — never someone doing a twin of it (a double check: it would show this one's numbers)
+            $who = array_merge(array_values($names), function_exists('check_not_doing') ? check_not_doing($pdo, $id, smart_check_watchers($pdo, $id)) : smart_check_watchers($pdo, $id));
             // half-way: the same notification updates with the time left
             if (!(int)$c['half_sent'] && (int)$c['secs'] > $warnAt && (int)$c['secs'] <= (int)$c['minutes'] * 30) {
                 $pdo->prepare("UPDATE stock_checks SET half_sent = 1 WHERE id = ?")->execute([$id]);
