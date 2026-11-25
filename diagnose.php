@@ -56,7 +56,7 @@ $EXPECTED = /*EXPECTED*/[
     'offline.html' => '84a64a0b2a88bb042809b97459bf6cff',
     'car_peek.php' => '7f3e70528a2ccb2568e3cc7936904a17',
     'my_day.php' => '7007f592a951d091a00f5ad3a94ef675',
-    'check_auto.php' => '759146c941a9aac0507417c90af2aa19',
+    'check_auto.php' => '7d5fbb832101b62f7ad0f060f8967022',
     'devices.php' => 'aa3080275f33907749bfa35c130fadd6',
     'devices_helpers.php' => '16e310d01a8991170034bd2fe1c22ff1',
     'loc_ping.php' => '233619574e85394ab171f859cfff8f8a',
@@ -89,7 +89,7 @@ $EXPECTED = /*EXPECTED*/[
     'pricing_helpers.php' => '8a07e7ac7fba1194fd3fce1df9b23d9b',
     'pwa_head.php' => '5bcf1664b82d3459279445d292fbed1f',
     'notify_style.php' => '398c976110ac36a1b23c825f3f228746',
-    'stock_check.php' => '9e3b19987f7f5f1f0872980a41078582',
+    'stock_check.php' => 'f0adfb20442dc42cb5b7945ceaa1d0c1',
     'transfer_receive.php' => 'a8dd4ac2e950d5b891dbc4cb23aef6c2',
     'notify_popup.php' => '6b8c96fbb24e51b81a1697baa27f2a08',
     'notify_feed.php' => 'cb14b135350e87bcb8f5460b04066575',
@@ -97,7 +97,7 @@ $EXPECTED = /*EXPECTED*/[
     'chatbot_api.php' => '01c5964ef4f708b3bfd08e779eddf451',
     'sw.js' => '4676a73c7396bb0cc5aa57a30db2b89e',
     'push_client.js' => 'c957bb62b5f9c54b2866224d99b3271f',
-    'stock_check_extras.php' => '6d76ba84802c5248409ac4ded37a2c2b',
+    'stock_check_extras.php' => 'ef368ab7692bd8b3bc8624db5b667538',
 ]/*/EXPECTED*/;
 
 $rows = [];

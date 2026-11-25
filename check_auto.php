@@ -154,8 +154,8 @@ function check_auto_pending(PDO $pdo): array
     } catch (Throwable $e) { return []; }
 }
 
-/** One random car of a branch, as a spot check for one person. Returns the check id (0 = no car there). */
-function check_spot_create(PDO $pdo, string $branch, int $uid, int $minutes, string $by): int
+/** One random car of a branch, as a spot check for one person ($photo: with a photo of its chassis plate — the admin's choice). Returns the check id (0 = no car there). */
+function check_spot_create(PDO $pdo, string $branch, int $uid, int $minutes, string $by, bool $photo = false): int
 {
     check_auto_tables($pdo);
     // one of the four cars nobody has physically confirmed for the longest time (never confirmed first), at random
@@ -173,11 +173,11 @@ function check_spot_create(PDO $pdo, string $branch, int $uid, int $minutes, str
         $car = (int)$st->fetchColumn();
     }
     if (!$car) return 0;
-    return smart_check_create($pdo, $branch, [$uid], max(3, min(60, $minutes)), '', true, $by, [], [$car], true);
+    return smart_check_create($pdo, $branch, [$uid], max(3, min(60, $minutes)), '', true, $by, [], [$car], true, [], ['photos' => $photo ? 1 : 0]);
 }
 
-/** The admin's answer to a proposal: send it now, or skip it. Returns the new check id (0 = skipped or failed). */
-function check_auto_decide(PDO $pdo, int $planId, bool $send, string $by, int $minutes = 0): int
+/** The admin's answer to a proposal: send it now (with a chassis-plate photo or not — the admin's choice), or skip it. Returns the new check id (0 = skipped or failed). */
+function check_auto_decide(PDO $pdo, int $planId, bool $send, string $by, int $minutes = 0, bool $photo = false): int
 {
     check_auto_tables($pdo);
     $st = $pdo->prepare("SELECT * FROM stock_check_plans WHERE id = ? AND status = 'pending'");
@@ -186,7 +186,7 @@ function check_auto_decide(PDO $pdo, int $planId, bool $send, string $by, int $m
     if (!$p) return 0;
     $cid = 0;
     if ($p['kind'] === 'recheck') {   // a car not found last time, checked again by someone else
-        $cid = $send && function_exists('check_case_recheck_now') ? check_case_recheck_now($pdo, (int)$p['case_id'], (int)$p['user_id'], $minutes ?: 5, $by) : 0;
+        $cid = $send && function_exists('check_case_recheck_now') ? check_case_recheck_now($pdo, (int)$p['case_id'], (int)$p['user_id'], $minutes ?: 5, $by, $photo) : 0;
         $pdo->prepare("UPDATE stock_check_plans SET status = ?, decided_by = ?, decided_at = NOW(), check_id = ? WHERE id = ?")->execute([$cid ? 'sent' : 'skipped', $by, $cid ?: null, $planId]);
         return $cid;
     }
@@ -196,8 +196,8 @@ function check_auto_decide(PDO $pdo, int $planId, bool $send, string $by, int $m
         return 0;
     }
     if ($send) {
-        $cid = $p['kind'] === 'spot' ? check_spot_create($pdo, (string)$p['branch'], (int)$p['user_id'], $minutes ?: 5, $by)
-                                     : smart_check_create($pdo, (string)$p['branch'], [(int)$p['user_id']], $minutes ?: 30, '', true, $by, []);
+        $cid = $p['kind'] === 'spot' ? check_spot_create($pdo, (string)$p['branch'], (int)$p['user_id'], $minutes ?: 5, $by, $photo)
+                                     : smart_check_create($pdo, (string)$p['branch'], [(int)$p['user_id']], $minutes ?: 30, '', true, $by, [], [], false, [], ['photos' => $photo ? 1 : 0]);
     }
     $pdo->prepare("UPDATE stock_check_plans SET status = ?, decided_by = ?, decided_at = NOW(), check_id = ? WHERE id = ?")->execute([$cid ? 'sent' : 'skipped', $by, $cid ?: null, $planId]);
     return $cid;

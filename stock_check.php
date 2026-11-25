@@ -85,8 +85,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['photo'])) {   // tak
     if (!sc_access($pdo, $cid, $uid, false)) $fail('denied');
     if (chassis_locked($pdo, $uid)) $fail('locked');
     sc_photo_col($pdo);
-    // only for a car this person has already confirmed with its chassis, in a check that is still running
-    $st = $pdo->prepare("SELECT i.id FROM stock_check_items i JOIN stock_checks c ON c.id = i.check_id WHERE i.id = ? AND i.check_id = ? AND i.state = 'present' AND c.status IN ('active', 'expired')");
+    // taken with the camera inside the page (never a file from the phone's gallery: an older page that still offers one is refused)
+    if (($_POST['src'] ?? '') !== 'camera') $fail('camera');
+    // only for a car the admin asked a photo of, that this person has already confirmed, in a check that is still running
+    $st = $pdo->prepare("SELECT i.id FROM stock_check_items i JOIN stock_checks c ON c.id = i.check_id WHERE i.id = ? AND i.check_id = ? AND i.state = 'present' AND i.photo_req = 1 AND c.status IN ('active', 'expired')");
     $st->execute([$item, $cid]);
     if (!$st->fetchColumn()) $fail('item');
     $up = $_FILES['photo'];
@@ -169,11 +171,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $branch = (string)($in['branch'] ?? ''); $who = (int)($in['user'] ?? 0);
                 $okB = $pdo->prepare("SELECT 1 FROM branches WHERE name = ?"); $okB->execute([$branch]);
                 if (!$okB->fetchColumn() || !$who) { echo json_encode(['ok' => false, 'error' => 'pick']); exit; }
-                $id = check_spot_create($pdo, $branch, $who, (int)($in['minutes'] ?? 5), $me);
+                $id = check_spot_create($pdo, $branch, $who, (int)($in['minutes'] ?? 5), $me, !empty($in['photo']));
                 echo json_encode($id ? ['ok' => true, 'id' => $id] : ['ok' => false, 'error' => 'nocar']); exit;
             case 'plan':     // the admin's answer to a check the system proposed
                 if (!$isAdmin) break;
-                $id = check_auto_decide($pdo, (int)($in['plan'] ?? 0), !empty($in['send']), $me, (int)($in['minutes'] ?? 0));
+                $id = check_auto_decide($pdo, (int)($in['plan'] ?? 0), !empty($in['send']), $me, (int)($in['minutes'] ?? 0), !empty($in['photo']));
                 echo json_encode(['ok' => true, 'id' => $id]); exit;
             case 'auto_rules':
                 if (!$isAdmin) break;
@@ -312,10 +314,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             case 'finish':
                 if (!sc_access($pdo, $cid, $uid, false) && !$isBoss) break;
                 if (!$isAdmin && !sc_is_spot($pdo, $cid) && !check_step1_done($pdo, $cid, $uid) && sc_access($pdo, $cid, $uid, false)) { echo json_encode(['ok' => false, 'error' => 'count_first']); exit; }
-                if (!$isAdmin) {   // a photo of the chassis plate: every car of a spot check, and the cars picked at random in a check
+                if (!$isAdmin) {   // a photo of the chassis plate: only the cars the admin asked one of
                     sc_photo_col($pdo);
-                    $np = $pdo->prepare("SELECT COUNT(*) FROM stock_check_items WHERE check_id = ? AND car_id > 0 AND state = 'present' AND photo IS NULL AND (photo_req = 1 OR ?)");
-                    $np->execute([$cid, sc_is_spot($pdo, $cid) ? 1 : 0]);
+                    $np = $pdo->prepare("SELECT COUNT(*) FROM stock_check_items WHERE check_id = ? AND car_id > 0 AND state = 'present' AND photo IS NULL AND photo_req = 1");
+                    $np->execute([$cid]);
                     if ((int)$np->fetchColumn()) { echo json_encode(['ok' => false, 'error' => 'photo']); exit; }
                 }
                 echo json_encode(['ok' => smart_check_finish($pdo, $cid, $me)]); exit;
@@ -338,7 +340,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 echo json_encode(['ok' => check_case_decide($pdo, (int)($in['id'] ?? 0), (string)($in['how'] ?? ''), (string)($in['note'] ?? ''), $me)]); exit;
             case 'case_recheck': // 🔁 check that car again now, with someone else
                 if (!$isAdmin) break;
-                $nid = check_case_recheck_now($pdo, (int)($in['id'] ?? 0), (int)($in['user'] ?? 0), (int)($in['minutes'] ?? 5), $me);
+                $nid = check_case_recheck_now($pdo, (int)($in['id'] ?? 0), (int)($in['user'] ?? 0), (int)($in['minutes'] ?? 5), $me, !empty($in['photo']));
                 echo json_encode($nid ? ['ok' => true, 'id' => $nid] : ['ok' => false, 'error' => 'nocar']); exit;
             case 'cancel':
                 if (!$isBoss) break;
@@ -507,7 +509,32 @@ $ago = function ($s) use ($ar): string {
 .sc-cn.ok{background:rgba(34,197,94,.15);color:#86efac}.sc-cn.bad{background:rgba(239,68,68,.16);color:#fca5a5}
 .sc-ph-a{display:inline-block;margin-top:4px;font-size:12.5px;font-weight:800;color:#7dd3fc;text-decoration:none}
 .sc-it .phb{width:100%;display:none}.sc-it.present .phb{display:block}
-.sc-it .phbtn{display:flex;align-items:center;justify-content:center;gap:8px;height:50px;border-radius:13px;border:1.5px dashed rgba(56,189,248,.6);background:rgba(56,189,248,.08);color:#bae6fd;font-size:14.5px;font-weight:900;cursor:pointer}
+.sc-it .phbtn{display:flex;align-items:center;justify-content:center;gap:8px;width:100%;height:50px;border-radius:13px;border:1.5px dashed rgba(56,189,248,.6);background:rgba(56,189,248,.08);color:#bae6fd;font:inherit;font-size:14.5px;font-weight:900;cursor:pointer}
+/* 📷 the camera inside the page (no file picker, no gallery) */
+.cam{position:fixed;inset:0;z-index:100;display:none;flex-direction:column;background:#000;color:#fff}
+.cam.on{display:flex}
+.cam-top{display:flex;align-items:center;gap:10px;padding:calc(10px + env(safe-area-inset-top)) 14px 10px}
+.cam-t{flex:1;min-width:0;font-size:14px;font-weight:900;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cam-x{width:42px;height:42px;flex-shrink:0;border-radius:50%;border:0;background:rgba(255,255,255,.16);color:#fff;font-size:18px;cursor:pointer}
+.cam-view{position:relative;flex:1;min-height:0;overflow:hidden;background:#000}
+.cam-view video{width:100%;height:100%;object-fit:cover;display:block}
+.cam-view .cam-img{width:100%;height:100%;object-fit:contain;display:block}
+.cam-view [hidden]{display:none!important}
+.cam-frame{position:absolute;inset:0;display:grid;place-items:center;pointer-events:none}
+.cam-frame span{width:84%;height:24%;border:3px solid rgba(255,255,255,.9);border-radius:16px;box-shadow:0 0 0 9999px rgba(0,0,0,.38)}
+.cam-msg{position:absolute;inset-inline:16px;bottom:16px;display:grid;gap:8px;padding:14px;border-radius:16px;background:rgba(15,23,42,.96);border:1px solid rgba(245,158,11,.5);color:#fde68a;font-size:13.5px;font-weight:700;line-height:1.8}
+.cam-msg b{display:block;color:#fff;font-size:15px}
+.cam-retry{justify-self:start;height:40px;padding:0 14px;border-radius:12px;border:0;background:#f59e0b;color:#1c1917;font:inherit;font-weight:900;cursor:pointer}
+.cam-hint{text-align:center;font-size:13px;font-weight:800;color:#cbd5e1;padding:10px 16px 0}
+.cam-bar{display:flex;align-items:center;justify-content:center;gap:12px;padding:12px 16px calc(18px + env(safe-area-inset-bottom))}
+.cam-bar [hidden]{display:none}
+.cam-shot{width:78px;height:78px;border-radius:50%;border:5px solid #fff;background:transparent;cursor:pointer;display:grid;place-items:center;padding:0}
+.cam-shot i{width:60px;height:60px;border-radius:50%;background:#fff;transition:transform .1s}
+.cam-shot:active i{transform:scale(.88)}
+.cam-shot:disabled{opacity:.35;cursor:default}
+.cam-again,.cam-use{height:54px;padding:0 20px;border-radius:16px;border:0;font:inherit;font-size:16px;font-weight:900;cursor:pointer}
+.cam-again{background:rgba(255,255,255,.16);color:#fff}.cam-use{flex:1;max-width:260px;background:linear-gradient(90deg,#16a34a,#0ea5e9);color:#fff}
+.sc-pp{display:inline-flex;align-items:center;gap:7px;font-size:12.5px;font-weight:800;color:var(--mut);cursor:pointer;white-space:nowrap}
 .sc-it .phb.done .phbtn{border-style:solid;border-color:rgba(34,197,94,.55);background:rgba(34,197,94,.1);color:#bbf7d0}
 .sc-it .phb.busy .phbtn{opacity:.6;pointer-events:none}
 .sc-it .pherr{font-size:13px;font-weight:800;color:#fca5a5;margin-top:6px}.sc-it .pherr:empty{display:none}
@@ -705,6 +732,7 @@ $ago = function ($s) use ($ar): string {
                 <?php if ($rc && !empty($pl['car_label'])): ?><small>🚗 <?= htmlspecialchars((string)$pl['car_label']) ?> · 🔑 <?= htmlspecialchars((string)$pl['car_chassis']) ?></small><?php endif; ?>
                 <small>👤 <?= $ar ? 'المكلَّف المقترح: ' : 'Proposed for: ' ?><?= htmlspecialchars((string)$pl['username']) ?><?= $rc ? ($ar ? ' (غير من لم يجدها)' : ' (not the one who missed it)') : '' ?> · <?= $ar ? 'منذ ' . max(1, (int)$pl['mins']) . ' دقيقة' : max(1, (int)$pl['mins']) . ' min ago' ?></small></div>
             <select class="sc-in" data-pm<?= $pg ? ' hidden' : '' ?>><?php foreach ($sp || $rc ? [3, 5, 10, 15] : [15, 30, 45, 60, 90] as $mm): ?><option value="<?= $mm ?>"<?= $mm === ($sp || $rc ? 5 : 30) ? ' selected' : '' ?>><?= $mm ?> <?= $ar ? 'دقيقة' : 'min' ?></option><?php endforeach; ?></select>
+            <?php if (!$pg): ?><label class="sc-pp" title="<?= $ar ? 'تطلب صورة لرقم الشاسيه بكاميرا الهاتف' : 'Asks for a chassis-plate photo with the phone camera' ?>"><span class="tg"><input type="checkbox" data-pp><span></span></span> 📷 <?= $ar ? 'مع صورة' : 'with photo' ?></label><?php endif; ?>
             <button type="button" class="nf-btn" data-plan="<?= (int)$pl['id'] ?>" data-send="1">🚨 <?= $ar ? 'إرسال الآن' : 'Send now' ?></button>
             <button type="button" class="nf-btn ghost" data-plan="<?= (int)$pl['id'] ?>" data-send="0">✖ <?= $ar ? 'تجاهل' : 'Skip' ?></button>
         </div>
@@ -736,6 +764,7 @@ $ago = function ($s) use ($ar): string {
             <input class="sc-in sc-case-note" maxlength="250" placeholder="<?= $ar ? 'ملاحظة مع القرار (اختياري)' : 'A note with the decision (optional)' ?>">
             <div class="sc-case-re">
                 <select class="sc-in" data-who><option value=""><?= $ar ? '— إعادة الفحص الآن مع… —' : '— re-check now with… —' ?></option><?php foreach ($people as $p3): if ($p3['role'] === 'admin') continue; ?><option value="<?= (int)$p3['id'] ?>"><?= htmlspecialchars($p3['username']) ?><?= ($here[(int)$p3['id']] ?? '') === $k['branch'] ? ($ar ? ' 🟢 في الفرع' : ' 🟢 at the branch') : '' ?></option><?php endforeach; ?></select>
+                <label class="sc-pp"><span class="tg"><input type="checkbox" data-cph><span></span></span> 📷 <?= $ar ? 'مع صورة' : 'with photo' ?></label>
                 <button type="button" class="nf-btn" data-recheck>🔁 <?= $ar ? 'أعد فحصها الآن' : 'Re-check now' ?></button>
             </div>
             <div class="nf-msg" data-cmsg></div>
@@ -751,6 +780,7 @@ $ago = function ($s) use ($ar): string {
             <select class="sc-in" id="spBranch"><option value=""><?= $ar ? '— الفرع —' : '— branch —' ?></option><?php foreach ($branches as $b): if (!(int)$b['n']) continue; ?><option value="<?= htmlspecialchars($b['name']) ?>"><?= htmlspecialchars(($ar ? $b['name_ar'] : $b['name_en']) ?: $b['name']) ?> (<?= (int)$b['n'] ?>)</option><?php endforeach; ?></select>
             <select class="sc-in" id="spUser"><option value=""><?= $ar ? '— المكلَّف —' : '— who —' ?></option><?php foreach ($people as $p2): if ($p2['role'] === 'admin') continue; ?><option value="<?= (int)$p2['id'] ?>" data-here="<?= htmlspecialchars($here[(int)$p2['id']] ?? '') ?>"><?= htmlspecialchars($p2['username']) ?></option><?php endforeach; ?></select>
             <select class="sc-in" id="spMin"><?php foreach ([3, 5, 10, 15] as $mm): ?><option value="<?= $mm ?>"<?= $mm === 5 ? ' selected' : '' ?>><?= $mm ?> <?= $ar ? 'دقائق' : 'min' ?></option><?php endforeach; ?></select>
+            <label class="sc-pp"><span class="tg"><input type="checkbox" id="spPh"><span></span></span> 📷 <?= $ar ? 'مع صورة لرقم الشاسيه' : 'with a chassis-plate photo' ?></label>
             <button type="button" class="nf-btn" id="spGo">⚡ <?= $ar ? 'إرسال الفحص' : 'Send' ?></button>
         </div>
         <div class="nf-msg" id="spMsg"></div>
@@ -828,9 +858,10 @@ $ago = function ($s) use ($ar): string {
             <small class="sc-hint"><?= $ar ? 'الرقم بجانب كل سؤال هو جواب النظام — يظهر لك أنت فقط. يجيب المكلَّف عن كل سؤال تختاره بعد العدد الكلي (حتى 4 أسئلة)، والعدد الخاطئ مرتين يوقف النظام.' : 'The number next to each question is the system\'s answer — shown to you only. They answer each question you choose after the total (up to 4); two wrong numbers stop the system.' ?></small>
         </div>
         <div class="sc-xo">
-            <label class="sc-xo-i"><span>📷 <?= $ar ? 'صور عشوائية لرقم الشاسيه' : 'Random chassis-plate photos' ?></span>
-                <select class="sc-in" id="scPh"><?php foreach ([0, 1, 2, 3] as $n): ?><option value="<?= $n ?>"<?= $n === 1 ? ' selected' : '' ?>><?= $ar ? [0 => 'بدون', 1 => 'سيارة واحدة', 2 => 'سيارتان', 3 => '3 سيارات'][$n] : ($n ? $n . ' car' . ($n > 1 ? 's' : '') : 'none') ?></option><?php endforeach; ?></select>
-                <small><?= $ar ? 'يختار النظام السيارات عشوائياً، ولا يعرف المكلَّف أنها تحتاج صورة حتى يؤكدها.' : 'The system picks the cars at random; they only learn a car needs a photo once they confirm it.' ?></small></label>
+            <label class="sc-xo-i"><span>📷 <?= $ar ? 'صور لرقم الشاسيه — أنت تختار' : 'Chassis-plate photos — your choice' ?></span>
+                <select class="sc-in" id="scPh"><?php foreach ([0, 1, 2, 3] as $n): ?><option value="<?= $n ?>"<?= $n === 0 ? ' selected' : '' ?>><?= $ar ? [0 => 'بدون صور', 1 => 'صورة لسيارة واحدة', 2 => 'صور لسيارتين', 3 => 'صور لـ 3 سيارات'][$n] : ($n ? $n . ' car' . ($n > 1 ? 's' : '') : 'no photos') ?></option><?php endforeach; ?></select>
+                <small><?= $ar ? 'بدون صور إلا إذا اخترت. عند الاختيار يحدد النظام السيارات عشوائياً، ولا يعرف المكلَّف أنها تحتاج صورة حتى يؤكدها، ويلتقطها بكاميرا الهاتف مباشرة — لا يمكنه اختيار صورة من المعرض.'
+                                : 'No photos unless you choose. Then the system picks the cars at random; they only learn a car needs a photo once they confirm it, and take it with the phone camera — never from the gallery.' ?></small></label>
             <label class="sc-xo-i sc-dbl" id="scDblL"><span class="sc-opt" style="margin:0"><span class="tg"><input type="checkbox" id="scDbl" disabled><span></span></span> 👥 <?= $ar ? 'جرد مزدوج' : 'Double check' ?></span>
                 <small id="scDblH"><?= $ar ? 'اختر شخصين أو أكثر: كل واحد يجرد وحده دون أن يرى عمل الآخر، ثم ترى كل اختلاف بينهما.' : 'Choose two people or more: each checks alone without seeing the other\'s work, then you see every difference.' ?></small></label>
         </div>
@@ -1007,14 +1038,14 @@ $ago = function ($s) use ($ar): string {
                     <?php if ($lf === 'ok'): ?><span class="ok">📍 <?= htmlspecialchars(check_m((int)$it['dist_m'], $lang)) ?></span>
                     <?php elseif ($lf === 'weak'): ?><span class="mid" title="<?= $ar ? 'دقة الموقع ضعيفة' : 'Vague location' ?>">📍 <?= htmlspecialchars(check_m((int)$it['dist_m'], $lang)) ?> ±<?= htmlspecialchars(check_m((int)$it['acc'], $lang)) ?></span>
                     <?php elseif ($lf === 'none'): ?><span class="bad">📵 <?= $ar ? 'بدون موقع' : 'no location' ?></span><?php endif; ?>
-                    <?php if ((int)($it['photo_req'] ?? 0) && !$isSpot): ?><span class="ph">📷 <?= $ar ? 'صورة عشوائية' : 'random photo' ?><?= !empty($it['photo']) ? ' ✓' : '' ?></span><?php endif; ?>
+                    <?php if ((int)($it['photo_req'] ?? 0)): ?><span class="ph">📷 <?= $isSpot ? ($ar ? 'صورة مطلوبة' : 'photo asked') : ($ar ? 'صورة عشوائية' : 'random photo') ?><?= !empty($it['photo']) ? ' ✓' : '' ?></span><?php endif; ?>
                     <?php if ($kc): ?><span class="case <?= htmlspecialchars((string)$kc['status']) ?>">🔎 <?= htmlspecialchars(($ar ? ['open' => 'تنتظر قرارك', 'found' => 'وُجدت', 'moved' => 'في فرع آخر', 'sold' => 'بيعت ولم تُسجَّل', 'lost' => 'مفقودة'] : ['open' => 'waiting for you', 'found' => 'found', 'moved' => 'at another branch', 'sold' => 'sold, not recorded', 'lost' => 'lost'])[$kc['status']] ?? $kc['status']) ?><?= $kc['decided_by'] ? ' · ' . htmlspecialchars((string)$kc['decided_by']) : '' ?></span><?php endif; ?>
                 </div><?php endif; ?></div>
             <?php if ($doMode): ?>
             <div class="bt"><button type="button" class="y<?= $it['state'] === 'present' ? ' on' : '' ?>">✅ <?= $ar ? 'موجودة' : 'Here' ?></button><button type="button" class="n<?= $it['state'] === 'missing' ? ' on' : '' ?>">❌ <?= $ar ? 'غير موجودة' : 'Missing' ?></button></div>
             <?php if (!$isAdmin && $byColor): ?><div class="cwb"></div>
             <?php elseif (!$isAdmin): ?><div class="chb"><input class="sc-in chin" autocapitalize="characters" autocomplete="off" autocorrect="off" spellcheck="false" maxlength="40" placeholder="<?= $ar ? 'اكتب رقم الشاسيه من السيارة' : 'Type the chassis from the car' ?>"><button type="button" class="chok">✅ <?= $ar ? 'تأكيد' : 'Confirm' ?></button><div class="cherr"></div></div><?php endif; ?>
-            <?php if (!$isAdmin && ($isSpot || ((int)($it['photo_req'] ?? 0) && $it['state'] === 'present'))): /* 📷 a random photo is shown only once the car is confirmed */ ?><div class="phb<?= !empty($it['photo']) ? ' done' : '' ?>"><label class="phbtn">📷 <span><?= !empty($it['photo']) ? ($ar ? 'تم رفع الصورة ✓ — إعادة التصوير' : 'Photo sent ✓ — retake') : ($ar ? 'التقط صورة لرقم الشاسيه على السيارة' : 'Take a photo of the chassis plate') ?></span><input type="file" accept="image/*" capture="environment" hidden></label><div class="pherr"></div></div><?php endif; ?>
+            <?php if (!$isAdmin && (int)($it['photo_req'] ?? 0) && ($isSpot || $it['state'] === 'present')): /* 📷 asked by the admin; a random one is shown only once the car is confirmed */ ?><div class="phb<?= !empty($it['photo']) ? ' done' : '' ?>"><button type="button" class="phbtn">📷 <span><?= !empty($it['photo']) ? ($ar ? 'تم إرسال الصورة ✓ — إعادة التصوير' : 'Photo sent ✓ — retake') : ($ar ? 'افتح الكاميرا والتقط صورة لرقم الشاسيه' : 'Open the camera and photograph the chassis plate') ?></span></button><div class="pherr"></div></div><?php endif; ?>
             <input class="sc-in nt" maxlength="200" placeholder="<?= $ar ? 'ملاحظة: أين هي؟ (اختياري)' : 'Note: where is it? (optional)' ?>" value="<?= htmlspecialchars((string)$it['note']) ?>">
             <?php else: ?>
             <span class="sc-st <?= $it['state'] === 'present' ? 'done' : ($it['state'] === 'missing' ? 'expired' : '') ?>"><?= $it['state'] === 'present' ? ($ar ? '✅ موجودة' : '✅ here') : ($it['state'] === 'missing' ? ($ar ? '❌ غير موجودة' : '❌ missing') : ($ar ? '⏳ لم تُراجع' : '⏳ not checked')) ?></span>
@@ -1193,7 +1224,8 @@ $ago = function ($s) use ($ar): string {
         const send = b.dataset.send === '1', row = b.closest('.sc-plan');
         if (send && !confirm(AR ? 'إرسال هذا الطلب الآن؟' : 'Send this now?')) return;
         row.querySelectorAll('button').forEach(x => x.disabled = true);
-        const r = await post({ action: 'plan', plan: +b.dataset.plan, send, minutes: +row.querySelector('[data-pm]').value });
+        const pp = row.querySelector('[data-pp]');
+        const r = await post({ action: 'plan', plan: +b.dataset.plan, send, minutes: +row.querySelector('[data-pm]').value, photo: !!(pp && pp.checked) });
         if (r.ok && r.id) location.href = '?lang=<?= $lang ?>&id=' + r.id; else location.reload();
     }));
     if ($('spGo')) {
@@ -1204,7 +1236,7 @@ $ago = function ($s) use ($ar): string {
             if (!sb.value || !su.value) { m.textContent = AR ? 'اختر الفرع والمكلَّف' : 'Pick the branch and the person'; m.className = 'nf-msg bad'; return; }
             if (!confirm(AR ? 'إرسال فحص سريع لسيارة واحدة الآن؟' : 'Send a one-car spot check now?')) return;
             $('spGo').disabled = true;
-            const r = await post({ action: 'spot', branch: sb.value, user: +su.value, minutes: +$('spMin').value });
+            const r = await post({ action: 'spot', branch: sb.value, user: +su.value, minutes: +$('spMin').value, photo: $('spPh').checked });
             if (r.ok) location.href = '?lang=<?= $lang ?>&id=' + r.id; else { $('spGo').disabled = false; m.textContent = r.error === 'nocar' ? (AR ? 'لا توجد سيارات في هذا الفرع' : 'No cars at this branch') : '✗ ' + r.error; m.className = 'nf-msg bad'; }
         });
     }
@@ -1358,34 +1390,109 @@ $ago = function ($s) use ($ar): string {
         return { reset: () => { go(0, false); show(0); }, focus: () => win.focus({ preventScroll: true }), err: box.querySelector('.cherr'), ok };
     }
     function counts(c) { if (!c) return; $('scDone').textContent = c[1]; $('scBar').style.width = (c[0] ? Math.round(c[1] * 100 / c[0]) : 100) + '%'; if ($('scFin')) $('scFin').disabled = c[1] < c[0]; }
-    /* 📷 a photo of the chassis plate, taken now with the camera, shrunk on the phone before it is sent */
+    /* 📷 the camera inside the page: the photo is taken now — there is no file picker, so nothing can come from the gallery */
+    const ME = <?= json_encode($me) ?>;
+    const SKEW = <?= time() ?> * 1000 - Date.now(), CAIRO = <?= (int)date('Z') ?> * 1000;   // the stamp uses the server's clock and Cairo time, never the phone's
+    const cam = (() => {
+        let el = null, stream = null, onUse = null, shot = null, lbl = '';
+        const HINT = AR ? 'ضع رقم الشاسيه داخل الإطار ثم اضغط زر التصوير' : 'Fit the chassis plate inside the frame, then press the shutter';
+        const q = sel => el.querySelector(sel);
+        const stop = () => { if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; } if (el) q('video').srcObject = null; };
+        const close = () => { stop(); if (el) el.classList.remove('on'); document.documentElement.style.overflow = ''; };
+        const mode = live => {
+            q('video').hidden = !live; q('.cam-img').hidden = live; q('.cam-frame').hidden = !live;
+            q('.cam-shot').hidden = !live; q('.cam-again').hidden = live; q('.cam-use').hidden = live;
+            q('.cam-hint').textContent = live ? HINT : (AR ? 'تأكد أن رقم الشاسيه واضح ومقروء في الصورة' : 'Make sure the chassis number is clear and readable');
+        };
+        const fail = kind => {
+            stop(); q('.cam-shot').hidden = true; q('.cam-frame').hidden = true; q('.cam-hint').textContent = '';
+            const m = q('.cam-msg'); m.hidden = false;
+            m.innerHTML = (kind === 'denied'
+                ? (AR ? '<b>📷 الكاميرا غير مسموحة</b>اسمح باستخدام الكاميرا ثم اضغط «حاول مرة أخرى»:<br>• آيفون: الإعدادات ← Safari (أو التطبيق) ← الكاميرا ← سماح.<br>• أندرويد: اضغط 🔒 بجانب عنوان الموقع ← الأذونات ← الكاميرا ← سماح.'
+                      : '<b>📷 The camera is blocked</b>Allow the camera, then press "Try again":<br>• iPhone: Settings → Safari (or the app) → Camera → Allow.<br>• Android: tap 🔒 next to the address → Permissions → Camera → Allow.')
+                : kind === 'nocam' ? (AR ? '<b>📷 لا توجد كاميرا متاحة</b>افتح النظام من الهاتف (Safari أو Chrome) لتصوير رقم الشاسيه.' : '<b>📷 No camera available</b>Open the system on the phone (Safari or Chrome) to photograph the chassis plate.')
+                : (AR ? '<b>📷 تعذّر تشغيل الكاميرا</b>تأكد أن الكاميرا مسموحة لهذا الموقع (من إعدادات المتصفح)، وأغلق أي تطبيق آخر يستخدمها، ثم حاول مرة أخرى.'
+                      : '<b>📷 The camera did not start</b>Make sure the camera is allowed for this site (browser settings) and close any other app using it, then try again.'))
+                + '<button type="button" class="cam-retry">🔄 ' + (AR ? 'حاول مرة أخرى' : 'Try again') + '</button>';
+            m.querySelector('.cam-retry').addEventListener('click', start);
+        };
+        async function start() {
+            const sh = q('.cam-shot');
+            q('.cam-msg').hidden = true; shot = null; mode(true);
+            sh.disabled = true;   // until the camera really shows a picture
+            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return fail('nocam');
+            try {
+                stop();
+                stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } } });
+                if (!el.classList.contains('on')) return stop();   // closed while asking
+                const v = q('video');
+                v.onloadeddata = () => { sh.disabled = !v.videoWidth; };
+                v.srcObject = stream; await v.play().catch(() => {});
+                if (v.videoWidth) sh.disabled = false;
+            } catch (e) {
+                const n = e && e.name;
+                fail(n === 'NotAllowedError' || n === 'SecurityError' ? 'denied' : n === 'NotFoundError' || n === 'OverconstrainedError' ? 'nocam' : 'err');
+            }
+        }
+        function take() {
+            const v = q('video');
+            if (!v.videoWidth) return;
+            const k = Math.min(1, 1600 / Math.max(v.videoWidth, v.videoHeight)), w = Math.round(v.videoWidth * k), h = Math.round(v.videoHeight * k);
+            const cv = document.createElement('canvas'); cv.width = w; cv.height = h;
+            const g = cv.getContext('2d'); g.drawImage(v, 0, 0, w, h);
+            // when, and by whom, written on the photo itself
+            const band = Math.max(28, Math.round(h * .055)), d = new Date(Date.now() + SKEW + CAIRO), pad = n => String(n).padStart(2, '0');
+            g.fillStyle = 'rgba(0,0,0,.62)'; g.fillRect(0, h - band, w, band);
+            g.fillStyle = '#fff'; g.font = '700 ' + Math.round(band * .48) + 'px sans-serif'; g.textBaseline = 'middle';
+            g.fillText(d.getUTCFullYear() + '-' + pad(d.getUTCMonth() + 1) + '-' + pad(d.getUTCDate()) + ' ' + pad(d.getUTCHours()) + ':' + pad(d.getUTCMinutes()) + ' · ' + ME + ' · ' + lbl, Math.round(band * .4), h - band / 2, w - Math.round(band * .8));
+            shot = cv; q('.cam-img').src = cv.toDataURL('image/jpeg', .85);
+            stop(); mode(false);
+            if (navigator.vibrate) navigator.vibrate(30);
+        }
+        function build() {
+            el = document.createElement('div'); el.className = 'cam'; el.setAttribute('role', 'dialog'); el.setAttribute('aria-modal', 'true');
+            el.innerHTML = '<div class="cam-top"><b class="cam-t"></b><button type="button" class="cam-x" aria-label="' + (AR ? 'إغلاق' : 'Close') + '">✕</button></div>'
+                + '<div class="cam-view"><video playsinline muted autoplay></video><img class="cam-img" alt="" hidden><div class="cam-frame"><span></span></div><div class="cam-msg" hidden></div></div>'
+                + '<div class="cam-hint"></div>'
+                + '<div class="cam-bar"><button type="button" class="cam-shot" aria-label="' + (AR ? 'التقاط الصورة' : 'Take the photo') + '"><i></i></button>'
+                + '<button type="button" class="cam-again" hidden>🔄 ' + (AR ? 'إعادة التصوير' : 'Retake') + '</button><button type="button" class="cam-use" hidden>✅ ' + (AR ? 'إرسال الصورة' : 'Send the photo') + '</button></div>';
+            document.body.appendChild(el);
+            q('.cam-x').addEventListener('click', close);
+            q('.cam-shot').addEventListener('click', take);
+            q('.cam-again').addEventListener('click', start);
+            q('.cam-use').addEventListener('click', () => { const cv = shot; if (!cv) return; cv.toBlob(b => { close(); if (b && onUse) onUse(b); }, 'image/jpeg', .85); });
+            document.addEventListener('keydown', e => { if (e.key === 'Escape' && el.classList.contains('on')) close(); });
+        }
+        return { open(label, use) { if (!el) build(); lbl = label; onUse = use; q('.cam-t').textContent = '📷 ' + label; el.classList.add('on'); document.documentElement.style.overflow = 'hidden'; start(); } };
+    })();
+    async function sendPhoto(it, blob) {
+        const phb = it.querySelector('.phb'), err = phb.querySelector('.pherr'), lbl = phb.querySelector('.phbtn span');
+        phb.classList.add('busy'); err.textContent = ''; lbl.textContent = AR ? 'جاري إرسال الصورة…' : 'Sending the photo…';
+        try {
+            const fd = new FormData(); fd.append('csrf', CSRF); fd.append('check', CHECK); fd.append('item', it.dataset.id); fd.append('src', 'camera'); fd.append('photo', blob, 'p.jpg');
+            const r = await (await fetch(location.pathname, { method: 'POST', credentials: 'same-origin', body: fd })).json();
+            if (!r.ok) throw new Error(r.error);
+            phb.classList.add('done'); lbl.textContent = AR ? 'تم إرسال الصورة ✓ — إعادة التصوير' : 'Photo sent ✓ — retake'; if (window.F1App) F1App.sound('ok');
+        } catch (x) {
+            lbl.textContent = AR ? 'افتح الكاميرا والتقط صورة لرقم الشاسيه' : 'Open the camera and photograph the chassis plate';
+            err.textContent = AR ? 'تعذّر إرسال الصورة — حاول مرة أخرى' : 'Could not send the photo — try again';
+        }
+        phb.classList.remove('busy');
+    }
     function bindPhoto(it) {
         const phb = it.querySelector('.phb');
         if (!phb || phb.dataset.bound) return;
         phb.dataset.bound = '1';
-        phb.querySelector('input').addEventListener('change', async e => {
-            const file = e.target.files && e.target.files[0], err = phb.querySelector('.pherr'), lbl = phb.querySelector('.phbtn span'); if (!file) return;
-            phb.classList.add('busy'); err.textContent = ''; lbl.textContent = AR ? 'جاري رفع الصورة…' : 'Sending the photo…';
-            try {
-                const img = await new Promise((ok, no) => { const i = new Image(); i.onload = () => ok(i); i.onerror = no; i.src = URL.createObjectURL(file); });
-                const k = Math.min(1, 1600 / Math.max(img.width, img.height)), cv = document.createElement('canvas');
-                cv.width = Math.round(img.width * k); cv.height = Math.round(img.height * k); cv.getContext('2d').drawImage(img, 0, 0, cv.width, cv.height);
-                const blob = await new Promise(ok => cv.toBlob(ok, 'image/jpeg', .82));
-                const fd = new FormData(); fd.append('csrf', CSRF); fd.append('check', CHECK); fd.append('item', it.dataset.id); fd.append('photo', blob, 'p.jpg');
-                const r = await (await fetch(location.pathname, { method: 'POST', credentials: 'same-origin', body: fd })).json();
-                if (!r.ok) throw new Error(r.error);
-                phb.classList.add('done'); lbl.textContent = AR ? 'تم رفع الصورة ✓ — إعادة التصوير' : 'Photo sent ✓ — retake'; if (window.F1App) F1App.sound('ok');
-            } catch (x) { lbl.textContent = AR ? 'التقط صورة لرقم الشاسيه على السيارة' : 'Take a photo of the chassis plate'; err.textContent = AR ? 'تعذّر رفع الصورة — حاول مرة أخرى' : 'Could not send the photo — try again'; }
-            phb.classList.remove('busy'); e.target.value = '';
-        });
+        const name = ((it.querySelector('.i b') || {}).textContent || '').replace(/^🚗\s*/, '').trim();
+        phb.querySelector('.phbtn').addEventListener('click', () => cam.open(name, blob => sendPhoto(it, blob)));
     }
     /* 📷 this car was picked at random for a photo: it is said only now, after it was confirmed */
     function askPhoto(el) {
         if (el.querySelector('.phb')) return;
         const d = document.createElement('div'); d.className = 'phb';
         d.innerHTML = '<div class="phq">📷 ' + (AR ? 'مطلوب لهذه السيارة: صورة لرقم الشاسيه عليها' : 'This car needs a photo of its chassis plate') + '</div>'
-            + '<label class="phbtn">📷 <span>' + (AR ? 'التقط صورة لرقم الشاسيه على السيارة' : 'Take a photo of the chassis plate') + '</span><input type="file" accept="image/*" capture="environment" hidden></label><div class="pherr"></div>';
-        const nt = el.querySelector('.nt'); el.insertBefore(d, nt);
+            + '<button type="button" class="phbtn">📷 <span>' + (AR ? 'افتح الكاميرا والتقط صورة لرقم الشاسيه' : 'Open the camera and photograph the chassis plate') + '</span></button><div class="pherr"></div>';
+        el.insertBefore(d, el.querySelector('.nt'));
         bindPhoto(el);
         if (navigator.vibrate) navigator.vibrate([60, 40, 60]);
         d.scrollIntoView({ block: 'center', behavior: 'smooth' });
@@ -1515,7 +1622,7 @@ $ago = function ($s) use ($ar): string {
             if (!who) { say(AR ? 'اختر من يعيد فحصها' : 'Choose who re-checks it', false); return; }
             if (!confirm(AR ? 'إرسال فحص سريع لهذه السيارة الآن؟' : 'Send a spot check of this car now?')) return;
             re.disabled = true;
-            const r = await post({ action: 'case_recheck', id, user: who, minutes: 5 }).catch(() => ({ ok: false }));
+            const r = await post({ action: 'case_recheck', id, user: who, minutes: 5, photo: card.querySelector('[data-cph]').checked }).catch(() => ({ ok: false }));
             if (r.ok) location.href = '?lang=<?= $lang ?>&id=' + r.id;
             else { re.disabled = false; say(r.error === 'nocar' ? (AR ? 'السيارة لم تعد في هذا الفرع' : 'The car is no longer at this branch') : (AR ? 'تعذّر الإرسال' : 'Could not send'), false); }
         });

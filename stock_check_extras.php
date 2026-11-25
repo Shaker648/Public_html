@@ -9,8 +9,9 @@
  *                  once («مشبوه»). The same for cars confirmed without any location.
  *   🔢 questions   besides «how many cars are at the branch», count questions the system suggests
  *                  and the admin chooses: «كم سيارة لونها أبيض؟» «كم سيارة Toyota؟» — checked the same way.
- *   📷 photos      a few cars picked at random, unannounced, also need a photo of the chassis plate:
- *                  the person learns it only after confirming that car.
+ *   📷 photos      only when the admin asks for it: a few cars picked at random, unannounced, also need
+ *                  a photo of the chassis plate (the person learns it only after confirming that car);
+ *                  a spot check: its one car. Taken with the camera inside the page — never from the gallery.
  *   🔎 cases       every car marked «غير موجودة» opens a case the admins close (found / moved / sold /
  *                  lost); the next day the system proposes a re-check of that car by someone else.
  *   👥 pairs       a double check: each person does the same check alone; the admins see every difference.
@@ -364,11 +365,11 @@ function check_q_try(PDO $pdo, int $checkId, int $qId, int $uid, string $uname, 
 }
 
 /* ════════════════════════ 📷 photos asked at random ════════════════════════ */
-/** Cars of a check that also need a photo of the chassis plate: $n picked at random, or every car ($all, a spot check). */
+/** Cars of a check that also need a photo of the chassis plate — only when the admin asked ($n > 0): $n picked at random, or every car ($all, a spot check). */
 function check_photo_pick(PDO $pdo, int $checkId, int $n, bool $all = false): void
 {
-    if ($all) { $pdo->prepare("UPDATE stock_check_items SET photo_req = 1 WHERE check_id = ? AND car_id > 0")->execute([$checkId]); return; }
     if ($n < 1) return;
+    if ($all) { $pdo->prepare("UPDATE stock_check_items SET photo_req = 1 WHERE check_id = ? AND car_id > 0")->execute([$checkId]); return; }
     $st = $pdo->prepare("SELECT id FROM stock_check_items WHERE check_id = ? AND car_id > 0");
     $st->execute([$checkId]);
     $ids = array_map('intval', $st->fetchAll(PDO::FETCH_COLUMN));
@@ -460,14 +461,14 @@ function check_case_decide(PDO $pdo, int $caseId, string $how, string $note, str
     return true;
 }
 
-/** Re-check a case's car now: a one-car spot check for the person chosen. Returns the check id (0 = the car is no longer there). */
-function check_case_recheck_now(PDO $pdo, int $caseId, int $uid, int $minutes, string $by): int
+/** Re-check a case's car now: a one-car spot check for the person chosen ($photo: with a chassis-plate photo). Returns the check id (0 = the car is no longer there). */
+function check_case_recheck_now(PDO $pdo, int $caseId, int $uid, int $minutes, string $by, bool $photo = false): int
 {
     $st = $pdo->prepare("SELECT * FROM check_cases WHERE id = ? AND status = 'open'");
     $st->execute([$caseId]);
     $case = $st->fetch(PDO::FETCH_ASSOC);
     if (!$case || $uid < 1) return 0;
-    $cid = smart_check_create($pdo, (string)$case['branch'], [$uid], max(3, min(60, $minutes)), '', true, $by, [], [(int)$case['car_id']], true);
+    $cid = smart_check_create($pdo, (string)$case['branch'], [$uid], max(3, min(60, $minutes)), '', true, $by, [], [(int)$case['car_id']], true, [], ['photos' => $photo ? 1 : 0]);
     if ($cid) {
         $pdo->prepare("UPDATE check_cases SET recheck_id = ?, recheck_state = 'sent' WHERE id = ?")->execute([$cid, $caseId]);
         $pdo->prepare("UPDATE stock_check_plans SET status = 'skipped', decided_by = ?, decided_at = NOW() WHERE case_id = ? AND status IN ('planned', 'pending')")->execute([$by, $caseId]);
