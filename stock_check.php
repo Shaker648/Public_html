@@ -122,12 +122,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $okB = $pdo->prepare("SELECT 1 FROM branches WHERE name = ?"); $okB->execute([$branch]);
                 if (!$okB->fetchColumn()) { echo json_encode(['ok' => false, 'error' => 'branch']); exit; }
                 if (!$users) { echo json_encode(['ok' => false, 'error' => 'nobody']); exit; }
-                $picks = [];   // «سيارات أختارها»: car id => 'chassis' | 'color'
+                $picks = []; $shots = [];   // «سيارات أختارها»: car id => 'chassis' | 'color' · and car id => the photo the admin chose for it (check_photo_kind)
                 if (($in['mode'] ?? 'all') === 'pick') {
-                    foreach ((array)($in['picks'] ?? []) as $pk) { $pc = (int)($pk['car'] ?? 0); if ($pc > 0) $picks[$pc] = ($pk['ask'] ?? '') === 'color' ? 'color' : 'chassis'; }
+                    foreach ((array)($in['picks'] ?? []) as $pk) {
+                        $pc = (int)($pk['car'] ?? 0); if ($pc < 1) continue;
+                        $picks[$pc] = ($pk['ask'] ?? '') === 'color' ? 'color' : 'chassis';
+                        if ($pk2 = check_photo_kind($pk['photo'] ?? 0)) $shots[$pc] = $pk2;
+                    }
                     if (!$picks) { echo json_encode(['ok' => false, 'error' => 'nocars']); exit; }
                 }
                 $opt = ['photos' => max(0, min(3, (int)($in['photos'] ?? 0))), 'photo_kind' => check_photo_kind($in['photo_kind'] ?? 1) ?: 1, 'questions' => []];
+                if ($shots) { $opt['photos'] = 0; $opt['photo_cars'] = $shots; }   // 📷 the admin chose the cars and what to photograph: nothing at random
                 foreach (array_slice((array)($in['questions'] ?? []), 0, 4) as $q) $opt['questions'][] = ['kind' => ($q['kind'] ?? '') === 'brand' ? 'brand' : 'color', 'key' => mb_substr((string)($q['key'] ?? ''), 0, 100)];
                 $users = array_values(array_unique(array_filter($users)));
                 $args = fn(array $who, array $o) => [$pdo, $branch, $who, (int)($in['minutes'] ?? 30), trim((string)($in['note'] ?? '')), !empty($in['lock']), $me, array_map('intval', (array)($in['watch'] ?? [])),
@@ -413,6 +418,7 @@ if ($check) {
     [$cT, $cM, $cP, $cX, $cE] = smart_check_counts($pdo, (int)$check['id']);
     $bTotal = check_branch_total($pdo, (int)$check['id']);   // what the counting step is checked against
     $nColor = count(array_filter($items, fn($it) => (int)$it['car_id'] > 0 && ($it['ask'] ?? '') === 'color'));
+    $nPhoto = count(array_filter($items, fn($it) => (int)($it['photo_req'] ?? 0) > 0));   // for the admins only: the person learns it car by car
     $colorOpts = $doMode && $nColor ? check_color_options($pdo, $lang) : [];   // the same list for every car: it gives nothing away
     $allQ = check_q_list($pdo, (int)$check['id']);
     $pairIds = check_pair_ids($pdo, (int)$check['id']);
@@ -535,7 +541,8 @@ $ago = function ($s) use ($ar): string {
 .cam-frame span{width:84%;height:24%;border:3px solid rgba(255,255,255,.9);border-radius:16px;box-shadow:0 0 0 9999px rgba(0,0,0,.38)}
 .cam.car .cam-frame span{width:92%;height:58%;border-radius:22px;box-shadow:0 0 0 9999px rgba(0,0,0,.25)}
 .sc-phrow{display:flex;flex-wrap:wrap;gap:8px}.sc-phrow select{flex:1;min-width:140px;max-width:none}
-.sc-phrow select:disabled{opacity:.45}
+.sc-phrow select:disabled{opacity:.45}.sc-phrow[hidden]{display:none}
+.sc-xo-i small.sc-phpick{color:#bae6fd}
 .sc-phs{max-width:190px}
 .cam-msg{position:absolute;inset-inline:16px;bottom:16px;display:grid;gap:8px;padding:14px;border-radius:16px;background:rgba(15,23,42,.96);border:1px solid rgba(245,158,11,.5);color:#fde68a;font-size:13.5px;font-weight:700;line-height:1.8}
 .cam-msg b{display:block;color:#fff;font-size:15px}
@@ -708,16 +715,21 @@ $ago = function ($s) use ($ar): string {
 .pk-d .sn{background:rgba(56,189,248,.1);color:#bae6fd}.pk-d .sn.no{background:rgba(239,68,68,.1);color:#fecaca}
 .pk-ask{grid-column:2;display:none;gap:6px;margin-top:8px}
 .pk-car.on .pk-ask{display:flex}
-.pk-ask button{flex:1;height:40px;border-radius:11px;border:1.5px solid var(--line);background:rgba(255,255,255,.04);color:var(--mut);font:inherit;font-size:13.5px;font-weight:900;cursor:pointer}
+.pk-ask button{flex:1;min-height:40px;padding:4px 8px;line-height:1.35;border-radius:11px;border:1.5px solid var(--line);background:rgba(255,255,255,.04);color:var(--mut);font:inherit;font-size:13.5px;font-weight:900;cursor:pointer}
 .pk-ask button.on[data-a="chassis"]{border-color:#84cc16;background:rgba(132,204,22,.14);color:#d9f99d}
 .pk-ask button.on[data-a="color"]{border-color:#f472b6;background:rgba(244,114,182,.14);color:#fbcfe8}
+.pk-ph{grid-column:2;display:none;gap:6px}
+.pk-car.on .pk-ph{display:flex}
+.pk-ph button{position:relative;flex:1;min-height:36px;padding:4px 8px;border-radius:11px;border:1.5px dashed rgba(148,163,184,.4);background:none;color:var(--mut);font:inherit;font-size:12.5px;font-weight:900;cursor:pointer}
+.pk-ph button.on{border-style:solid;border-color:#38bdf8;background:rgba(56,189,248,.14);color:#bae6fd}
+.pk-ph button.on::after{content:'✓';position:absolute;top:-8px;inset-inline-end:-6px;width:19px;height:19px;border-radius:50%;background:#0ea5e9;color:#fff;font-size:11px;line-height:19px;text-align:center;box-shadow:0 0 0 2px #0b1220}
 .sc-pk-sum{position:sticky;bottom:0;display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px;margin-top:10px;padding:10px 12px;border-radius:14px;background:rgba(15,23,42,.96);border:1px solid rgba(56,189,248,.35);font-size:13.5px;font-weight:900}
 .sc-pk-sum[hidden]{display:none}
 .sc-pk-all{display:flex;flex-wrap:wrap;gap:6px}
 .sc-pk-all button{height:32px;padding:0 10px;border-radius:9px;border:1px solid var(--line);background:rgba(255,255,255,.05);color:var(--txt);font:inherit;font-size:12px;font-weight:800;cursor:pointer}
 .sc-pk-load{padding:18px;text-align:center;color:var(--mut);font-weight:800}
 @media (max-width:760px){.sc-form{grid-template-columns:1fr}}
-@media (max-width:560px){.sc-mc{grid-template-columns:1fr}.pk-ask{grid-column:1 / -1}}
+@media (max-width:560px){.sc-mc{grid-template-columns:1fr}.pk-ask,.pk-ph{grid-column:1 / -1}}
 </style>
 </head>
 <body>
@@ -851,7 +863,7 @@ $ago = function ($s) use ($ar): string {
             <label class="sc-l">🎯 <?= $ar ? 'ماذا يُطلب منه بعد أن يكتب عدد السيارات في الفرع؟' : 'After they type how many cars are at the branch, what do they confirm?' ?></label>
             <div class="sc-mc" id="scMode" role="radiogroup">
                 <button type="button" class="on" data-mode="all" role="radio" aria-checked="true"><span class="ic">🚗</span><b><?= $ar ? 'كل السيارات' : 'Every car' ?></b><small><?= $ar ? 'يكتب رقم الشاسيه لكل سيارة في الفرع' : 'They type the chassis of every car at the branch' ?></small></button>
-                <button type="button" data-mode="pick" role="radio" aria-checked="false"><span class="ic">🎯</span><b><?= $ar ? 'سيارات أختارها' : 'Cars I choose' ?></b><small><?= $ar ? 'تختار السيارات، ولكل سيارة: الشاسيه أو اللون' : 'You choose the cars, and for each: its chassis or its colour' ?></small></button>
+                <button type="button" data-mode="pick" role="radio" aria-checked="false"><span class="ic">🎯</span><b><?= $ar ? 'سيارات أختارها' : 'Cars I choose' ?></b><small><?= $ar ? 'تختار السيارات، ولكل سيارة: الشاسيه أو اللون، وصورة إن أردت' : 'You choose the cars, and for each: its chassis or its colour, and a photo if you want' ?></small></button>
             </div>
             <div class="sc-pk" id="scPick" hidden>
                 <div class="sc-pk-empty" id="scPkNoB">📍 <?= $ar ? 'اختر الفرع أولاً لتظهر سياراته هنا' : 'Pick the branch first to see its cars here' ?></div>
@@ -874,12 +886,14 @@ $ago = function ($s) use ($ar): string {
         </div>
         <div class="sc-xo">
             <div class="sc-xo-i"><span>📷 <?= $ar ? 'صور بكاميرا الهاتف — أنت تختار' : 'Phone-camera photos — your choice' ?></span>
-                <span class="sc-phrow">
+                <span class="sc-phrow" id="scPhRow">
                     <select class="sc-in" id="scPh"><?php foreach ([0, 1, 2, 3] as $n): ?><option value="<?= $n ?>"<?= $n === 0 ? ' selected' : '' ?>><?= $ar ? [0 => 'بدون صور', 1 => 'لسيارة واحدة', 2 => 'لسيارتين', 3 => 'لـ 3 سيارات'][$n] : ($n ? 'for ' . $n . ' car' . ($n > 1 ? 's' : '') : 'no photos') ?></option><?php endforeach; ?></select>
                     <select class="sc-in" id="scPhK" disabled><?= $phOpts(false) ?></select>
                 </span>
-                <small><?= $ar ? 'بدون صور إلا إذا اخترت. اختر عدد السيارات، ثم ماذا يصوّر: رقم الشاسيه أو السيارة نفسها أو الاثنين (صورتان). يحدد النظام السيارات عشوائياً، ولا يعرف المكلَّف أنها تحتاج صورة حتى يؤكدها، ويلتقطها بكاميرا الهاتف مباشرة — لا يمكنه اختيار صورة من المعرض.'
-                                : 'No photos unless you choose. Pick how many cars, then what: the chassis plate, the car itself or both (two photos). The system picks the cars at random; they only learn a car needs a photo once they confirm it, and take it with the phone camera — never from the gallery.' ?></small></div>
+                <small id="scPhHint"><?= $ar ? 'بدون صور إلا إذا اخترت. اختر عدد السيارات، ثم ماذا يصوّر: رقم الشاسيه أو السيارة نفسها أو الاثنين (صورتان). يحدد النظام السيارات عشوائياً، ولا يعرف المكلَّف أنها تحتاج صورة حتى يؤكدها، ويلتقطها بكاميرا الهاتف مباشرة — لا يمكنه اختيار صورة من المعرض.'
+                                : 'No photos unless you choose. Pick how many cars, then what: the chassis plate, the car itself or both (two photos). The system picks the cars at random; they only learn a car needs a photo once they confirm it, and take it with the phone camera — never from the gallery.' ?></small>
+                <small id="scPhPick" class="sc-phpick" hidden><?= $ar ? '🎯 في «سيارات أختارها» لا يختار النظام شيئاً عشوائياً: أنت تحدد الصورة لكل سيارة في قائمة السيارات أعلاه (📷 صورة الشاسيه · 🚗 صورة السيارة · أو الاثنين). لا يعرف المكلَّف أنها مطلوبة حتى يؤكد السيارة، ويلتقطها بكاميرا الهاتف مباشرة.'
+                                : '🎯 With «Cars I choose» nothing is random: you set the photo of each car in the list above (📷 chassis photo · 🚗 car photo · or both). They only learn it once they confirm that car, and take it with the phone camera.' ?></small></div>
             <label class="sc-xo-i sc-dbl" id="scDblL"><span class="sc-opt" style="margin:0"><span class="tg"><input type="checkbox" id="scDbl" disabled><span></span></span> 👥 <?= $ar ? 'جرد مزدوج' : 'Double check' ?></span>
                 <small id="scDblH"><?= $ar ? 'اختر شخصين أو أكثر: كل واحد يجرد وحده دون أن يرى عمل الآخر، ثم ترى كل اختلاف بينهما.' : 'Choose two people or more: each checks alone without seeing the other\'s work, then you see every difference.' ?></small></label>
         </div>
@@ -957,7 +971,7 @@ $ago = function ($s) use ($ar): string {
     <?php endif; ?>
 
     <?php if ($isPick && (!$doMode || !$needCount)): ?>
-    <div class="sc-pickinfo">🎯 <?= $ar ? 'سيارات مختارة: ' . push_ar_cars($cT) . ' — 🔑 ' . ($cT - $nColor) . ' بالشاسيه · 🎨 ' . $nColor . ' باللون' : 'Chosen cars: ' . $cT . ' — 🔑 ' . ($cT - $nColor) . ' by chassis · 🎨 ' . $nColor . ' by colour' ?></div>
+    <div class="sc-pickinfo">🎯 <?= $ar ? 'سيارات مختارة: ' . push_ar_cars($cT) . ' — 🔑 ' . ($cT - $nColor) . ' بالشاسيه · 🎨 ' . $nColor . ' باللون' : 'Chosen cars: ' . $cT . ' — 🔑 ' . ($cT - $nColor) . ' by chassis · 🎨 ' . $nColor . ' by colour' ?><?= $adminView && $nPhoto ? ($ar ? ' · 📷 ' . $nPhoto . ' بصور' : ' · 📷 ' . $nPhoto . ' with photos') : '' ?></div>
     <?php endif; ?>
     <?php if ($needTotal): ?>
     <section class="nf-card sc-count">
@@ -1057,7 +1071,7 @@ $ago = function ($s) use ($ar): string {
                     <?php if ($lf === 'ok'): ?><span class="ok">📍 <?= htmlspecialchars(check_m((int)$it['dist_m'], $lang)) ?></span>
                     <?php elseif ($lf === 'weak'): ?><span class="mid" title="<?= $ar ? 'دقة الموقع ضعيفة' : 'Vague location' ?>">📍 <?= htmlspecialchars(check_m((int)$it['dist_m'], $lang)) ?> ±<?= htmlspecialchars(check_m((int)$it['acc'], $lang)) ?></span>
                     <?php elseif ($lf === 'none'): ?><span class="bad">📵 <?= $ar ? 'بدون موقع' : 'no location' ?></span><?php endif; ?>
-                    <?php $pr = (int)($it['photo_req'] ?? 0); if ($pr): $phDone = (!($pr & 1) || !empty($it['photo'])) && (!($pr & 2) || !empty($it['car_photo'])); ?><span class="ph">📷 <?= ($isSpot ? ($ar ? 'صورة مطلوبة: ' : 'photo asked: ') : ($ar ? 'صورة عشوائية: ' : 'random photo: ')) . htmlspecialchars($phNames[$pr] ?? '') ?><?= $phDone ? ' ✓' : '' ?></span><?php endif; ?>
+                    <?php $pr = (int)($it['photo_req'] ?? 0); if ($pr): $phDone = (!($pr & 1) || !empty($it['photo'])) && (!($pr & 2) || !empty($it['car_photo'])); ?><span class="ph">📷 <?= ($isSpot || $isPick ? ($ar ? 'صورة مطلوبة: ' : 'photo asked: ') : ($ar ? 'صورة عشوائية: ' : 'random photo: ')) . htmlspecialchars($phNames[$pr] ?? '') ?><?= $phDone ? ' ✓' : '' ?></span><?php endif; ?>
                     <?php if ($kc): ?><span class="case <?= htmlspecialchars((string)$kc['status']) ?>">🔎 <?= htmlspecialchars(($ar ? ['open' => 'تنتظر قرارك', 'found' => 'وُجدت', 'moved' => 'في فرع آخر', 'sold' => 'بيعت ولم تُسجَّل', 'lost' => 'مفقودة'] : ['open' => 'waiting for you', 'found' => 'found', 'moved' => 'at another branch', 'sold' => 'sold, not recorded', 'lost' => 'lost'])[$kc['status']] ?? $kc['status']) ?><?= $kc['decided_by'] ? ' · ' . htmlspecialchars((string)$kc['decided_by']) : '' ?></span><?php endif; ?>
                 </div><?php endif; ?></div>
             <?php if ($doMode): ?>
@@ -1118,12 +1132,14 @@ $ago = function ($s) use ($ar): string {
         /* «سيارات أختارها»: the branch's cars, with when each was added and when it last arrived; each one chosen is asked by its chassis or its colour */
         let cars = [], suggest = [], loadedFor = '', sortBy = 'new';
         const picks = new Map();   // car id → 'chassis' | 'color'
+        const shots = new Map();   // 📷 of the chosen cars: car id → what to photograph (1 the chassis plate · 2 the car · 3 both)
         const qs = new Map();      // 🔢 the count questions chosen: 'kind|key' → {kind, key}
         const list = $('scPkList');
         document.querySelectorAll('#scMode button').forEach(b => b.addEventListener('click', () => {
             mode = b.dataset.mode;
             document.querySelectorAll('#scMode button').forEach(x => { x.classList.toggle('on', x === b); x.setAttribute('aria-checked', x === b ? 'true' : 'false'); });
             $('scPick').hidden = mode !== 'pick';
+            $('scPhRow').hidden = mode === 'pick'; $('scPhHint').hidden = mode === 'pick'; $('scPhPick').hidden = mode !== 'pick';   // 📷 chosen car by car, never at random
             loadCars();
         }));
         /* the branch's cars (for choosing) and the count questions the system suggests for it */
@@ -1131,7 +1147,7 @@ $ago = function ($s) use ($ar): string {
             $('scPkNoB').hidden = !!branch; $('scPkBar').hidden = !branch; $('scXqNoB').hidden = !!branch;
             if (!branch) { list.innerHTML = ''; paintSum(); return; }
             if (loadedFor === branch) return;
-            loadedFor = branch; picks.clear(); qs.clear(); cars = []; suggest = [];
+            loadedFor = branch; picks.clear(); shots.clear(); qs.clear(); cars = []; suggest = [];
             list.innerHTML = '<div class="sc-pk-load"><span class="nf-spin"></span></div>'; $('scXq').innerHTML = '';
             const r = await post({ action: 'cars', branch }).catch(() => ({ ok: false }));
             if (loadedFor !== branch) return;   // another branch was chosen meanwhile
@@ -1180,13 +1196,19 @@ $ago = function ($s) use ($ar): string {
                 + '<div class="pk-m"><span class="pk-col"><i style="background:' + esc(c.hex) + '"></i>' + esc(c.color) + '</span><span class="pk-ch">🔑 ' + esc(c.chassis) + '</span></div>'
                 + '<div class="pk-d">' + chips(c) + '</div></div>'
                 + '<div class="pk-ask" role="radiogroup"><button type="button" data-a="chassis" role="radio">🔑 ' + (AR ? 'يكتب الشاسيه' : 'Type the chassis') + '</button><button type="button" data-a="color" role="radio">🎨 ' + (AR ? 'يختار اللون' : 'Pick the colour') + '</button></div>'
+                + '<div class="pk-ph" role="group" aria-label="' + (AR ? 'صورة بكاميرا الهاتف (اختياري)' : 'Phone-camera photo (optional)') + '"><button type="button" data-p="1" aria-pressed="false">📷 ' + (AR ? 'صورة الشاسيه' : 'Chassis photo') + '</button><button type="button" data-p="2" aria-pressed="false">🚗 ' + (AR ? 'صورة السيارة' : 'Car photo') + '</button></div>'
                 + '</div>').join('');
             list.querySelectorAll('.pk-car').forEach(el => {
                 const id = +el.dataset.id;
-                const flip = () => { if (picks.has(id)) picks.delete(id); else picks.set(id, 'chassis'); paintRow(el); paintSum(); };
-                el.addEventListener('click', e => { if (!e.target.closest('.pk-ask')) flip(); });
+                const flip = () => { if (picks.has(id)) { picks.delete(id); shots.delete(id); } else picks.set(id, 'chassis'); paintRow(el); paintSum(); };
+                el.addEventListener('click', e => { if (!e.target.closest('.pk-ask, .pk-ph')) flip(); });
                 el.addEventListener('keydown', e => { if ((e.key === ' ' || e.key === 'Enter') && e.target === el) { e.preventDefault(); flip(); } });
                 el.querySelectorAll('.pk-ask button').forEach(b => b.addEventListener('click', () => { picks.set(id, b.dataset.a); paintRow(el); paintSum(); }));
+                el.querySelectorAll('.pk-ph button').forEach(b => b.addEventListener('click', () => {   // 📷 the chassis plate and/or the car: each on or off
+                    const v = (shots.get(id) || 0) ^ +b.dataset.p;
+                    if (v) shots.set(id, v); else shots.delete(id);
+                    paintRow(el); paintSum();
+                }));
                 paintRow(el);
             });
             filter(); paintSum();
@@ -1195,12 +1217,14 @@ $ago = function ($s) use ($ar): string {
             const a = picks.get(+el.dataset.id);
             el.classList.toggle('on', !!a); el.setAttribute('aria-checked', a ? 'true' : 'false');
             el.querySelectorAll('.pk-ask button').forEach(b => { b.classList.toggle('on', b.dataset.a === a); b.setAttribute('aria-checked', b.dataset.a === a ? 'true' : 'false'); });
+            const ph = shots.get(+el.dataset.id) || 0;
+            el.querySelectorAll('.pk-ph button').forEach(b => { const on = !!(ph & +b.dataset.p); b.classList.toggle('on', on); b.setAttribute('aria-pressed', on ? 'true' : 'false'); });
         }
         function paintSum() {
-            const n = picks.size, k = [...picks.values()].filter(v => v === 'color').length;
+            const n = picks.size, k = [...picks.values()].filter(v => v === 'color').length, p = shots.size;
             $('scPkSum').hidden = !n;
-            $('scPkSumT').textContent = AR ? '✓ ' + arCars(n) + ' · 🔑 ' + (n - k) + ' بالشاسيه · 🎨 ' + k + ' باللون'
-                                           : '✓ ' + n + (n === 1 ? ' car' : ' cars') + ' · 🔑 ' + (n - k) + ' by chassis · 🎨 ' + k + ' by colour';
+            $('scPkSumT').textContent = AR ? '✓ ' + arCars(n) + ' · 🔑 ' + (n - k) + ' بالشاسيه · 🎨 ' + k + ' باللون' + (p ? ' · 📷 ' + p + ' بصور' : '')
+                                           : '✓ ' + n + (n === 1 ? ' car' : ' cars') + ' · 🔑 ' + (n - k) + ' by chassis · 🎨 ' + k + ' by colour' + (p ? ' · 📷 ' + p + ' with photos' : '');
         }
         function filter() {
             const q = $('scPkQ').value.trim().toLowerCase();
@@ -1209,7 +1233,7 @@ $ago = function ($s) use ($ar): string {
         $('scPkQ').addEventListener('input', filter);
         document.querySelectorAll('#scPkSort button').forEach(b => b.addEventListener('click', () => { sortBy = b.dataset.s; document.querySelectorAll('#scPkSort button').forEach(x => x.classList.toggle('on', x === b)); draw(); }));
         document.querySelectorAll('[data-all]').forEach(b => b.addEventListener('click', () => {
-            if (b.dataset.all === 'none') picks.clear(); else picks.forEach((v, id) => picks.set(id, b.dataset.all));
+            if (b.dataset.all === 'none') { picks.clear(); shots.clear(); } else picks.forEach((v, id) => picks.set(id, b.dataset.all));
             list.querySelectorAll('.pk-car').forEach(paintRow); paintSum();
         }));
         ppl.forEach(p => p.addEventListener('click', () => p.classList.toggle('on')));
@@ -1227,15 +1251,15 @@ $ago = function ($s) use ($ar): string {
             const users = ppl.filter(p => p.classList.contains('on')).map(p => +p.dataset.u), m = $('scMsg');
             if (!branch) { m.textContent = AR ? 'اختر الفرع' : 'Pick the branch'; m.className = 'nf-msg bad'; return; }
             if (!users.length) { m.textContent = AR ? 'اختر المكلَّف بالجرد' : 'Pick who does the check'; m.className = 'nf-msg bad'; return; }
-            const n = picks.size, k = [...picks.values()].filter(v => v === 'color').length;
+            const n = picks.size, k = [...picks.values()].filter(v => v === 'color').length, p = shots.size;
             if (mode === 'pick' && !n) { m.textContent = AR ? 'اختر السيارات المطلوب تأكيدها' : 'Choose the cars to confirm'; m.className = 'nf-msg bad'; $('scPick').scrollIntoView({ block: 'center', behavior: 'smooth' }); return; }
-            const extra = (qs.size ? (AR ? '\n🔢 أسئلة عدّ إضافية: ' + qs.size : '\n🔢 Extra count questions: ' + qs.size) : '') + ($('scDbl').checked ? (AR ? '\n👥 جرد مزدوج: كل واحد يجرد وحده' : '\n👥 Double check: each one alone') : '');
+            const extra = (mode === 'pick' && p ? (AR ? '\n📷 سيارات تحتاج صوراً: ' + p + ' — لا يعرف المكلَّف بها إلا بعد تأكيد كل سيارة' : '\n📷 Cars needing photos: ' + p + ' — they only learn it once they confirm each car') : '') + (qs.size ? (AR ? '\n🔢 أسئلة عدّ إضافية: ' + qs.size : '\n🔢 Extra count questions: ' + qs.size) : '') + ($('scDbl').checked ? (AR ? '\n👥 جرد مزدوج: كل واحد يجرد وحده' : '\n👥 Double check: each one alone') : '');
             if (!confirm((mode === 'pick' ? (AR ? 'إرسال الجرد المفاجئ الآن؟\nبعد عدّ السيارات يؤكد السيارات المختارة (' + arCars(n) + '): ' + (n - k) + ' بالشاسيه و' + k + ' باللون.' : 'Send the surprise check now?\nAfter counting, they confirm ' + n + ' cars: ' + (n - k) + ' by chassis, ' + k + ' by colour.')
                                           : (AR ? 'إرسال الجرد المفاجئ الآن؟' : 'Send the surprise check now?')) + extra)) return;
             $('scGo').disabled = true;
             const r = await post({ action: 'create', branch, users, minutes: +$('scMin').value || 30, note: $('scNote').value, lock: $('scLock').checked,
-                watch: [...document.querySelectorAll('.sc-w.on')].map(w => +w.dataset.u), mode, picks: mode === 'pick' ? [...picks].map(([car, ask]) => ({ car, ask })) : [],
-                questions: [...qs.values()], photos: +$('scPh').value, photo_kind: +$('scPhK').value, double: $('scDbl').checked });
+                watch: [...document.querySelectorAll('.sc-w.on')].map(w => +w.dataset.u), mode, picks: mode === 'pick' ? [...picks].map(([car, ask]) => ({ car, ask, photo: shots.get(car) || 0 })) : [],
+                questions: [...qs.values()], photos: mode === 'pick' ? 0 : +$('scPh').value, photo_kind: +$('scPhK').value, double: $('scDbl').checked });
             if (r.ok) location.href = '?lang=<?= $lang ?>&id=' + r.id;
             else { $('scGo').disabled = false; m.className = 'nf-msg bad';
                 m.textContent = r.error === 'nocars' ? (AR ? 'اختر السيارات المطلوب تأكيدها' : 'Choose the cars to confirm') : r.error === 'gone' ? (AR ? 'السيارات المختارة لم تعد في هذا الفرع — حدّث الصفحة' : 'The chosen cars are no longer at this branch — reload') : '✗ ' + r.error; }

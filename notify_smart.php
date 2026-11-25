@@ -658,6 +658,7 @@ function smart_check_counts(PDO $pdo, int $checkId): array
  *   $askColor    of those, the cars whose COLOUR is asked (picked from the colours list) instead of the chassis
  *   $opt         'photos' => n cars that also need photos, picked at random (a spot check: every car)
  *                'photo_kind' => what to photograph: 1 the chassis plate · 2 the car itself · 3 both
+ *                'photo_cars' => [car id => photo_kind]: the cars the admin chose to be photographed («سيارات أختارها»)
  *                'questions' => [['kind' => 'color'|'brand', 'key' => …]] count questions besides the total
  *                'group' => the first check of a double check · 'quiet' => do not tell the followers again
  * The counting step always asks for the whole branch (branch_total). Returns 0 when none of the cars is there.
@@ -701,6 +702,7 @@ function smart_check_create(PDO $pdo, string $branch, array $userIds, int $minut
     }
     if ($extras) {
         check_photo_pick($pdo, $id, max(0, min(5, (int)($opt['photos'] ?? 0))), $spot, (int)($opt['photo_kind'] ?? 1));   // nobody is told which cars until they confirm them
+        if (!empty($opt['photo_cars'])) check_photo_set($pdo, $id, (array)$opt['photo_cars']);   // …and the cars the admin chose, the same way
         if (!$spot && !empty($opt['questions'])) check_q_create($pdo, $id, $branch, (array)$opt['questions']);
         if (!empty($opt['group'])) $pdo->prepare("UPDATE stock_checks SET group_id = ? WHERE id = ?")->execute([(int)$opt['group'], $id]);
     }
