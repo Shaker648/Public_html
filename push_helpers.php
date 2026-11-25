@@ -968,7 +968,8 @@ function notify_message(PDO $pdo, string $event, array $d, string $lang): array
             }
             $miss = ($d['state'] ?? '') === 'missing';
             $title = ($miss ? '❌ ' : '✅ ') . ($ar ? 'جرد فرع ' . $bn . ': ' . (int)$d['done'] . ' من أصل ' . (int)$d['total'] : $bn . ' check: ' . (int)$d['done'] . ' of ' . (int)$d['total']);
-            $body[] = ($miss ? ($ar ? '❌ غير موجودة: ' : '❌ Missing: ') : ($ar ? '✅ موجودة: ' : '✅ Present: ')) . ($d['label'] ?? '') . (!empty($d['chassis']) ? ' · 🔑 ' . $d['chassis'] : '');
+            $body[] = ($miss ? ($ar ? '❌ غير موجودة: ' : '❌ Missing: ') : ($ar ? '✅ موجودة: ' : '✅ Present: ')) . ($d['label'] ?? '') . (!empty($d['chassis']) ? ' · 🔑 ' . $d['chassis'] : '')
+                    . (!empty($d['color']) ? ($ar ? ' · 🎨 اللون صحيح: ' : ' · 🎨 right colour: ') . $d['color'] : '');
             if ($miss && !empty($d['note'])) $body[] = '📝 ' . $d['note'];
             if (!empty($d['missing'])) $body[] = ($ar ? '❗ غير موجودة حتى الآن: ' : '❗ Missing so far: ') . (int)$d['missing'];
             $url = 'stock_check.php?lang=' . $lang . '&id=' . (int)($d['id'] ?? 0);
@@ -987,7 +988,9 @@ function notify_message(PDO $pdo, string $event, array $d, string $lang): array
                 $body[] = $ar ? '⏱️ المدة ' . ($d['dur'] ?? '') . ' — تنتهي الساعة ' . $d['until'] : '⏱️ ' . ($d['dur'] ?? '') . ' — ends at ' . $d['until'];
                 // the number of cars is not sent: the first step of the check is to count them
                 $body[] = !empty($d['spot']) ? ($ar ? '🔑 اذهب إلى السيارة المطلوبة واكتب رقم الشاسيه الموجود عليها' : '🔑 Go to the car asked for and type the chassis number on it')
-                                             : ($ar ? '🔢 أولاً: عُدّ السيارات الموجودة في الفرع، ثم أكّد كل سيارة برقم الشاسيه' : '🔢 First count the cars at the branch, then confirm each one by its chassis');
+                        : (!empty($d['pick']) ? ($ar ? '🔢 أولاً: عُدّ السيارات الموجودة في الفرع، ثم أكّد السيارات المحددة لك ' . (!empty($d['colors']) ? 'برقم الشاسيه أو باللون' : 'برقم الشاسيه')
+                                                     : '🔢 First count the cars at the branch, then confirm the cars chosen for you ' . (!empty($d['colors']) ? 'by chassis or by colour' : 'by chassis'))
+                        : ($ar ? '🔢 أولاً: عُدّ السيارات الموجودة في الفرع، ثم أكّد كل سيارة برقم الشاسيه' : '🔢 First count the cars at the branch, then confirm each one by its chassis'));
                 if (!empty($d['note'])) $body[] = '📝 ' . $d['note'];
                 if (!empty($d['lock'])) $body[] = $ar ? '🔒 بعد الساعة ' . $d['until'] . ' يبدأ إيقاف النظام عن المكلَّف إذا لم يكتمل الجرد' : '🔒 After ' . $d['until'] . ' the system locks for them if not finished';
             } elseif ($event === 'check_tick') {

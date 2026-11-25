@@ -4,7 +4,9 @@
  *
  * Used when a transferred car is received («تم الاستلام») and when a car is
  * marked «موجودة» in a surprise stock check. The person never sees the number
- * on the screen: they read it off the car and type it.
+ * on the screen: they read it off the car and type it. In a check of chosen
+ * cars the admin may ask a car's colour instead (picked from the colours list,
+ * same rule — check_color_try).
  *
  *   - zeros at the start are skipped: 000123 on the car is typed as 123
  *     (typing the zeros works too)
@@ -222,6 +224,128 @@ function check_count_try(PDO $pdo, int $checkId, int $uid, string $uname, int $t
     $lockId = smart_lock_user($pdo, $uid, 'chassis', $why, '');
     $pdo->prepare("UPDATE chassis_tries SET cleared = 1, lock_id = ? WHERE user_id = ? AND ok = 0 AND cleared = 0")->execute([$lockId ?: null, $uid]);
     return ['ok' => false, 'locked' => $lockId > 0];
+}
+
+/* ════════ a check of chosen cars: the admin picks the cars, and asks each one's chassis or its colour ════════ */
+/*
+ * stock_checks.mode          'all' (every car of the branch, by chassis) | 'pick' (the cars the admin chose)
+ * stock_checks.branch_total  how many cars the branch had when the check was sent — the answer to the
+ *                            counting step whatever the mode (a check of chosen cars lists only a few)
+ * stock_check_items.ask      'chassis' (typed off the car) | 'color' (picked from the colours list)
+ * stock_check_items.color    the car's colour when the check was sent · .answer: the colour picked
+ */
+function check_pick_cols(PDO $pdo): void
+{
+    static $done = false;
+    if ($done) return;
+    $done = true;
+    try { $pdo->query("SELECT mode, branch_total FROM stock_checks LIMIT 1"); }
+    catch (Throwable $e) { try { $pdo->exec("ALTER TABLE stock_checks ADD mode VARCHAR(10) NOT NULL DEFAULT 'all', ADD branch_total INT NULL"); } catch (Throwable $e2) { error_log('check_pick_cols: ' . $e2->getMessage()); } }
+    try { $pdo->query("SELECT ask, color, answer FROM stock_check_items LIMIT 1"); }
+    catch (Throwable $e) { try { $pdo->exec("ALTER TABLE stock_check_items ADD ask VARCHAR(10) NOT NULL DEFAULT 'chassis', ADD color VARCHAR(100) NULL, ADD answer VARCHAR(100) NULL"); } catch (Throwable $e2) { error_log('check_pick_cols: ' . $e2->getMessage()); } }
+}
+
+/** The number the counting step is checked against: the branch's cars when the check was sent. */
+function check_branch_total(PDO $pdo, int $checkId): int
+{
+    check_pick_cols($pdo);
+    try {
+        $st = $pdo->prepare("SELECT branch_total FROM stock_checks WHERE id = ?");
+        $st->execute([$checkId]);
+        $v = $st->fetchColumn();
+        if ($v !== false && $v !== null) return (int)$v;
+    } catch (Throwable $e) {}
+    return (int)smart_check_counts($pdo, $checkId)[0];   // a check sent before this existed: its list was the whole branch
+}
+
+/**
+ * What a colour name stands for, so «White», «white» and «أبيض» are the same colour:
+ * the Arabic name of the colours-list row it matches (English or Arabic name), else the name itself.
+ * Two rows with the same Arabic name are the same colour to whoever picks it.
+ */
+function check_color_key(PDO $pdo, string $name): string
+{
+    static $map = null;
+    if ($map === null) {
+        $map = [];
+        try {
+            foreach ($pdo->query("SELECT color_en, color_ar FROM colors ORDER BY id") as $c) {
+                $en = mb_strtolower(trim((string)$c['color_en'])); $ar = mb_strtolower(trim((string)$c['color_ar']));
+                $key = $ar !== '' ? 'ar:' . $ar : 'en:' . $en;
+                foreach ([$en, $ar] as $n) if ($n !== '' && !isset($map[$n])) $map[$n] = $key;
+            }
+        } catch (Throwable $e) {}
+    }
+    $n = mb_strtolower(trim(preg_replace('/\s+/u', ' ', $name)));
+    return $map[$n] ?? 'raw:' . $n;
+}
+
+function check_color_same(PDO $pdo, string $a, string $b): bool
+{
+    return trim($a) !== '' && trim($b) !== '' && check_color_key($pdo, $a) === check_color_key($pdo, $b);
+}
+
+/**
+ * The colours to pick from: the system's colours list, plus any colour typed by hand on a car in stock
+ * (so the right answer is always there). The same list for every car — it gives nothing away.
+ * Returns [['v' => the name as stored, 'ar' =>, 'en' =>, 'hex' =>], …] in alphabetical order for $lang.
+ */
+function check_color_options(PDO $pdo, string $lang): array
+{
+    $out = [];
+    $add = function (string $v, string $ar, string $en) use ($pdo, &$out) {
+        $v = trim($v);
+        if ($v === '') return;
+        $k = check_color_key($pdo, $v);
+        if (isset($out[$k])) return;
+        $out[$k] = ['v' => $v, 'ar' => trim($ar) !== '' ? trim($ar) : $v, 'en' => trim($en) !== '' ? trim($en) : $v,
+                    'hex' => function_exists('car_color_hex') ? car_color_hex($en !== '' ? $en : $v) : '#64748b'];
+    };
+    try { foreach ($pdo->query("SELECT color_en, color_ar FROM colors ORDER BY id") as $c) $add((string)$c['color_en'], (string)$c['color_ar'], (string)$c['color_en']); } catch (Throwable $e) {}
+    try {
+        foreach ($pdo->query("SELECT DISTINCT color FROM cars WHERE status IN ('available', 'reserved') AND color IS NOT NULL AND color <> ''")->fetchAll(PDO::FETCH_COLUMN) as $c) {
+            $c = (string)$c;
+            $add($c, preg_match('/\p{Arabic}/u', $c) ? $c : '', preg_match('/\p{Arabic}/u', $c) ? '' : $c);
+        }
+    } catch (Throwable $e) {}
+    $out = array_values($out);
+    $by = $lang === 'ar' ? 'ar' : 'en';
+    $coll = class_exists('Collator') ? new Collator($lang === 'ar' ? 'ar' : 'en') : null;
+    usort($out, fn($a, $b) => $coll ? $coll->compare($a[$by], $b[$by]) : strcmp(mb_strtolower($a[$by]), mb_strtolower($b[$by])));
+    return $out;
+}
+
+/**
+ * A colour picked for a car the admin asked about by its colour.
+ * Same rule and same record as a chassis: right → confirmed; wrong → a warning the first time,
+ * and a second wrong answer in a row (colour, chassis or count) stops the person's system.
+ * What was picked and the real colour are kept in chassis_tries (ctx 'color') — admins only.
+ * Returns ['ok' => bool, 'locked' => bool, 'left' => wrong answers left before the stop].
+ */
+function check_color_try(PDO $pdo, int $uid, string $uname, int $itemId, int $carId, string $picked, string $real, string $label, string $place): array
+{
+    chassis_tables($pdo);
+    $ok = check_color_same($pdo, $picked, $real);
+    $pdo->prepare("INSERT INTO chassis_tries (user_id, username, ctx, ref_id, car_id, label, place, typed, real_chassis, ok, cleared, created_at) VALUES (?, ?, 'color', ?, ?, ?, ?, ?, ?, ?, ?, NOW())")
+        ->execute([$uid, $uname, $itemId, $carId, mb_substr($label, 0, 250), mb_substr($place, 0, 100), mb_substr(trim($picked), 0, 100), mb_substr($real, 0, 100), $ok ? 1 : 0, $ok ? 1 : 0]);
+    if ($ok) {
+        $pdo->prepare("UPDATE chassis_tries SET cleared = 1 WHERE user_id = ? AND cleared = 0")->execute([$uid]);   // a right answer wipes the slate
+        return ['ok' => true, 'locked' => false, 'left' => CHASSIS_MAX_WRONG];
+    }
+    $n = $pdo->prepare("SELECT COUNT(*) AS n, SUM(ctx = 'color') AS c FROM chassis_tries WHERE user_id = ? AND ok = 0 AND cleared = 0");
+    $n->execute([$uid]);
+    $w = $n->fetch(PDO::FETCH_ASSOC) ?: ['n' => 1, 'c' => 1];
+    if ((int)$w['n'] < CHASSIS_MAX_WRONG) return ['ok' => false, 'locked' => false, 'left' => CHASSIS_MAX_WRONG - (int)$w['n']];
+
+    // the system stops. The reason the person may read names the car, never its colour (that is for admins, on lockdown.php).
+    $lang = function_exists('notify_options') ? notify_options($pdo)['lang'] : 'ar';
+    $allColor = (int)$w['c'] >= (int)$w['n'];
+    $why = $lang === 'ar'
+        ? ($allColor ? 'اختيار لون غير صحيح مرتين أثناء الجرد المفاجئ' : 'إدخال غير صحيح مرتين أثناء الجرد المفاجئ — آخرها لون سيارة') . ($label !== '' ? ' (' . $label . ')' : '')
+        : ($allColor ? 'Wrong colour picked twice during the stock check' : 'Two wrong answers during the stock check — the last one a car\'s colour') . ($label !== '' ? ' (' . $label . ')' : '');
+    $lockId = smart_lock_user($pdo, $uid, 'chassis', $why, '');
+    $pdo->prepare("UPDATE chassis_tries SET cleared = 1, lock_id = ? WHERE user_id = ? AND ok = 0 AND cleared = 0")->execute([$lockId ?: null, $uid]);
+    return ['ok' => false, 'locked' => $lockId > 0, 'left' => 0];
 }
 
 /* ════════ «آخر تأكيد فعلي»: the last time somebody physically confirmed a car ════════ */

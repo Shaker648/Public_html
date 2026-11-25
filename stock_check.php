@@ -3,16 +3,21 @@
  * stock_check.php — الجرد المفاجئ (surprise stock check).
  *
  * The admin (page.stock_check) picks a branch, the person or people who do the
- * check and how long they have. The cars in that branch at that moment become
- * the list. The people chosen get a notification at once and go through the
- * list here: «موجودة» / «غير موجودة» for every car, plus any car that is there
- * but not in the system. Before the time ends they and the admin are warned;
+ * check and how long they have. The people chosen get a notification at once.
+ * First they type how many cars are at the branch; then, depending on what the
+ * admin chose:
+ *   - «كل السيارات»: every car of the branch, each confirmed by typing its chassis
+ *     («موجودة» / «غير موجودة»), plus any car that is there but not in the system;
+ *   - «سيارات أختارها»: only the cars the admin picked — for each one the admin
+ *     asks its chassis (typed off the car) or its colour (picked by scrolling the
+ *     colours list, the car shown by its chassis). Before the time ends they and the admin are warned;
  * if it is not finished in time their system stops until the admin unlocks it.
  * The admin gets the result (what is missing) the moment it is finished.
  */
 require 'auth.php';
 require 'config.php';
 require_once __DIR__ . '/notify_smart.php';
+require_once __DIR__ . '/color_helpers.php';
 
 $lang = ($_GET['lang'] ?? 'ar') === 'en' ? 'en' : 'ar';
 $ar   = $lang === 'ar';
@@ -24,6 +29,7 @@ $me   = (string)$_SESSION['username'];
 $isBoss = can('page.stock_check');
 $isAdmin = ($_SESSION['role'] ?? '') === 'admin';   // admins see the chassis; everyone else types it off the car
 push_tables($pdo);
+check_pick_cols($pdo);
 smart_check_scan($pdo);
 
 $myChecks = smart_checks_for_user($pdo, $uid);
@@ -100,6 +106,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     header('Content-Type: application/json; charset=utf-8');
     $in = json_decode(file_get_contents('php://input'), true) ?: [];
     if (!hash_equals($csrf, (string)($in['csrf'] ?? ''))) { echo json_encode(['ok' => false, 'error' => 'csrf']); exit; }
+    if (in_array($in['lang'] ?? '', ['ar', 'en'], true)) { $lang = $in['lang']; $ar = $lang === 'ar'; }   // the page's language, for the names it gets back
     $cid = (int)($in['check'] ?? 0);
     try {
         switch ($in['action'] ?? '') {
@@ -110,8 +117,39 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $okB = $pdo->prepare("SELECT 1 FROM branches WHERE name = ?"); $okB->execute([$branch]);
                 if (!$okB->fetchColumn()) { echo json_encode(['ok' => false, 'error' => 'branch']); exit; }
                 if (!$users) { echo json_encode(['ok' => false, 'error' => 'nobody']); exit; }
-                $id = smart_check_create($pdo, $branch, $users, (int)($in['minutes'] ?? 30), trim((string)($in['note'] ?? '')), !empty($in['lock']), $me, array_map('intval', (array)($in['watch'] ?? [])));
+                $picks = [];   // «سيارات أختارها»: car id => 'chassis' | 'color'
+                if (($in['mode'] ?? 'all') === 'pick') {
+                    foreach ((array)($in['picks'] ?? []) as $pk) { $pc = (int)($pk['car'] ?? 0); if ($pc > 0) $picks[$pc] = ($pk['ask'] ?? '') === 'color' ? 'color' : 'chassis'; }
+                    if (!$picks) { echo json_encode(['ok' => false, 'error' => 'nocars']); exit; }
+                }
+                $id = smart_check_create($pdo, $branch, $users, (int)($in['minutes'] ?? 30), trim((string)($in['note'] ?? '')), !empty($in['lock']), $me, array_map('intval', (array)($in['watch'] ?? [])),
+                                         array_keys($picks), false, array_keys(array_filter($picks, fn($a) => $a === 'color')));
+                if (!$id) { echo json_encode(['ok' => false, 'error' => 'gone']); exit; }   // none of the chosen cars is at the branch any more
                 echo json_encode(['ok' => true, 'id' => $id]); exit;
+            case 'cars':     // a branch's cars, to choose which ones to check: when each was added and when it last arrived
+                if (!$isBoss) break;
+                car_seen_cols($pdo);
+                $st = $pdo->prepare("SELECT c.id, c.brand, c.model, c.trim_name, c.car_year, c.color, c.chassis, c.status,
+                                            DATE_FORMAT(c.created_at, '%Y-%m-%d') AS added, TIMESTAMPDIFF(DAY, c.created_at, NOW()) AS added_d,
+                                            m.event_type AS mv_type, m.from_branch AS mv_from, DATE_FORMAT(m.created_at, '%Y-%m-%d') AS mv, TIMESTAMPDIFF(DAY, m.created_at, NOW()) AS mv_d,
+                                            TIMESTAMPDIFF(DAY, c.last_seen_at, NOW()) AS seen_d,
+                                            UNIX_TIMESTAMP(GREATEST(COALESCE(c.created_at, '2000-01-01'), COALESCE(m.created_at, c.created_at, '2000-01-01'))) AS arr
+                                     FROM cars c
+                                     LEFT JOIN (SELECT car_id, to_branch, MAX(id) AS mid FROM movements WHERE event_type IN ('transfer', 'amana_return', 'sale_return') GROUP BY car_id, to_branch) lm
+                                            ON lm.car_id = c.id AND lm.to_branch = c.branch
+                                     LEFT JOIN movements m ON m.id = lm.mid
+                                     WHERE c.branch = ? AND c.status IN ('available', 'reserved') ORDER BY arr DESC, c.id DESC");
+                $st->execute([(string)($in['branch'] ?? '')]);
+                $out = [];
+                foreach ($st->fetchAll(PDO::FETCH_ASSOC) as $r) $out[] = [
+                    'id' => (int)$r['id'], 'name' => trim($r['brand'] . ' ' . $r['model'] . ' ' . $r['trim_name'] . ' ' . $r['car_year']),
+                    'color' => push_color_label($pdo, (string)$r['color'], $lang), 'hex' => car_color_hex((string)$r['color']), 'chassis' => (string)$r['chassis'],
+                    'res' => $r['status'] === 'reserved', 'added' => $r['added'], 'added_d' => $r['added_d'] === null ? null : (int)$r['added_d'],
+                    'mv' => $r['mv'], 'mv_d' => $r['mv_d'] === null ? null : (int)$r['mv_d'], 'mv_type' => (string)$r['mv_type'],
+                    'mv_from' => $r['mv_from'] ? push_branch_label($pdo, (string)$r['mv_from'], $lang) : '',
+                    'seen_d' => $r['seen_d'] === null ? null : (int)$r['seen_d'], 'arr' => (int)$r['arr'],
+                ];
+                echo json_encode(['ok' => true, 'cars' => $out]); exit;
             case 'spot':     // ⚡ one random car of the branch, for one person
                 if (!$isBoss) break;
                 $branch = (string)($in['branch'] ?? ''); $who = (int)($in['user'] ?? 0);
@@ -141,15 +179,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $ck = $pdo->prepare("SELECT branch FROM stock_checks WHERE id = ? AND status IN ('active', 'expired')"); $ck->execute([$cid]);
                 $branchOf = $ck->fetchColumn();
                 if ($branchOf === false) break;
-                $counts = smart_check_counts($pdo, $cid);
+                $bTotal = check_branch_total($pdo, $cid);   // the whole branch, also when only chosen cars are checked
                 // the number must match the system: a wrong one warns once, the second stops the system (the admin sees typed against real)
-                $t = check_count_try($pdo, $cid, $uid, $me, $n, (int)$counts[0], (string)$branchOf);
+                $t = check_count_try($pdo, $cid, $uid, $me, $n, $bTotal, (string)$branchOf);
                 if ($t['ok'] || $t['locked']) {
                     // told to the people following the check — never to the people doing it (it carries the system's number)
                     $doing = array_values(smart_check_users($pdo, $cid));
                     $tell = array_values(array_diff(array_unique(array_merge(
                         array_map('strval', $pdo->query("SELECT username FROM users WHERE active = 1 AND role = 'admin'")->fetchAll(PDO::FETCH_COLUMN)), smart_check_watchers($pdo, $cid))), $doing));
-                    if ($tell) notify_event($pdo, 'check_item', ['id' => $cid, 'branch' => (string)$branchOf, 'counted' => $n, 'total' => $counts[0], 'actor_name' => $me,
+                    if ($tell) notify_event($pdo, 'check_item', ['id' => $cid, 'branch' => (string)$branchOf, 'counted' => $n, 'total' => $bTotal, 'actor_name' => $me,
                         'actor' => $me, 'only' => $tell, 'tag' => 'check-count-' . $cid . '-' . $uid, 'force' => true, 'now' => true]);
                 }
                 if (!$t['ok']) { echo json_encode(['ok' => false, 'error' => 'count', 'locked' => $t['locked'], 'go' => $t['locked'] ? 'transfer_lock.php?lang=' . $lang : '']); exit; }
@@ -160,10 +198,28 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $state = in_array($in['state'] ?? '', ['present', 'missing'], true) ? $in['state'] : null;
                 $note  = mb_substr(trim((string)($in['note'] ?? '')), 0, 250);
                 if (!$isAdmin && chassis_locked($pdo, $uid)) { echo json_encode(['ok' => false, 'error' => 'locked', 'go' => 'transfer_lock.php?lang=' . $lang]); exit; }
-                if (!$isAdmin && $state === 'present') {
-                    // «موجودة» = the chassis typed off the car. It may be any car of this check that is not confirmed yet (two cars of the same model).
+                $askQ = $pdo->prepare("SELECT ask FROM stock_check_items WHERE id = ? AND check_id = ?");
+                $askQ->execute([(int)($in['item'] ?? 0), $cid]);
+                $ask = (string)$askQ->fetchColumn();
+                $answer = null;
+                if (!$isAdmin && $state === 'present' && $ask === 'color') {
+                    // «موجودة» for a car asked by its colour = the colour picked from the list, checked against the car
+                    $ci = $pdo->prepare("SELECT i.id, i.car_id, i.label, i.color, c.branch FROM stock_check_items i JOIN stock_checks c ON c.id = i.check_id
+                                         WHERE i.id = ? AND i.check_id = ? AND i.car_id > 0 AND i.ask = 'color' AND c.status IN ('active', 'expired') AND (i.state IS NULL OR i.state <> 'present')");
+                    $ci->execute([(int)($in['item'] ?? 0), $cid]);
+                    $row = $ci->fetch(PDO::FETCH_ASSOC);
+                    if (!$row) { echo json_encode(['ok' => false, 'error' => 'gone']); exit; }
+                    $picked = mb_substr(trim((string)($in['color'] ?? '')), 0, 100);
+                    if ($picked === '') { echo json_encode(['ok' => false, 'error' => 'empty']); exit; }
+                    $t = check_color_try($pdo, $uid, $me, (int)$row['id'], (int)$row['car_id'], $picked, (string)$row['color'], (string)$row['label'], (string)$row['branch']);
+                    if (!$t['ok']) {
+                        echo json_encode(['ok' => false, 'error' => 'color', 'locked' => $t['locked'], 'left' => $t['left'], 'go' => $t['locked'] ? 'transfer_lock.php?lang=' . $lang : '']); exit;
+                    }
+                    $answer = $picked;
+                } elseif (!$isAdmin && $state === 'present') {
+                    // «موجودة» = the chassis typed off the car. It may be any car of this check whose chassis is asked and that is not confirmed yet (two cars of the same model).
                     $cs = $pdo->prepare("SELECT i.id, i.car_id, i.label, i.chassis, c.branch FROM stock_check_items i JOIN stock_checks c ON c.id = i.check_id
-                                         WHERE i.check_id = ? AND i.car_id > 0 AND c.status IN ('active', 'expired') AND (i.state IS NULL OR i.state <> 'present')");
+                                         WHERE i.check_id = ? AND i.car_id > 0 AND i.ask = 'chassis' AND c.status IN ('active', 'expired') AND (i.state IS NULL OR i.state <> 'present')");
                     $cs->execute([$cid]);
                     $cands = []; $place = '';
                     foreach ($cs->fetchAll(PDO::FETCH_ASSOC) as $r) { $cands[(int)$r['id']] = ['car_id' => (int)$r['car_id'], 'chassis' => (string)$r['chassis'], 'label' => (string)$r['label']]; $place = (string)$r['branch']; }
@@ -176,12 +232,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $in['item'] = $t['ref'];   // the car this number belongs to
                     $shown = (string)$cands[$t['ref']]['chassis'];
                 }
-                $prev = $pdo->prepare("SELECT i.state, i.note, i.label, i.chassis, c.branch FROM stock_check_items i JOIN stock_checks c ON c.id = i.check_id WHERE i.id = ? AND i.check_id = ?");
+                $prev = $pdo->prepare("SELECT i.state, i.note, i.label, i.chassis, i.ask, i.color, c.branch FROM stock_check_items i JOIN stock_checks c ON c.id = i.check_id WHERE i.id = ? AND i.check_id = ?");
                 $prev->execute([(int)($in['item'] ?? 0), $cid]);
                 $prev = $prev->fetch(PDO::FETCH_ASSOC);
-                $pdo->prepare("UPDATE stock_check_items i JOIN stock_checks c ON c.id = i.check_id SET i.state = ?, i.note = ?, i.marked_by = ?, i.marked_at = NOW()
+                $pdo->prepare("UPDATE stock_check_items i JOIN stock_checks c ON c.id = i.check_id SET i.state = ?, i.note = ?, i.marked_by = ?, i.marked_at = NOW(), i.answer = ?
                                WHERE i.id = ? AND i.check_id = ? AND i.car_id > 0 AND c.status IN ('active', 'expired')")
-                    ->execute([$state, $note ?: null, $me, (int)($in['item'] ?? 0), $cid]);
+                    ->execute([$state, $note ?: null, $me, $state === 'present' ? $answer : null, (int)($in['item'] ?? 0), $cid]);
                 if ($state === 'present' && $prev) {   // physically confirmed: remembered on the car itself
                     $ci = $pdo->prepare("SELECT car_id FROM stock_check_items WHERE id = ? AND check_id = ?"); $ci->execute([(int)($in['item'] ?? 0), $cid]);
                     car_seen($pdo, (int)$ci->fetchColumn(), $me, sc_is_spot($pdo, $cid) ? 'spot' : 'check');
@@ -190,10 +246,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 // the admin follows the check car by car (one notification per check on the phone, updated each time)
                 if ($prev && $state && ($prev['state'] !== $state || ($state === 'missing' && $note !== '' && $note !== (string)$prev['note']))) {
                     notify_event($pdo, 'check_item', ['id' => $cid, 'branch' => $prev['branch'], 'label' => $prev['label'], 'chassis' => $state === 'present' ? $prev['chassis'] : '', 'state' => $state,
+                        'color' => $state === 'present' && ($prev['ask'] ?? '') === 'color' ? push_color_label($pdo, (string)$prev['color'], notify_options($pdo)['lang']) : '',
                         'note' => $note, 'done' => $counts[1], 'total' => $counts[0], 'missing' => $counts[3], 'actor' => $me, 'tag' => 'check-' . $cid]
                         + (($w = smart_check_watchers($pdo, $cid)) ? ['only' => $w] : []));
                 }
-                echo json_encode(['ok' => true, 'counts' => $counts, 'item' => (int)($in['item'] ?? 0), 'chassis' => $shown ?? null]); exit;
+                echo json_encode(['ok' => true, 'counts' => $counts, 'item' => (int)($in['item'] ?? 0), 'chassis' => $shown ?? null,
+                                  'color' => $answer !== null ? push_color_label($pdo, $answer, $lang) : null]); exit;
             case 'extra':
                 if (!sc_access($pdo, $cid, $uid, false) && !$isBoss) break;
                 if (!$isAdmin && !sc_is_spot($pdo, $cid) && check_counted($pdo, $cid, $uid) === null && sc_access($pdo, $cid, $uid, false)) { echo json_encode(['ok' => false, 'error' => 'count_first']); exit; }
@@ -243,6 +301,7 @@ if ($viewId) {
     $check = $st->fetch(PDO::FETCH_ASSOC) ?: null;
 }
 $doMode = $check && in_array((int)$check['id'], $myIds, true) && in_array($check['status'], ['active', 'expired'], true);
+$isPick = $check && ($check['mode'] ?? 'all') === 'pick';   // «سيارات أختارها»: only the cars the admin chose, each by chassis or colour
 // the first step for whoever does the check: count the cars. Until they answer, the list and its totals stay hidden.
 $isSpot = $check && !empty($check['spot']);
 $needCount = $doMode && !$isAdmin && !$isSpot && check_counted($pdo, (int)$check['id'], $uid) === null;
@@ -276,6 +335,9 @@ if ($check) {
         $lockedIds = array_map('intval', $pdo->query("SELECT user_id FROM user_locks WHERE unlocked_at IS NULL AND user_id IN ($in)")->fetchAll(PDO::FETCH_COLUMN));
     }
     [$cT, $cM, $cP, $cX, $cE] = smart_check_counts($pdo, (int)$check['id']);
+    $bTotal = check_branch_total($pdo, (int)$check['id']);   // what the counting step is checked against
+    $nColor = count(array_filter($items, fn($it) => (int)$it['car_id'] > 0 && ($it['ask'] ?? '') === 'color'));
+    $colorOpts = $doMode && $nColor ? check_color_options($pdo, $lang) : [];   // the same list for every car: it gives nothing away
 }
 $ago = function ($s) use ($ar): string {
     $s = max(0, (int)$s);
@@ -379,14 +441,87 @@ $ago = function ($s) use ($ar): string {
 .sc-fin{width:100%;height:54px;margin-top:12px;border:0;border-radius:16px;background:linear-gradient(90deg,#16a34a,#0ea5e9);color:#fff;font:inherit;font-size:17px;font-weight:900;cursor:pointer}
 .sc-fin:disabled{opacity:.45;cursor:default}
 .sc-ppl2 span{display:inline-flex;align-items:center;gap:8px;margin:0 6px 6px 0;padding:6px 10px;border-radius:12px;border:1px solid var(--line);font-weight:800;font-size:13px}
+.sc-pickinfo{padding:11px 16px;border-radius:14px;background:rgba(56,189,248,.08);border:1px solid rgba(56,189,248,.35);color:#e0f2fe;font-size:13.5px;font-weight:800}
+.sc-how .ln{display:block;margin-top:4px}
+.sc-ask{display:inline-block;margin-top:6px;margin-inline-end:6px;font-size:11.5px;font-weight:900;padding:3px 10px;border-radius:999px}
+.sc-ask.k{background:rgba(132,204,22,.12);border:1px solid rgba(132,204,22,.4);color:#d9f99d}
+.sc-ask.c{background:rgba(244,114,182,.12);border:1px solid rgba(244,114,182,.42);color:#fbcfe8}
+.sc-col{display:inline-flex;align-items:center;gap:6px;margin-top:6px;font-size:12.5px;font-weight:900;padding:3px 10px;border-radius:999px;background:rgba(255,255,255,.06);color:#e2e8f0}
+.sc-col i{width:12px;height:12px;border-radius:50%;border:1px solid rgba(255,255,255,.4)}
+.sc-col.ok{background:rgba(34,197,94,.14);color:#bbf7d0}
+.sc-col[hidden]{display:none}
+.sc-it.bycolor .ch{color:#7dd3fc;direction:ltr;unicode-bidi:isolate}
+/* 🎨 the colour picker: scroll the list, the colour in the middle band is the answer */
+.sc-it .cwb{width:100%;display:none}.sc-it.asking .cwb{display:block}
+.cw-t{font-size:13px;font-weight:800;color:#fbcfe8;margin:2px 0 8px}
+.cw{position:relative;height:240px;border-radius:16px;border:1px solid rgba(244,114,182,.35);background:#0b1426;overflow:hidden}
+.cw-band{position:absolute;inset-inline:8px;top:96px;height:48px;border-radius:12px;border:2px solid rgba(244,114,182,.75);background:rgba(244,114,182,.12);pointer-events:none;box-shadow:0 0 0 999px rgba(2,6,23,.38)}
+.cw-win{position:relative;height:100%;overflow-y:scroll;scroll-snap-type:y mandatory;overscroll-behavior:contain;scrollbar-width:none;outline:none;-webkit-overflow-scrolling:touch;
+  -webkit-mask-image:linear-gradient(180deg,transparent 0,#000 30%,#000 70%,transparent 100%);mask-image:linear-gradient(180deg,transparent 0,#000 30%,#000 70%,transparent 100%)}
+.cw-win::-webkit-scrollbar{display:none}
+.cw-pad{height:96px}
+.cw-o{height:48px;box-sizing:border-box;display:flex;align-items:center;gap:10px;padding:0 20px;scroll-snap-align:center;font-size:16px;font-weight:800;color:#94a3b8;white-space:nowrap;overflow:hidden;cursor:pointer;transition:color .12s,transform .12s}
+.cw-o i{width:20px;height:20px;flex-shrink:0;border-radius:50%;border:1.5px solid rgba(255,255,255,.4)}
+.cw-o small{margin-inline-start:auto;font-size:12px;font-weight:700;color:#64748b;direction:ltr}
+.cw-o.ph{color:#64748b;font-size:14px}.cw-o.ph i{display:none}
+.cw-o.on{color:#fff;transform:scale(1.04)}.cw-o.on small{color:#cbd5e1}
+.cw-ok{width:100%;height:50px;margin-top:10px;border:0;border-radius:14px;background:linear-gradient(90deg,#db2777,#9333ea);color:#fff;font:inherit;font-size:15.5px;font-weight:900;cursor:pointer}
+.cw-ok:disabled{background:rgba(255,255,255,.07);color:#64748b;cursor:default}
+.cw-ok b{display:inline;font-weight:900}
+.sc-it .cwb .cherr{margin-top:8px}
+.sc-mode{margin-top:18px}
+.sc-mc{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.sc-mc button{display:grid;grid-template-columns:auto 1fr;grid-template-rows:auto auto;column-gap:12px;align-items:center;text-align:start;padding:14px 16px;border-radius:16px;border:1.5px solid var(--line);background:rgba(255,255,255,.03);color:var(--txt);font:inherit;cursor:pointer;transition:border-color .15s,background .15s}
+.sc-mc .ic{grid-row:span 2;width:44px;height:44px;border-radius:13px;display:grid;place-items:center;font-size:22px;background:rgba(255,255,255,.06)}
+.sc-mc b{font-size:15px;font-weight:900}.sc-mc small{font-size:12px;color:var(--mut);font-weight:700;line-height:1.6}
+.sc-mc button.on{border-color:rgba(56,189,248,.75);background:linear-gradient(150deg,rgba(14,165,233,.16),rgba(99,102,241,.1));box-shadow:0 8px 22px rgba(14,165,233,.16)}
+.sc-mc button.on .ic{background:linear-gradient(135deg,#0ea5e9,#6366f1)}
+.sc-pk{margin-top:12px;padding:12px;border-radius:18px;border:1px solid rgba(56,189,248,.3);background:rgba(2,6,23,.4)}
+.sc-pk[hidden]{display:none}
+.sc-pk-empty{padding:18px;text-align:center;color:var(--mut);font-size:13.5px;font-weight:800;border:1px dashed var(--line);border-radius:14px}
+.sc-pk-bar{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px}.sc-pk-bar[hidden]{display:none}
+.sc-pk-q{flex:1;min-width:200px}
+.sc-pk-sort{display:flex;gap:4px;padding:3px;border-radius:12px;background:rgba(255,255,255,.04);border:1px solid var(--line)}
+.sc-pk-sort button{height:32px;padding:0 11px;border:0;border-radius:9px;background:none;color:var(--mut);font:inherit;font-size:12.5px;font-weight:800;cursor:pointer;white-space:nowrap}
+.sc-pk-sort button.on{background:rgba(56,189,248,.18);color:#e0f2fe}
+.sc-pk-list{display:grid;gap:8px;max-height:460px;overflow-y:auto;padding:2px;overscroll-behavior:contain}
+.pk-car{display:grid;grid-template-columns:auto 1fr;gap:4px 12px;align-items:start;padding:12px;border-radius:15px;border:1.5px solid var(--line);background:rgba(255,255,255,.025);cursor:pointer;transition:border-color .15s,background .15s;-webkit-tap-highlight-color:transparent}
+.pk-car:hover{border-color:rgba(148,163,184,.35)}
+.pk-car.on{border-color:rgba(56,189,248,.7);background:rgba(14,165,233,.08)}
+.pk-car[hidden]{display:none}
+.pk-tick{width:26px;height:26px;margin-top:2px;border-radius:8px;border:2px solid rgba(148,163,184,.45);display:grid;place-items:center;font-size:14px;font-weight:900;color:transparent;transition:all .15s}
+.pk-car.on .pk-tick{background:#0ea5e9;border-color:#0ea5e9;color:#fff}
+.pk-i{min-width:0}
+.pk-i b{display:block;font-size:14.5px;font-weight:900}
+.pk-res{font-style:normal;font-size:11px;font-weight:800;color:#fcd34d;background:rgba(245,158,11,.12);border:1px solid rgba(245,158,11,.35);padding:1px 7px;border-radius:999px;margin-inline-start:6px;vertical-align:middle}
+.pk-m{display:flex;flex-wrap:wrap;gap:6px 12px;margin-top:4px;font-size:12.5px;font-weight:800;color:#cbd5e1}
+.pk-col{display:inline-flex;align-items:center;gap:6px}.pk-col i{width:12px;height:12px;border-radius:50%;border:1px solid rgba(255,255,255,.35)}
+.pk-ch{font-family:Inter,monospace;color:#a3e635;letter-spacing:.3px;direction:ltr;unicode-bidi:isolate}
+.pk-d{display:flex;flex-wrap:wrap;gap:6px;margin-top:7px}
+.pk-d span{font-size:11.5px;font-weight:800;padding:3px 9px;border-radius:999px;background:rgba(255,255,255,.05);color:var(--mut)}
+.pk-d .mv{background:rgba(168,85,247,.13);color:#e9d5ff}.pk-d .nw{background:rgba(34,197,94,.12);color:#bbf7d0}
+.pk-d .sn{background:rgba(56,189,248,.1);color:#bae6fd}.pk-d .sn.no{background:rgba(239,68,68,.1);color:#fecaca}
+.pk-ask{grid-column:2;display:none;gap:6px;margin-top:8px}
+.pk-car.on .pk-ask{display:flex}
+.pk-ask button{flex:1;height:40px;border-radius:11px;border:1.5px solid var(--line);background:rgba(255,255,255,.04);color:var(--mut);font:inherit;font-size:13.5px;font-weight:900;cursor:pointer}
+.pk-ask button.on[data-a="chassis"]{border-color:#84cc16;background:rgba(132,204,22,.14);color:#d9f99d}
+.pk-ask button.on[data-a="color"]{border-color:#f472b6;background:rgba(244,114,182,.14);color:#fbcfe8}
+.sc-pk-sum{position:sticky;bottom:0;display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px;margin-top:10px;padding:10px 12px;border-radius:14px;background:rgba(15,23,42,.96);border:1px solid rgba(56,189,248,.35);font-size:13.5px;font-weight:900}
+.sc-pk-sum[hidden]{display:none}
+.sc-pk-all{display:flex;flex-wrap:wrap;gap:6px}
+.sc-pk-all button{height:32px;padding:0 10px;border-radius:9px;border:1px solid var(--line);background:rgba(255,255,255,.05);color:var(--txt);font:inherit;font-size:12px;font-weight:800;cursor:pointer}
+.sc-pk-load{padding:18px;text-align:center;color:var(--mut);font-weight:800}
 @media (max-width:760px){.sc-form{grid-template-columns:1fr}}
+@media (max-width:560px){.sc-mc{grid-template-columns:1fr}.pk-ask{grid-column:1 / -1}}
 </style>
 </head>
 <body>
 <div class="nf-wrap">
     <header class="nf-head">
         <div><h1>📋 <?= $ar ? 'الجرد المفاجئ' : 'Surprise stock check' ?></h1>
-            <p><?= !empty($isSpot) ? ($ar ? '⚡ فحص سريع: اذهب إلى السيارة المطلوبة واكتب رقم الشاسيه الموجود عليها' : '⚡ Spot check: go to the car asked for and type its chassis') : ($ar ? 'تأكيد وجود كل سيارة في الفرع خلال وقت محدد' : 'Confirm every car at a branch within a set time') ?></p></div>
+            <p><?= !empty($isSpot) ? ($ar ? '⚡ فحص سريع: اذهب إلى السيارة المطلوبة واكتب رقم الشاسيه الموجود عليها' : '⚡ Spot check: go to the car asked for and type its chassis')
+                  : (!empty($isPick) ? ($ar ? '🎯 تأكيد وجود سيارات محددة في الفرع خلال وقت محدد' : '🎯 Confirm chosen cars at a branch within a set time')
+                  : ($ar ? 'تأكيد وجود كل سيارة في الفرع خلال وقت محدد' : 'Confirm every car at a branch within a set time')) ?></p></div>
         <div class="nf-nav">
             <?php if ($isBoss): ?><a class="nf-btn pur" href="permissions_admin.php?lang=<?= $lang ?>">🔐 <?= $ar ? 'الصلاحيات' : 'Permissions' ?></a><?php endif; ?>
             <?php if ($isBoss && $check): ?><a class="nf-btn" href="stock_check.php?lang=<?= $lang ?>">📋 <?= $ar ? 'كل عمليات الجرد' : 'All checks' ?></a><?php endif; ?>
@@ -471,6 +606,25 @@ $ago = function ($s) use ($ar): string {
                 <label class="sc-opt"><span class="tg"><input type="checkbox" id="scLock" checked><span></span></span> 🔒 <?= $ar ? 'إيقاف النظام عن المكلَّف إذا لم يكتمل الجرد في الوقت' : 'Lock the system for them if it is not finished in time' ?></label>
             </div>
         </div>
+        <div class="sc-mode">
+            <label class="sc-l">🎯 <?= $ar ? 'ماذا يُطلب منه بعد أن يكتب عدد السيارات في الفرع؟' : 'After they type how many cars are at the branch, what do they confirm?' ?></label>
+            <div class="sc-mc" id="scMode" role="radiogroup">
+                <button type="button" class="on" data-mode="all" role="radio" aria-checked="true"><span class="ic">🚗</span><b><?= $ar ? 'كل السيارات' : 'Every car' ?></b><small><?= $ar ? 'يكتب رقم الشاسيه لكل سيارة في الفرع' : 'They type the chassis of every car at the branch' ?></small></button>
+                <button type="button" data-mode="pick" role="radio" aria-checked="false"><span class="ic">🎯</span><b><?= $ar ? 'سيارات أختارها' : 'Cars I choose' ?></b><small><?= $ar ? 'تختار السيارات، ولكل سيارة: الشاسيه أو اللون' : 'You choose the cars, and for each: its chassis or its colour' ?></small></button>
+            </div>
+            <div class="sc-pk" id="scPick" hidden>
+                <div class="sc-pk-empty" id="scPkNoB">📍 <?= $ar ? 'اختر الفرع أولاً لتظهر سياراته هنا' : 'Pick the branch first to see its cars here' ?></div>
+                <div class="sc-pk-bar" id="scPkBar" hidden>
+                    <input class="sc-in sc-pk-q" id="scPkQ" placeholder="🔍 <?= $ar ? 'ابحث بالموديل أو اللون أو الشاسيه…' : 'Search model, colour or chassis…' ?>">
+                    <div class="sc-pk-sort" id="scPkSort" role="group"><button type="button" data-s="new" class="on">🕒 <?= $ar ? 'الأحدث وصولاً' : 'Newest arrivals' ?></button><button type="button" data-s="old">⏳ <?= $ar ? 'الأقدم' : 'Oldest' ?></button></div>
+                </div>
+                <div class="sc-pk-list" id="scPkList"></div>
+                <div class="sc-pk-sum" id="scPkSum" hidden>
+                    <span id="scPkSumT"></span>
+                    <span class="sc-pk-all"><button type="button" data-all="chassis">🔑 <?= $ar ? 'الكل بالشاسيه' : 'All by chassis' ?></button><button type="button" data-all="color">🎨 <?= $ar ? 'الكل باللون' : 'All by colour' ?></button><button type="button" data-all="none">✕ <?= $ar ? 'إلغاء الاختيار' : 'Clear' ?></button></span>
+                </div>
+            </div>
+        </div>
         <div class="sc-watch">
             <label class="sc-l">🔔 <?= $ar ? 'من يستلم إشعارات هذا الجرد؟ (البدء، الوقت المتبقي، كل سيارة، النتيجة)' : 'Who gets this check\'s notifications? (start, time left, every car, result)' ?></label>
             <div class="sc-grp">
@@ -498,7 +652,7 @@ $ago = function ($s) use ($ar): string {
             <?php foreach ($list as $c): $pct = (int)$c['t'] ? round((int)$c['m'] * 100 / (int)$c['t']) : 100; ?>
             <a class="sc-row" href="?lang=<?= $lang ?>&id=<?= (int)$c['id'] ?>">
                 <div class="i"><b>📍 <?= htmlspecialchars($br($c['branch'])) ?></b>
-                    <small>👤 <?= htmlspecialchars((string)$c['who']) ?> · <?= htmlspecialchars($ago(-(int)$c['secs'] + (int)$c['minutes'] * 60)) ?></small>
+                    <small>👤 <?= htmlspecialchars((string)$c['who']) ?> · <?= htmlspecialchars($ago(-(int)$c['secs'] + (int)$c['minutes'] * 60)) ?><?= ($c['mode'] ?? '') === 'pick' ? ' · 🎯 ' . ($ar ? 'سيارات مختارة' : 'chosen cars') : (!empty($c['spot']) ? ' · ⚡ ' . ($ar ? 'فحص سريع' : 'spot check') : '') ?></small>
                     <div class="sc-bar"><i style="width:<?= $pct ?>%"></i></div></div>
                 <span class="sc-prog"><?= (int)$c['m'] ?>/<?= (int)$c['t'] ?></span>
                 <?php if ((int)$c['x']): ?><span class="sc-miss">❌ <?= (int)$c['x'] ?></span><?php endif; ?>
@@ -519,6 +673,9 @@ $ago = function ($s) use ($ar): string {
         <?php if ($doMode && !$needCount): ?><input class="sc-in sc-search" id="scQ" placeholder="🔍 <?= $isAdmin ? ($ar ? 'ابحث بالشاسيه أو الموديل…' : 'Search chassis or model…') : ($ar ? 'ابحث بالموديل أو اللون…' : 'Search model or colour…') ?>"><?php endif; ?>
     </div>
 
+    <?php if ($isPick && (!$doMode || !$needCount)): ?>
+    <div class="sc-pickinfo">🎯 <?= $ar ? 'سيارات مختارة: ' . push_ar_cars($cT) . ' — 🔑 ' . ($cT - $nColor) . ' بالشاسيه · 🎨 ' . $nColor . ' باللون' : 'Chosen cars: ' . $cT . ' — 🔑 ' . ($cT - $nColor) . ' by chassis · 🎨 ' . $nColor . ' by colour' ?></div>
+    <?php endif; ?>
     <?php if ($needCount): ?>
     <section class="nf-card sc-count">
         <div class="sc-step">1 / 2</div>
@@ -530,10 +687,15 @@ $ago = function ($s) use ($ar): string {
         <div class="nf-msg" id="scCntMsg"></div>
     </section>
     <?php endif; ?>
-    <?php if ($doMode && !$isAdmin && !$needCount): ?>
-    <div class="sc-how">🔑 <b><?= $ar ? 'طريقة تأكيد وجود السيارة' : 'How to confirm a car' ?></b>
+    <?php if ($doMode && !$isAdmin && !$needCount && !$isPick): ?>
+    <div class="sc-how"><b>🔑 <?= $ar ? 'طريقة تأكيد وجود السيارة' : 'How to confirm a car' ?></b>
         <?= $ar ? 'اضغط «موجودة» ثم اكتب رقم الشاسيه من السيارة نفسها. إذا كان الرقم يبدأ بأصفار فتجاوزها واكتب الأرقام التي بعدها فقط (مثال: 000482 تُكتب 482). الرقم غير الصحيح مرتين يوقف النظام.'
                 : 'Tap "Here", then type the chassis number off the car itself. If it starts with zeros, skip them (000482 → 482). Two wrong numbers stop your system.' ?></div>
+    <?php elseif ($doMode && !$isAdmin && !$needCount): ?>
+    <div class="sc-how"><b>🎯 <?= $ar ? 'المطلوب: تأكيد السيارات التالية فقط' : 'Confirm only the cars below' ?></b>
+        <?php if ($cT - $nColor > 0): ?><span class="ln">🔑 <?= $ar ? 'سيارة مكتوب عليها «اكتب الشاسيه»: اضغط «موجودة» ثم اكتب رقم الشاسيه من السيارة نفسها (الأصفار في بدايته تُتجاوز: 000482 تُكتب 482).' : 'A car marked "type the chassis": tap "Here", then type the chassis off the car (skip zeros at the start: 000482 → 482).' ?></span><?php endif; ?>
+        <?php if ($nColor): ?><span class="ln">🎨 <?= $ar ? 'سيارة مكتوب عليها «اختر اللون»: اعثر عليها برقم الشاسيه الظاهر، اضغط «موجودة» ثم مرّر القائمة واختر لونها كما تراه أمامك.' : 'A car marked "pick the colour": find it by the chassis shown, tap "Here", then scroll the list and pick its colour as you see it.' ?></span><?php endif; ?>
+        <span class="ln">⛔ <?= $ar ? 'أي إدخال غير صحيح مرتين يوقف النظام.' : 'Two wrong answers stop your system.' ?></span></div>
     <?php endif; ?>
     <?php if (!empty($check['note'])): ?><div class="nf-card" style="padding:12px 16px">📝 <?= htmlspecialchars($check['note']) ?></div><?php endif; ?>
 
@@ -543,7 +705,7 @@ $ago = function ($s) use ($ar): string {
         <h2>👤 <?= $ar ? 'المكلَّفون' : 'Assigned' ?></h2>
         <div class="sc-ppl2">
             <?php foreach ($assigned as $aid => $an): ?>
-            <span><?= htmlspecialchars($an) ?><?php $cn = $isSpot ? -1 : check_counted($pdo, (int)$check['id'], (int)$aid); if ($cn === -1): ?><?php elseif ($cn !== null): ?> <em class="sc-cn <?= $cn === (int)$cT ? 'ok' : 'bad' ?>">🔢 <?= $ar ? 'عدّ ' . $cn . ' — النظام ' . (int)$cT : 'counted ' . $cn . ' — system ' . (int)$cT ?> <?= $cn === (int)$cT ? '✓' : '✗' ?></em><?php elseif (in_array($check['status'], ['active', 'expired'], true)): ?> <em class="sc-cn"><?= $ar ? '🔢 لم يُدخل العدد بعد' : '🔢 not counted yet' ?></em><?php endif; ?><?php if (in_array($aid, $lockedIds, true)): ?> 🔒 <button type="button" class="nf-mini" data-unlock="<?= $aid ?>"><?= $ar ? '🔓 فتح النظام' : '🔓 Unlock' ?></button><?php endif; ?></span>
+            <span><?= htmlspecialchars($an) ?><?php $cn = $isSpot ? -1 : check_counted($pdo, (int)$check['id'], (int)$aid); if ($cn === -1): ?><?php elseif ($cn !== null): ?> <em class="sc-cn <?= $cn === $bTotal ? 'ok' : 'bad' ?>">🔢 <?= $ar ? 'عدّ ' . $cn . ' — النظام ' . $bTotal : 'counted ' . $cn . ' — system ' . $bTotal ?> <?= $cn === $bTotal ? '✓' : '✗' ?></em><?php elseif (in_array($check['status'], ['active', 'expired'], true)): ?> <em class="sc-cn"><?= $ar ? '🔢 لم يُدخل العدد بعد' : '🔢 not counted yet' ?></em><?php endif; ?><?php if (in_array($aid, $lockedIds, true)): ?> 🔒 <button type="button" class="nf-mini" data-unlock="<?= $aid ?>"><?= $ar ? '🔓 فتح النظام' : '🔓 Unlock' ?></button><?php endif; ?></span>
             <?php endforeach; ?>
         </div>
         <?php if (in_array($check['status'], ['active', 'expired'], true)): ?><button type="button" class="nf-btn ghost" id="scCancel" style="margin-top:8px">✖ <?= $ar ? 'إلغاء الجرد' : 'Cancel check' ?></button><?php endif; ?>
@@ -554,14 +716,22 @@ $ago = function ($s) use ($ar): string {
     <?php if (!$needCount): ?>
     <section class="nf-card" id="scItems">
         <?php foreach ($items as $it): if ((int)$it['car_id'] === 0) continue; ?>
-        <?php $seeCh = $isAdmin || !$doMode && $isBoss || $it['state'] === 'present' || !in_array($check['status'], ['active', 'expired'], true);   // the number stays hidden from whoever is doing the check until they type it ?>
-        <div class="sc-it <?= htmlspecialchars((string)$it['state']) ?>" data-id="<?= (int)$it['id'] ?>" data-q="<?= htmlspecialchars(mb_strtolower($it['label'] . ($seeCh ? ' ' . $it['chassis'] : ''))) ?>">
+        <?php $byColor = ($it['ask'] ?? 'chassis') === 'color';   // asked by its colour: the chassis is how they find the car, the colour is the question
+              $open = $isAdmin || !$doMode && $isBoss || $it['state'] === 'present' || !in_array($check['status'], ['active', 'expired'], true);   // the answer stays hidden from whoever is doing the check until they give it
+              $seeCh = $byColor || $open;
+              $colorTxt = $byColor ? push_color_label($pdo, (string)($it['state'] === 'present' && !empty($it['answer']) ? $it['answer'] : $it['color']), $lang) : ''; ?>
+        <div class="sc-it <?= htmlspecialchars((string)$it['state']) ?><?= $byColor ? ' bycolor' : '' ?>" data-id="<?= (int)$it['id'] ?>" data-q="<?= htmlspecialchars(mb_strtolower($it['label'] . ($seeCh ? ' ' . $it['chassis'] : '') . ($byColor && $open ? ' ' . $colorTxt : ''))) ?>">
             <div class="i"><b>🚗 <?= htmlspecialchars($it['label']) ?></b><span class="ch"><?= $seeCh ? htmlspecialchars((string)$it['chassis']) : '🔑 ' . chassis_mask() ?></span>
+                <?php if ($isPick): $doer = $doMode && !$isAdmin; /* an instruction for whoever does it, what was asked for everyone else */ ?><span class="sc-ask <?= $byColor ? 'c' : 'k' ?>"><?= $byColor ? '🎨 ' . ($doer ? ($ar ? 'اختر اللون' : 'Pick the colour') : ($ar ? 'المطلوب: اللون' : 'Asked: colour'))
+                                                                                                  : '🔑 ' . ($doer ? ($ar ? 'اكتب الشاسيه' : 'Type the chassis') : ($ar ? 'المطلوب: الشاسيه' : 'Asked: chassis')) ?></span><?php endif; ?>
+                <?php if ($byColor && $open): ?><span class="sc-col<?= $it['state'] === 'present' ? ' ok' : '' ?>"><i style="background:<?= htmlspecialchars(car_color_hex((string)($it['answer'] ?: $it['color']))) ?>"></i><?= htmlspecialchars($colorTxt) ?><?= $it['state'] === 'present' ? ' ✓' : '' ?></span>
+                <?php elseif ($byColor): /* nothing about the colour in the page until they pick it */ ?><span class="sc-col" hidden><i></i></span><?php endif; ?>
                 <?php if (!empty($it['photo']) && $isBoss): ?><a class="sc-ph-a" href="?photo=<?= (int)$it['id'] ?>" target="_blank" rel="noopener">📷 <?= $ar ? 'صورة رقم الشاسيه' : 'Chassis plate photo' ?><?= !empty($it['photo_at']) ? ' · ' . htmlspecialchars(smart_time_label(strtotime($it['photo_at']), $lang)) : '' ?></a><?php endif; ?>
                 <?php if ($it['marked_by']): ?><div class="by">✍️ <?= htmlspecialchars($it['marked_by']) ?><?= $it['note'] ? ' · 📝 ' . htmlspecialchars($it['note']) : '' ?></div><?php endif; ?></div>
             <?php if ($doMode): ?>
             <div class="bt"><button type="button" class="y<?= $it['state'] === 'present' ? ' on' : '' ?>">✅ <?= $ar ? 'موجودة' : 'Here' ?></button><button type="button" class="n<?= $it['state'] === 'missing' ? ' on' : '' ?>">❌ <?= $ar ? 'غير موجودة' : 'Missing' ?></button></div>
-            <?php if (!$isAdmin): ?><div class="chb"><input class="sc-in chin" autocapitalize="characters" autocomplete="off" autocorrect="off" spellcheck="false" maxlength="40" placeholder="<?= $ar ? 'اكتب رقم الشاسيه من السيارة' : 'Type the chassis from the car' ?>"><button type="button" class="chok">✅ <?= $ar ? 'تأكيد' : 'Confirm' ?></button><div class="cherr"></div></div><?php endif; ?>
+            <?php if (!$isAdmin && $byColor): ?><div class="cwb"></div>
+            <?php elseif (!$isAdmin): ?><div class="chb"><input class="sc-in chin" autocapitalize="characters" autocomplete="off" autocorrect="off" spellcheck="false" maxlength="40" placeholder="<?= $ar ? 'اكتب رقم الشاسيه من السيارة' : 'Type the chassis from the car' ?>"><button type="button" class="chok">✅ <?= $ar ? 'تأكيد' : 'Confirm' ?></button><div class="cherr"></div></div><?php endif; ?>
             <?php if (!$isAdmin && $isSpot): ?><div class="phb<?= !empty($it['photo']) ? ' done' : '' ?>"><label class="phbtn">📷 <span><?= !empty($it['photo']) ? ($ar ? 'تم رفع الصورة ✓ — إعادة التصوير' : 'Photo sent ✓ — retake') : ($ar ? 'التقط صورة لرقم الشاسيه على السيارة' : 'Take a photo of the chassis plate') ?></span><input type="file" accept="image/*" capture="environment" hidden></label><div class="pherr"></div></div><?php endif; ?>
             <input class="sc-in nt" maxlength="200" placeholder="<?= $ar ? 'ملاحظة: أين هي؟ (اختياري)' : 'Note: where is it? (optional)' ?>" value="<?= htmlspecialchars((string)$it['note']) ?>">
             <?php else: ?>
@@ -571,6 +741,7 @@ $ago = function ($s) use ($ar): string {
         <?php endforeach; ?>
         <?php if (!$cT): ?><div class="nf-empty"><?= $ar ? 'لا توجد سيارات مسجلة في هذا الفرع' : 'No cars recorded at this branch' ?></div><?php endif; ?>
 
+        <?php if (!$isPick): ?>
         <h2 style="margin-top:14px">➕ <?= $ar ? 'سيارات موجودة في الفرع وغير مسجلة' : 'Cars at the branch but not in the system' ?></h2>
         <div class="sc-exl" id="scExl">
             <?php foreach ($items as $it): if ((int)$it['car_id'] !== 0) continue; ?>
@@ -579,6 +750,9 @@ $ago = function ($s) use ($ar): string {
         </div>
         <?php if ($doMode): ?>
         <div class="sc-ex"><input class="sc-in" id="scExIn" maxlength="200" placeholder="<?= $ar ? 'الموديل واللون ورقم الشاسيه' : 'Model, colour and chassis' ?>"><button type="button" class="nf-btn" id="scExAdd"><?= $ar ? 'إضافة' : 'Add' ?></button></div>
+        <?php endif; ?>
+        <?php endif; ?>
+        <?php if ($doMode): ?>
         <button type="button" class="sc-fin" id="scFin" <?= $cM < $cT ? 'disabled' : '' ?>>🏁 <?= $ar ? 'إنهاء الجرد وإرسال النتيجة' : 'Finish and send the result' ?></button>
         <?php endif; ?>
     </section>
@@ -591,14 +765,96 @@ $ago = function ($s) use ($ar): string {
 (function () {
     const CSRF = <?= json_encode($csrf) ?>, AR = <?= json_encode($ar) ?>, CHECK = <?= (int)($check['id'] ?? 0) ?>;
     const $ = id => document.getElementById(id);
-    const post = d => fetch(location.pathname, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(Object.assign({ csrf: CSRF, check: CHECK }, d)) }).then(r => r.json());
+    const post = d => fetch(location.pathname, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(Object.assign({ csrf: CSRF, check: CHECK, lang: <?= json_encode($lang) ?> }, d)) }).then(r => r.json());
+
+    const esc = t => String(t == null ? '' : t).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    const arN = (n, w) => n === 1 ? w[0] : n === 2 ? w[1] : n + ' ' + (n % 100 >= 3 && n % 100 <= 10 ? w[2] : (n % 100 <= 2 && n >= 100 ? w[4] : w[3]));
+    const arCars = n => arN(n, ['سيارة واحدة', 'سيارتان', 'سيارات', 'سيارة', 'سيارة']);
+    const ago = n => n == null ? '' : AR ? (n <= 0 ? 'اليوم' : n === 1 ? 'أمس' : 'منذ ' + arN(n, ['يوم', 'يومين', 'أيام', 'يوماً', 'يوم'])) : (n <= 0 ? 'today' : n === 1 ? 'yesterday' : n + ' days ago');
+    const day = ymd => { if (!ymd) return ''; const [y, m, d] = ymd.split('-'); return d + '/' + m + (+y !== new Date().getFullYear() ? '/' + y : ''); };
 
     /* ── new check ── */
     if ($('scGo')) {
-        let branch = '', mins = 30;
+        let branch = '', mins = 30, mode = 'all';
         const ppl = [...document.querySelectorAll('.sc-p')];
         const paintHere = () => ppl.forEach(p => { p.querySelector('small').textContent = branch && p.dataset.here === branch ? (AR ? '• في الفرع الآن' : '• at the branch') : ''; });
-        document.querySelectorAll('.sc-b').forEach(b => b.addEventListener('click', () => { branch = b.dataset.b; document.querySelectorAll('.sc-b').forEach(x => x.classList.toggle('on', x === b)); paintHere(); }));
+        document.querySelectorAll('.sc-b').forEach(b => b.addEventListener('click', () => { branch = b.dataset.b; document.querySelectorAll('.sc-b').forEach(x => x.classList.toggle('on', x === b)); paintHere(); if (mode === 'pick') loadCars(); }));
+
+        /* «سيارات أختارها»: the branch's cars, with when each was added and when it last arrived; each one chosen is asked by its chassis or its colour */
+        let cars = [], loadedFor = '', sortBy = 'new';
+        const picks = new Map();   // car id → 'chassis' | 'color'
+        const list = $('scPkList');
+        document.querySelectorAll('#scMode button').forEach(b => b.addEventListener('click', () => {
+            mode = b.dataset.mode;
+            document.querySelectorAll('#scMode button').forEach(x => { x.classList.toggle('on', x === b); x.setAttribute('aria-checked', x === b ? 'true' : 'false'); });
+            $('scPick').hidden = mode !== 'pick';
+            if (mode === 'pick') loadCars();
+        }));
+        async function loadCars() {
+            $('scPkNoB').hidden = !!branch; $('scPkBar').hidden = !branch;
+            if (!branch) { list.innerHTML = ''; paintSum(); return; }
+            if (loadedFor === branch) return;
+            loadedFor = branch; picks.clear(); cars = [];
+            list.innerHTML = '<div class="sc-pk-load"><span class="nf-spin"></span></div>';
+            const r = await post({ action: 'cars', branch }).catch(() => ({ ok: false }));
+            if (loadedFor !== branch) return;   // another branch was chosen meanwhile
+            if (!r.ok) { loadedFor = ''; list.innerHTML = '<div class="sc-pk-empty">' + (AR ? 'تعذّر تحميل السيارات — حاول مرة أخرى' : 'Could not load the cars — try again') + '</div>'; return; }
+            cars = r.cars; draw();
+        }
+        function chips(c) {
+            const out = [];
+            if (c.mv) {
+                const t = c.mv_type === 'amana_return' ? (AR ? '↩️ رجعت من الأمانة' : '↩️ Back from consignment')
+                        : c.mv_type === 'sale_return' ? (AR ? '⏪ رجعت بعد البيع' : '⏪ Returned after sale')
+                        : (AR ? '🔄 وصلت بالنقل' + (c.mv_from ? ' من ' + c.mv_from : '') : '🔄 Transferred in' + (c.mv_from ? ' from ' + c.mv_from : ''));
+                out.push('<span class="mv">' + esc(t + ' · ' + day(c.mv) + ' · ' + ago(c.mv_d)) + '</span>');
+            }
+            if (c.added) out.push('<span class="' + (c.added_d != null && c.added_d <= 7 ? 'nw' : '') + '">' + esc((AR ? '🆕 أُضيفت ' : '🆕 Added ') + day(c.added) + ' · ' + ago(c.added_d)) + '</span>');
+            out.push(c.seen_d == null ? '<span class="sn no">' + (AR ? '👁️ لم يُؤكَّد وجودها فعلياً بعد' : '👁️ Never physically confirmed') + '</span>'
+                                      : '<span class="sn">' + esc((AR ? '👁️ آخر تأكيد فعلي ' : '👁️ Last confirmed ') + ago(c.seen_d)) + '</span>');
+            return out.join('');
+        }
+        function draw() {
+            if (!cars.length) { list.innerHTML = '<div class="sc-pk-empty">' + (AR ? 'لا توجد سيارات في هذا الفرع' : 'No cars at this branch') + '</div>'; paintSum(); return; }
+            const rows = cars.slice().sort((a, b) => sortBy === 'new' ? b.arr - a.arr || b.id - a.id : a.arr - b.arr || a.id - b.id);
+            list.innerHTML = rows.map(c => '<div class="pk-car" data-id="' + c.id + '" role="checkbox" aria-checked="false" tabindex="0" data-q="' + esc((c.name + ' ' + c.color + ' ' + c.chassis).toLowerCase()) + '">'
+                + '<span class="pk-tick" aria-hidden="true">✓</span>'
+                + '<div class="pk-i"><b>🚗 ' + esc(c.name) + (c.res ? '<em class="pk-res">' + (AR ? 'محجوزة' : 'reserved') + '</em>' : '') + '</b>'
+                + '<div class="pk-m"><span class="pk-col"><i style="background:' + esc(c.hex) + '"></i>' + esc(c.color) + '</span><span class="pk-ch">🔑 ' + esc(c.chassis) + '</span></div>'
+                + '<div class="pk-d">' + chips(c) + '</div></div>'
+                + '<div class="pk-ask" role="radiogroup"><button type="button" data-a="chassis" role="radio">🔑 ' + (AR ? 'يكتب الشاسيه' : 'Type the chassis') + '</button><button type="button" data-a="color" role="radio">🎨 ' + (AR ? 'يختار اللون' : 'Pick the colour') + '</button></div>'
+                + '</div>').join('');
+            list.querySelectorAll('.pk-car').forEach(el => {
+                const id = +el.dataset.id;
+                const flip = () => { if (picks.has(id)) picks.delete(id); else picks.set(id, 'chassis'); paintRow(el); paintSum(); };
+                el.addEventListener('click', e => { if (!e.target.closest('.pk-ask')) flip(); });
+                el.addEventListener('keydown', e => { if ((e.key === ' ' || e.key === 'Enter') && e.target === el) { e.preventDefault(); flip(); } });
+                el.querySelectorAll('.pk-ask button').forEach(b => b.addEventListener('click', () => { picks.set(id, b.dataset.a); paintRow(el); paintSum(); }));
+                paintRow(el);
+            });
+            filter(); paintSum();
+        }
+        function paintRow(el) {
+            const a = picks.get(+el.dataset.id);
+            el.classList.toggle('on', !!a); el.setAttribute('aria-checked', a ? 'true' : 'false');
+            el.querySelectorAll('.pk-ask button').forEach(b => { b.classList.toggle('on', b.dataset.a === a); b.setAttribute('aria-checked', b.dataset.a === a ? 'true' : 'false'); });
+        }
+        function paintSum() {
+            const n = picks.size, k = [...picks.values()].filter(v => v === 'color').length;
+            $('scPkSum').hidden = !n;
+            $('scPkSumT').textContent = AR ? '✓ ' + arCars(n) + ' · 🔑 ' + (n - k) + ' بالشاسيه · 🎨 ' + k + ' باللون'
+                                           : '✓ ' + n + (n === 1 ? ' car' : ' cars') + ' · 🔑 ' + (n - k) + ' by chassis · 🎨 ' + k + ' by colour';
+        }
+        function filter() {
+            const q = $('scPkQ').value.trim().toLowerCase();
+            list.querySelectorAll('.pk-car').forEach(el => { el.hidden = !!q && !el.dataset.q.includes(q); });
+        }
+        $('scPkQ').addEventListener('input', filter);
+        document.querySelectorAll('#scPkSort button').forEach(b => b.addEventListener('click', () => { sortBy = b.dataset.s; document.querySelectorAll('#scPkSort button').forEach(x => x.classList.toggle('on', x === b)); draw(); }));
+        document.querySelectorAll('[data-all]').forEach(b => b.addEventListener('click', () => {
+            if (b.dataset.all === 'none') picks.clear(); else picks.forEach((v, id) => picks.set(id, b.dataset.all));
+            list.querySelectorAll('.pk-car').forEach(paintRow); paintSum();
+        }));
         ppl.forEach(p => p.addEventListener('click', () => p.classList.toggle('on')));
         document.querySelectorAll('.sc-w').forEach(w => w.addEventListener('click', () => w.classList.toggle('on')));
         document.querySelectorAll('.sc-grp button').forEach(g => g.addEventListener('click', () => {
@@ -614,11 +870,16 @@ $ago = function ($s) use ($ar): string {
             const users = ppl.filter(p => p.classList.contains('on')).map(p => +p.dataset.u), m = $('scMsg');
             if (!branch) { m.textContent = AR ? 'اختر الفرع' : 'Pick the branch'; m.className = 'nf-msg bad'; return; }
             if (!users.length) { m.textContent = AR ? 'اختر المكلَّف بالجرد' : 'Pick who does the check'; m.className = 'nf-msg bad'; return; }
-            if (!confirm(AR ? 'إرسال الجرد المفاجئ الآن؟' : 'Send the surprise check now?')) return;
+            const n = picks.size, k = [...picks.values()].filter(v => v === 'color').length;
+            if (mode === 'pick' && !n) { m.textContent = AR ? 'اختر السيارات المطلوب تأكيدها' : 'Choose the cars to confirm'; m.className = 'nf-msg bad'; $('scPick').scrollIntoView({ block: 'center', behavior: 'smooth' }); return; }
+            if (!confirm(mode === 'pick' ? (AR ? 'إرسال الجرد المفاجئ الآن؟\nبعد عدّ السيارات يؤكد السيارات المختارة (' + arCars(n) + '): ' + (n - k) + ' بالشاسيه و' + k + ' باللون.' : 'Send the surprise check now?\nAfter counting, they confirm ' + n + ' cars: ' + (n - k) + ' by chassis, ' + k + ' by colour.')
+                                         : (AR ? 'إرسال الجرد المفاجئ الآن؟' : 'Send the surprise check now?'))) return;
             $('scGo').disabled = true;
             const r = await post({ action: 'create', branch, users, minutes: +$('scMin').value || 30, note: $('scNote').value, lock: $('scLock').checked,
-                watch: [...document.querySelectorAll('.sc-w.on')].map(w => +w.dataset.u) });
-            if (r.ok) location.href = '?lang=<?= $lang ?>&id=' + r.id; else { $('scGo').disabled = false; m.textContent = '✗ ' + r.error; m.className = 'nf-msg bad'; }
+                watch: [...document.querySelectorAll('.sc-w.on')].map(w => +w.dataset.u), mode, picks: mode === 'pick' ? [...picks].map(([car, ask]) => ({ car, ask })) : [] });
+            if (r.ok) location.href = '?lang=<?= $lang ?>&id=' + r.id;
+            else { $('scGo').disabled = false; m.className = 'nf-msg bad';
+                m.textContent = r.error === 'nocars' ? (AR ? 'اختر السيارات المطلوب تأكيدها' : 'Choose the cars to confirm') : r.error === 'gone' ? (AR ? 'السيارات المختارة لم تعد في هذا الفرع — حدّث الصفحة' : 'The chosen cars are no longer at this branch — reload') : '✗ ' + r.error; }
         });
     }
 
@@ -675,9 +936,40 @@ $ago = function ($s) use ($ar): string {
 
     /* ── doing the check ── */
     const items = [...document.querySelectorAll('.sc-it')];
+    const COLORS = <?= json_encode($colorOpts ?? [], JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>;
+    /* 🎨 a car asked by its colour: scroll the list — the colour in the middle band is the answer. It starts on
+       «مرّر لاختيار اللون», so nothing is picked until the person scrolls to a colour themselves. */
+    function colorWheel(box, onPick) {
+        const ROW = 48;
+        const opts = [{ v: '', label: AR ? '— مرّر لاختيار اللون —' : '— scroll to pick —' }].concat(COLORS.map(c => Object.assign({ label: AR ? c.ar : c.en }, c)));
+        box.innerHTML = '<div class="cw-t">🎨 ' + (AR ? 'مرّر القائمة واختر لون السيارة كما تراه أمامك' : 'Scroll the list and pick the colour you see on the car') + '</div>'
+            + '<div class="cw"><div class="cw-band"></div><div class="cw-win" tabindex="0" role="listbox" aria-label="' + (AR ? 'لون السيارة' : 'Colour of the car') + '"><div class="cw-pad"></div>'
+            + opts.map((o, i) => '<div class="cw-o' + (o.v ? '' : ' ph') + '" role="option" aria-selected="false" data-i="' + i + '">' + (o.v ? '<i style="background:' + esc(o.hex) + '"></i>' : '')
+                + '<span>' + esc(o.label) + '</span>' + (o.v && AR && o.en && o.en !== o.ar ? '<small>' + esc(o.en) + '</small>' : '') + '</div>').join('')
+            + '<div class="cw-pad"></div></div></div><button type="button" class="cw-ok" disabled></button><div class="cherr"></div>';
+        const win = box.querySelector('.cw-win'), ok = box.querySelector('.cw-ok'), rows = [...box.querySelectorAll('.cw-o')];
+        let cur = -1, raf = 0;
+        const show = i => {
+            if (i === cur) return; cur = i;
+            rows.forEach((r, k) => { r.classList.toggle('on', k === i); r.setAttribute('aria-selected', k === i ? 'true' : 'false'); });
+            ok.disabled = !opts[i].v;
+            ok.innerHTML = opts[i].v ? '✅ ' + (AR ? 'تأكيد اللون: ' : 'Confirm the colour: ') + '<b>' + esc(opts[i].label) + '</b>' : (AR ? 'مرّر واختر اللون أولاً' : 'Scroll and pick the colour first');
+        };
+        const mid = () => Math.max(0, Math.min(opts.length - 1, Math.round(win.scrollTop / ROW)));
+        const go = (i, smooth) => win.scrollTo({ top: i * ROW, behavior: smooth ? 'smooth' : 'auto' });
+        win.addEventListener('scroll', () => { if (!raf) raf = requestAnimationFrame(() => { raf = 0; show(mid()); }); }, { passive: true });
+        rows.forEach((r, i) => r.addEventListener('click', () => go(i, true)));
+        win.addEventListener('keydown', e => {
+            if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); go(Math.max(0, Math.min(opts.length - 1, mid() + (e.key === 'ArrowDown' ? 1 : -1))), true); }
+            else if (e.key === 'Enter' && !ok.disabled) { e.preventDefault(); ok.click(); }
+        });
+        ok.addEventListener('click', () => { if (opts[cur] && opts[cur].v) onPick(opts[cur].v); });
+        show(0);
+        return { reset: () => { go(0, false); show(0); }, focus: () => win.focus({ preventScroll: true }), err: box.querySelector('.cherr'), ok };
+    }
     function counts(c) { if (!c) return; $('scDone').textContent = c[1]; $('scBar').style.width = (c[0] ? Math.round(c[1] * 100 / c[0]) : 100) + '%'; if ($('scFin')) $('scFin').disabled = c[1] < c[0]; }
     items.forEach(it => {
-        const y = it.querySelector('.y'), n = it.querySelector('.n'), nt = it.querySelector('.nt');
+        const y = it.querySelector('.y'), n = it.querySelector('.n'), nt = it.querySelector('.nt'), cwb = it.querySelector('.cwb');
         if (!y) return;
         const paint = (el, state) => {
             el.classList.remove('present', 'missing', 'asking'); el.classList.add(state);
@@ -685,6 +977,7 @@ $ago = function ($s) use ($ar): string {
         };
         const set = async (state) => {
             paint(it, state);
+            if (state === 'missing' && cwb) { const col = it.querySelector('.sc-col'); col.hidden = true; col.innerHTML = '<i></i>'; }
             const r = await post({ action: 'mark', item: +it.dataset.id, state, note: state === 'missing' ? nt.value : '' });
             if (r.ok) counts(r.counts); else if (r.go) location.href = r.go;
             if (state === 'missing') nt.focus();
@@ -730,7 +1023,34 @@ $ago = function ($s) use ($ar): string {
             phb.classList.remove('busy'); e.target.value = '';
         });
         if (chin) { it.querySelector('.chok').addEventListener('click', send); chin.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); send(); } }); }
-        y.addEventListener('click', () => chin ? ask() : set('present'));
+        /* 🎨 «موجودة» on a car asked by its colour: the colour picked from the list is checked against the car */
+        let wheel = null;
+        const askColor = () => {
+            if (it.classList.contains('present')) return;
+            if (!wheel) wheel = colorWheel(cwb, sendColor);
+            it.classList.add('asking'); wheel.err.textContent = ''; wheel.reset();
+            requestAnimationFrame(() => { cwb.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); wheel.focus(); });
+        };
+        const sendColor = async v => {
+            wheel.ok.disabled = true;
+            const r = await post({ action: 'mark', item: +it.dataset.id, state: 'present', color: v }).catch(() => ({ ok: false, error: 'net' }));
+            if (r.ok) {
+                paint(it, 'present');
+                const col = it.querySelector('.sc-col'), o = COLORS.find(c => c.v === v);
+                col.hidden = false; col.classList.add('ok');
+                col.innerHTML = '<i style="background:' + esc(o ? o.hex : '#64748b') + '"></i>' + esc(r.color || (o ? (AR ? o.ar : o.en) : v)) + ' ✓';
+                if (window.F1App) F1App.sound('ok');
+                counts(r.counts);
+            } else if (r.go) { location.href = r.go; }
+            else {
+                wheel.err.textContent = r.error === 'color' ? (AR ? '❌ اللون غير صحيح. انظر إلى السيارة نفسها مرة أخرى — إذا اخترت لوناً غير صحيح مرة أخرى يتوقف النظام.' : '❌ Wrong colour. Look at the car itself again — one more wrong answer stops your system.')
+                                                            : (AR ? 'تعذّر الحفظ — حاول مرة أخرى' : 'Could not save — try again');
+                it.classList.remove('shake'); void it.offsetWidth; it.classList.add('shake');
+                if (r.error === 'color') wheel.reset(); else wheel.ok.disabled = false;
+                if (window.F1App) F1App.sound('bad');
+            }
+        };
+        y.addEventListener('click', () => cwb ? askColor() : chin ? ask() : set('present'));
         n.addEventListener('click', () => set('missing'));
         nt.addEventListener('change', () => post({ action: 'mark', item: +it.dataset.id, state: 'missing', note: nt.value }));
     });
