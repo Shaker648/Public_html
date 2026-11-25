@@ -108,6 +108,77 @@ function check_admin_names(PDO $pdo): array
     return array_map('strval', $pdo->query("SELECT username FROM users WHERE active = 1 AND role = 'admin'")->fetchAll(PDO::FETCH_COLUMN));
 }
 
+/**
+ * Of these people, the ones who may be told how a check is going (the system's numbers, the chassis, the answers):
+ * never anyone doing it — nor, in a double check, anyone doing one of its twins (each one checks alone).
+ * $twinsOnly: only the people still doing a twin are left out (the result of a check, once it is finished).
+ */
+function check_not_doing(PDO $pdo, int $checkId, array $names, bool $twinsOnly = false): array
+{
+    $doing = [];
+    foreach (check_pair_ids($pdo, $checkId) ?: [$checkId] as $cid) {
+        if ($twinsOnly) {
+            if ($cid === $checkId) continue;
+            $st = $pdo->prepare("SELECT status FROM stock_checks WHERE id = ?"); $st->execute([$cid]);
+            if (!in_array($st->fetchColumn(), ['active', 'expired'], true)) continue;
+        }
+        $doing = array_merge($doing, array_map('strval', array_values(smart_check_users($pdo, $cid))));
+    }
+    return array_values(array_diff(array_unique(array_filter(array_map('strval', $names))), $doing));
+}
+
+/**
+ * For the people following a check, when it starts (never for the people doing it): the cars chosen,
+ * the count questions, the photos asked and a double check.
+ */
+function check_start_detail(PDO $pdo, int $checkId, array $opt): array
+{
+    $d = [];
+    try {
+        $c = $pdo->prepare("SELECT mode, spot FROM stock_checks WHERE id = ?"); $c->execute([$checkId]);
+        $c = $c->fetch(PDO::FETCH_ASSOC) ?: [];
+        $n = $pdo->prepare("SELECT COUNT(*) AS n, COALESCE(SUM(ask = 'color'), 0) AS col, COALESCE(SUM(photo_req > 0), 0) AS ph, COALESCE(BIT_OR(photo_req), 0) AS bits FROM stock_check_items WHERE check_id = ? AND car_id > 0");
+        $n->execute([$checkId]); $n = $n->fetch(PDO::FETCH_ASSOC);
+        if (($c['mode'] ?? '') === 'pick') $d['pick'] = ['n' => (int)$n['n'], 'color' => (int)$n['col']];
+        $qs = check_q_list($pdo, $checkId);
+        if ($qs) $d['questions'] = array_map(fn($q) => ['kind' => (string)$q['kind'], 'ar' => (string)($q['tag_ar'] ?: $q['label_ar']), 'en' => (string)($q['tag_en'] ?: $q['label_en'])], $qs);
+        if ((int)$n['ph']) $d['photos'] = ['n' => (int)$n['ph'], 'bits' => (int)$n['bits'], 'random' => ($c['mode'] ?? '') !== 'pick' && empty($c['spot'])];
+        if (!empty($opt['double_with'])) $d['double'] = array_values(array_map('strval', (array)$opt['double_with']));
+    } catch (Throwable $e) {}
+    return $d;
+}
+
+/** The result of a check, for the admins: each person's count and answers against the system, the cars chosen, the photos. */
+function check_done_summary(PDO $pdo, int $checkId): array
+{
+    $out = [];
+    try {
+        $c = $pdo->prepare("SELECT mode, spot FROM stock_checks WHERE id = ?"); $c->execute([$checkId]);
+        $c = $c->fetch(PDO::FETCH_ASSOC) ?: [];
+        $total = function_exists('check_branch_total') ? check_branch_total($pdo, $checkId) : 0;
+        $qs = check_q_list($pdo, $checkId);
+        $qa = check_q_answers($pdo, $checkId);
+        foreach (smart_check_users($pdo, $checkId) as $uid => $name) {
+            $row = ['user' => (string)$name];
+            $cn = empty($c['spot']) && function_exists('check_counted') ? check_counted($pdo, $checkId, (int)$uid) : null;
+            if ($cn !== null) { $row['count'] = $cn; $row['total'] = $total; }
+            foreach ($qs as $q) {
+                $a = $qa[(int)$uid][(int)$q['id']] ?? null;
+                if ($a) $row['qs'][] = ['kind' => (string)$q['kind'], 'ar' => (string)($q['tag_ar'] ?: $q['label_ar']), 'en' => (string)($q['tag_en'] ?: $q['label_en']), 'a' => (int)$a['answer'], 'e' => (int)$q['expected']];
+            }
+            if (count($row) > 1) $out['answers'][] = $row;
+        }
+        $n = $pdo->prepare("SELECT COUNT(*) AS n, COALESCE(SUM(ask = 'color'), 0) AS col,
+                                   COALESCE(SUM((photo_req & 1) <> 0) + SUM((photo_req & 2) <> 0), 0) AS asked,
+                                   COALESCE(SUM((photo_req & 1) <> 0 AND photo IS NOT NULL) + SUM((photo_req & 2) <> 0 AND car_photo IS NOT NULL), 0) AS sent
+                            FROM stock_check_items WHERE check_id = ? AND car_id > 0");
+        $n->execute([$checkId]); $n = $n->fetch(PDO::FETCH_ASSOC);
+        if (($c['mode'] ?? '') === 'pick') $out['pick'] = ['n' => (int)$n['n'], 'color' => (int)$n['col']];
+        if ((int)$n['asked']) $out['photos'] = ['asked' => (int)$n['asked'], 'sent' => (int)$n['sent']];
+    } catch (Throwable $e) {}
+    return $out;
+}
+
 /** A distance as people say it: 85 م · 1.4 كم */
 function check_m(int $m, string $lang): string
 {
@@ -350,22 +421,28 @@ function check_q_try(PDO $pdo, int $checkId, int $qId, int $uid, string $uname, 
     $lang = notify_options($pdo)['lang'];
     $label = $lang === 'ar' ? (string)$q['label_ar'] : (string)$q['label_en'];
     $ok = $typed === (int)$q['expected'];
+    // a wrong answer to this same question just before (it stays until a right answer clears it)
+    $pv = $pdo->prepare("SELECT typed FROM chassis_tries WHERE user_id = ? AND ctx = 'count' AND ref_id = ? AND label = ? AND ok = 0 AND cleared = 0 ORDER BY id DESC LIMIT 1");
+    $pv->execute([$uid, $checkId, mb_substr($label, 0, 250)]);
+    $before = $pv->fetchColumn();
+    // what the admin is told with the answer: the question, the system's number, a wrong answer before it
+    $info = ['q_ar' => (string)$q['label_ar'], 'q_en' => (string)$q['label_en'], 'kind' => (string)$q['kind'], 'expected' => (int)$q['expected'], 'before' => $before === false ? null : (int)$before];
     $pdo->prepare("INSERT INTO chassis_tries (user_id, username, ctx, ref_id, car_id, label, place, typed, real_chassis, ok, cleared, created_at) VALUES (?, ?, 'count', ?, 0, ?, ?, ?, ?, ?, ?, NOW())")
         ->execute([$uid, $uname, $checkId, mb_substr($label, 0, 250), mb_substr((string)$q['branch'], 0, 100), (string)$typed, (string)$q['expected'], $ok ? 1 : 0, $ok ? 1 : 0]);
     $save = $pdo->prepare("INSERT IGNORE INTO stock_check_qa (q_id, user_id, answer, ok, answered_at) VALUES (?, ?, ?, ?, NOW())");
     if ($ok) {
         $save->execute([$qId, $uid, $typed, 1]);
         $pdo->prepare("UPDATE chassis_tries SET cleared = 1 WHERE user_id = ? AND cleared = 0")->execute([$uid]);
-        return ['ok' => true, 'locked' => false];
+        return ['ok' => true, 'locked' => false] + $info;
     }
     $n = $pdo->prepare("SELECT COUNT(*) FROM chassis_tries WHERE user_id = ? AND ok = 0 AND cleared = 0");
     $n->execute([$uid]);
-    if ((int)$n->fetchColumn() < CHASSIS_MAX_WRONG) return ['ok' => false, 'locked' => false];
+    if ((int)$n->fetchColumn() < CHASSIS_MAX_WRONG) return ['ok' => false, 'locked' => false] + $info;
     $save->execute([$qId, $uid, $typed, 0]);
     $why = $lang === 'ar' ? 'إدخال عدد غير صحيح مرتين أثناء الجرد المفاجئ (' . $label . ')' : 'Wrong number typed twice during the stock check (' . $label . ')';
     $lockId = smart_lock_user($pdo, $uid, 'chassis', $why, '');
     $pdo->prepare("UPDATE chassis_tries SET cleared = 1, lock_id = ? WHERE user_id = ? AND ok = 0 AND cleared = 0")->execute([$lockId ?: null, $uid]);
-    return ['ok' => false, 'locked' => $lockId > 0];
+    return ['ok' => false, 'locked' => $lockId > 0] + $info;
 }
 
 /* ════════════════════════ 📷 photos asked at random ════════════════════════ */

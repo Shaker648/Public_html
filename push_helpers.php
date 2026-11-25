@@ -963,6 +963,21 @@ function notify_message(PDO $pdo, string $event, array $d, string $lang): array
             break;
         case 'check_item':
             $bn = push_branch_label($pdo, (string)($d['branch'] ?? ''), $lang);
+            if (!empty($d['question'])) {   // 🔢 a count question the admin chose (by colour or brand): the answer, against the system
+                $same = (int)($d['answer'] ?? 0) === (int)($d['expected'] ?? 0);
+                $diff = (int)($d['answer'] ?? 0) - (int)($d['expected'] ?? 0);
+                $title = ($same ? (($d['qkind'] ?? '') === 'brand' ? '🚗 ' : '🎨 ') : '⚠️ ')
+                       . ($ar ? 'جرد فرع ' . $bn . ': ' . ($d['actor_name'] ?? '') . ' أجاب ' . (int)($d['answer'] ?? 0) . ' — المسجَّل في النظام ' . (int)($d['expected'] ?? 0)
+                              : $bn . ' check: ' . ($d['actor_name'] ?? '') . ' answered ' . (int)($d['answer'] ?? 0) . ' — the system has ' . (int)($d['expected'] ?? 0));
+                $body[] = '❓ ' . ((int)($d['qof'] ?? 0) > 1 ? ($ar ? 'سؤال ' . (int)$d['qn'] . ' من ' . (int)$d['qof'] . ': ' : 'Question ' . (int)$d['qn'] . ' of ' . (int)$d['qof'] . ': ') : '')
+                        . ($ar ? ($d['q_ar'] ?? '') : ($d['q_en'] ?? ''));
+                $body[] = $same ? ($ar ? '✅ الإجابة مطابقة للنظام' : '✅ Matches the system')
+                                : ($ar ? '❗ غير مطابقة: الفرق ' . abs($diff) . ($diff > 0 ? ' (أكثر من النظام)' : ' (أقل من النظام)') : '❗ Does not match: off by ' . abs($diff));
+                if (isset($d['before'])) $body[] = $ar ? '⚠️ أخطأ قبلها مرة: كتب ' . (int)$d['before'] : '⚠️ Wrong once before: typed ' . (int)$d['before'];
+                if (!empty($d['locked'])) $body[] = $ar ? '🔒 خطآن متتاليان — أُوقف النظام عنه' : '🔒 Two wrong answers — the system was stopped for them';
+                $url = 'stock_check.php?lang=' . $lang . '&id=' . (int)($d['id'] ?? 0);
+                break;
+            }
             if (isset($d['counted'])) {   // the first step: how many cars the person counted, against the system
                 $same = (int)$d['counted'] === (int)$d['total'];
                 $title = ($same ? '🔢 ' : '⚠️ ') . ($ar ? 'جرد فرع ' . $bn . ': ' . ($d['actor_name'] ?? '') . ' عدّ ' . (int)$d['counted'] . ' — المسجَّل في النظام ' . (int)$d['total']
@@ -970,6 +985,8 @@ function notify_message(PDO $pdo, string $event, array $d, string $lang): array
                 $body[] = $same ? ($ar ? '✅ العدد مطابق للنظام' : '✅ Matches the system')
                                 : ($ar ? '❗ العدد غير مطابق: الفرق ' . abs((int)$d['counted'] - (int)$d['total']) . ((int)$d['counted'] > (int)$d['total'] ? ' (أكثر من النظام)' : ' (أقل من النظام)')
                                        : '❗ Does not match: off by ' . abs((int)$d['counted'] - (int)$d['total']));
+                if (isset($d['before'])) $body[] = $ar ? '⚠️ أخطأ قبلها مرة: كتب ' . (int)$d['before'] : '⚠️ Wrong once before: typed ' . (int)$d['before'];
+                if (!empty($d['locked'])) $body[] = $ar ? '🔒 خطآن متتاليان — أُوقف النظام عنه' : '🔒 Two wrong answers — the system was stopped for them';
                 $url = 'stock_check.php?lang=' . $lang . '&id=' . (int)($d['id'] ?? 0);
                 break;
             }
@@ -992,14 +1009,25 @@ function notify_message(PDO $pdo, string $event, array $d, string $lang): array
             if ($event === 'check_start') {
                 $title = !empty($d['spot']) ? '⚡ ' . ($ar ? 'فحص سريع لسيارة: فرع ' . $bn . ' — المكلَّف: ' . ($d['users'] ?? '') : 'Spot check: ' . $bn . ' — ' . ($d['users'] ?? ''))
                                             : $ev[2] . ' ' . ($ar ? 'بدأ جرد مفاجئ: فرع ' . $bn . ' — المكلَّف: ' . ($d['users'] ?? '') : 'Surprise stock check started: ' . $bn . ' — ' . ($d['users'] ?? ''));
-                $body[] = $ar ? '⏱️ المدة ' . ($d['dur'] ?? '') . ' — تنتهي الساعة ' . $d['until'] : '⏱️ ' . ($d['dur'] ?? '') . ' — ends at ' . $d['until'];
+                $body[] = $ar ? '⏱️ المدة ' . ($d['dur'] ?? '') . ' — تنتهي الساعة ' . ($d['until'] ?? '') : '⏱️ ' . ($d['dur'] ?? '') . ' — ends at ' . ($d['until'] ?? '');
                 // the number of cars is not sent: the first step of the check is to count them
                 $body[] = !empty($d['spot']) ? ($ar ? '🔑 اذهب إلى السيارة المطلوبة واكتب رقم الشاسيه الموجود عليها' : '🔑 Go to the car asked for and type the chassis number on it')
                         : (!empty($d['pick']) ? ($ar ? '🔢 أولاً: عُدّ السيارات الموجودة في الفرع، ثم أكّد السيارات المحددة لك ' . (!empty($d['colors']) ? 'برقم الشاسيه أو باللون' : 'برقم الشاسيه')
                                                      : '🔢 First count the cars at the branch, then confirm the cars chosen for you ' . (!empty($d['colors']) ? 'by chassis or by colour' : 'by chassis'))
                         : ($ar ? '🔢 أولاً: عُدّ السيارات الموجودة في الفرع، ثم أكّد كل سيارة برقم الشاسيه' : '🔢 First count the cars at the branch, then confirm each one by its chassis'));
+                if (!empty($d['detail'])) {   // only for the people following it — the people doing it never get this part
+                    $dt = (array)$d['detail'];
+                    if (!empty($dt['pick'])) { $pn = (int)$dt['pick']['n']; $pc = (int)$dt['pick']['color'];
+                        $body[] = $ar ? '🎯 سيارات مختارة: ' . push_ar_cars($pn) . ' — 🔑 ' . ($pn - $pc) . ' بالشاسيه · 🎨 ' . $pc . ' باللون' : '🎯 Chosen cars: ' . $pn . ' — 🔑 ' . ($pn - $pc) . ' by chassis · 🎨 ' . $pc . ' by colour'; }
+                    if (!empty($dt['questions'])) $body[] = ($ar ? '🔢 أسئلة عدّ بعد العدد الكلي: ' : '🔢 Count questions after the total: ')
+                        . implode($ar ? '، ' : ', ', array_map(fn($q) => (($q['kind'] ?? '') === 'brand' ? '🚗 ' : '🎨 ') . ($ar ? ($q['ar'] ?? '') : ($q['en'] ?? '')), (array)$dt['questions']));
+                    if (!empty($dt['photos'])) { $pb = (int)$dt['photos']['bits']; $pk = $ar ? ($pb === 3 ? 'الشاسيه + السيارة' : ($pb === 2 ? 'السيارة' : 'رقم الشاسيه')) : ($pb === 3 ? 'chassis + car' : ($pb === 2 ? 'the car' : 'chassis plate'));
+                        $body[] = $ar ? '📷 ' . (!empty($dt['photos']['random']) ? 'صور عشوائية: ' : 'صور مطلوبة: ') . push_ar_cars((int)$dt['photos']['n']) . ' (' . $pk . ') — لا يعرف بها المكلَّف إلا بعد تأكيد السيارة'
+                                      : '📷 ' . (!empty($dt['photos']['random']) ? 'Random photos: ' : 'Photos asked: ') . (int)$dt['photos']['n'] . ' car(s) (' . $pk . ') — they only learn it after confirming the car'; }
+                    if (!empty($dt['double'])) $body[] = ($ar ? '👥 جرد مزدوج — كل واحد وحده: ' : '👥 Double check — each one alone: ') . implode($ar ? '، ' : ', ', (array)$dt['double']);
+                }
                 if (!empty($d['note'])) $body[] = '📝 ' . $d['note'];
-                if (!empty($d['lock'])) $body[] = $ar ? '🔒 بعد الساعة ' . $d['until'] . ' يبدأ إيقاف النظام عن المكلَّف إذا لم يكتمل الجرد' : '🔒 After ' . $d['until'] . ' the system locks for them if not finished';
+                if (!empty($d['lock'])) $body[] = $ar ? '🔒 بعد الساعة ' . ($d['until'] ?? '') . ' يبدأ إيقاف النظام عن المكلَّف إذا لم يكتمل الجرد' : '🔒 After ' . ($d['until'] ?? '') . ' the system locks for them if not finished';
             } elseif ($event === 'check_tick') {
                 $title = '⏳ ' . ($ar ? 'متبقٍّ ' . push_ar_mins((int)$d['mins']) . ' — جرد فرع ' . $bn : (int)$d['mins'] . ' min left — ' . $bn . ' stock check');
                 $body[] = ($ar ? '👤 المكلَّف: ' : '👤 Assigned: ') . ($d['users'] ?? '') . ' · ' . ($ar ? 'تمت مراجعة ' . (int)$d['done'] . (empty($d['hide_total']) ? ' من أصل ' . $n : '') : (int)$d['done'] . (empty($d['hide_total']) ? ' of ' . $n : '') . ' checked');
@@ -1015,6 +1043,16 @@ function notify_message(PDO $pdo, string $event, array $d, string $lang): array
                 $title = ($miss ? '❗ ' : $ev[2] . ' ') . ($ar ? 'نتيجة جرد فرع ' . $bn . ': ' . ($miss ? push_ar_cars($miss) . ' غير موجودة' : 'كل السيارات موجودة') : $bn . ' stock check: ' . ($miss ? $miss . ' missing' : 'everything present'));
                 $body[] = ($ar ? 'موجودة ' : 'Present ') . (int)$d['present'] . ($ar ? ' · غير موجودة ' : ' · missing ') . $miss . ($ar ? ' · زائدة ' : ' · extra ') . (int)($d['extra'] ?? 0) . (!empty($d['late']) ? ($ar ? ' · بعد انتهاء الوقت' : ' · after the deadline') : '');
                 if (!empty($d['missing_list'])) $body[] = '❌ ' . implode('، ', array_slice((array)$d['missing_list'], 0, 4));
+                foreach ((array)($d['answers'] ?? []) as $pa) {   // 🔢 each person's count and answers, against the system
+                    $parts = [];
+                    $vs = fn(int $a, int $e) => $a . ($a === $e ? ' ✓' : ' ✗ (' . ($ar ? 'النظام ' : 'system ') . $e . ')');
+                    if (isset($pa['count'])) $parts[] = ($ar ? 'العدد ' : 'count ') . $vs((int)$pa['count'], (int)$pa['total']);
+                    foreach ((array)($pa['qs'] ?? []) as $qq) $parts[] = (($qq['kind'] ?? '') === 'brand' ? '🚗 ' : '🎨 ') . ($ar ? ($qq['ar'] ?? '') : ($qq['en'] ?? '')) . ' ' . $vs((int)$qq['a'], (int)$qq['e']);
+                    if ($parts) $body[] = '🔢 ' . ($pa['user'] ?? '') . ': ' . implode(' · ', $parts);
+                }
+                if (!empty($d['pick'])) { $pn = (int)$d['pick']['n']; $pc = (int)$d['pick']['color'];
+                    $body[] = $ar ? '🎯 سيارات مختارة: ' . push_ar_cars($pn) . ' — 🔑 ' . ($pn - $pc) . ' بالشاسيه · 🎨 ' . $pc . ' باللون' : '🎯 Chosen cars: ' . $pn . ' — 🔑 ' . ($pn - $pc) . ' by chassis · 🎨 ' . $pc . ' by colour'; }
+                if (!empty($d['photos'])) $body[] = $ar ? '📷 الصور: ' . (int)$d['photos']['sent'] . ' من ' . (int)$d['photos']['asked'] . ' — اعرضها من صفحة الجرد' : '📷 Photos: ' . (int)$d['photos']['sent'] . ' of ' . (int)$d['photos']['asked'] . ' — see them on the check page';
                 if (!empty($d['cases'])) $body[] = $ar ? '🔎 فُتحت متابعة لكل سيارة غير موجودة — قرار الإدارة في صفحة الجرد، وإعادة فحص مقترحة غداً' : '🔎 A follow-up was opened for each missing car — decided on the stock check page, with a re-check proposed tomorrow';
                 $body[] = ($ar ? '👤 بواسطة ' : '👤 by ') . ($d['by'] ?? '');
             }
