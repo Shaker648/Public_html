@@ -89,7 +89,7 @@ $EXPECTED = /*EXPECTED*/[
     'pricing_helpers.php' => '8a07e7ac7fba1194fd3fce1df9b23d9b',
     'pwa_head.php' => '5bcf1664b82d3459279445d292fbed1f',
     'notify_style.php' => '398c976110ac36a1b23c825f3f228746',
-    'stock_check.php' => '6f5b24fbe6731ce6c89793531da49532',
+    'stock_check.php' => '42f9ccdbcdc6b89e292c363ab6b6b98c',
     'transfer_receive.php' => 'a8dd4ac2e950d5b891dbc4cb23aef6c2',
     'notify_popup.php' => '6b8c96fbb24e51b81a1697baa27f2a08',
     'notify_feed.php' => 'cb14b135350e87bcb8f5460b04066575',
@@ -97,7 +97,7 @@ $EXPECTED = /*EXPECTED*/[
     'chatbot_api.php' => '01c5964ef4f708b3bfd08e779eddf451',
     'sw.js' => '4676a73c7396bb0cc5aa57a30db2b89e',
     'push_client.js' => 'c957bb62b5f9c54b2866224d99b3271f',
-    'stock_check_extras.php' => 'c186c5c422e4a0e680f4caa3cee758c3',
+    'stock_check_extras.php' => 'd10ed6466e9b6e0a76d2ea22b0fe20a2',
 ]/*/EXPECTED*/;
 
 $rows = [];
