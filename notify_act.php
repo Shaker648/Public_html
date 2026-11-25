@@ -6,6 +6,7 @@
  *   ?a=recv&t=…   «✅ تم الاستلام» on "a car is on its way to your branch"
  *   ?a=miss&t=…   «❌ لم تصل» — the car never arrived: the admin is told
  *   ?a=bstop|bkeep&t=…   (admins) stop the clock-in of someone whose system was stopped, or keep it running
+ *   ?a=xtok|xtno&t=…     (admins) approve or refuse a request for more time in a stock check
  *
  * t is a private random code that belongs to one person's copy of one
  * notification, so the button works straight from the lock screen — even if
@@ -39,6 +40,10 @@ try {
                 $ok = lock_basma_decide($pdo, (int)substr((string)$row['ref'], 5), $a === 'bstop' ? 'stop' : 'keep', (string)$row['username']);
                 $pdo->prepare("UPDATE notify_inbox SET seen_at = COALESCE(seen_at, NOW()), read_at = COALESCE(read_at, NOW()) WHERE id = ?")->execute([(int)$row['id']]);
                 $go = 'lockdown.php?lang=' . $lang;
+            } elseif (in_array($a, ['xtok', 'xtno'], true) && $row['event'] === 'check_time_req' && $row['role'] === 'admin' && strpos((string)$row['ref'], 'xt:') === 0) {
+                $ok = function_exists('check_time_decide') && check_time_decide($pdo, (int)substr((string)$row['ref'], 3), $a === 'xtok', (string)$row['username']);
+                $pdo->prepare("UPDATE notify_inbox SET seen_at = COALESCE(seen_at, NOW()), read_at = COALESCE(read_at, NOW()) WHERE id = ?")->execute([(int)$row['id']]);
+                $go = 'stock_check.php?lang=' . $lang;
             } elseif ($a === 'miss' && $row['event'] === 'transfer_incoming' && strpos((string)$row['ref'], 'mv:') === 0) {
                 foreach (explode(',', substr((string)$row['ref'], 3)) as $mid) smart_report_missing($pdo, (int)$mid, (string)$row['username'], '');
                 $pdo->prepare("UPDATE notify_inbox SET seen_at = COALESCE(seen_at, NOW()), read_at = COALESCE(read_at, NOW()) WHERE id = ?")->execute([(int)$row['id']]);

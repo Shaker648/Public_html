@@ -1599,8 +1599,17 @@ body:has(#npCard.on) #f1c-chat-bubble { opacity:0; pointer-events:none; }
     <a class="duty-bar plan" href="stock_check.php?lang=<?= $lang ?>#plans" data-secs="0">
         <span class="dt-ic">🎲</span>
         <span class="dt-tx"><?= $lang === 'ar' ? (count($adPlans) === 1 ? 'اقتراح جرد مفاجئ ينتظر موافقتك' : count($adPlans) . ' اقتراحات جرد تنتظر موافقتك') : count($adPlans) . ' proposed check(s) waiting for you' ?>
-            <small><?= htmlspecialchars(implode(' · ', array_map(fn($x) => ($x['kind'] === 'spot' ? '⚡ ' : '📋 ') . push_branch_label($pdo, (string)$x['branch'], $lang) . ' — ' . $x['username'], array_slice($adPlans, 0, 3)))) ?></small></span>
+            <small><?= htmlspecialchars(implode(' · ', array_map(fn($x) => (['spot' => '⚡ ', 'ping' => '📍 ', 'recheck' => '🔁 '][$x['kind']] ?? '📋 ') . push_branch_label($pdo, (string)$x['branch'], $lang) . ' — ' . $x['username'], array_slice($adPlans, 0, 3)))) ?></small></span>
         <span class="dt-go">✅ <?= $lang === 'ar' ? 'مراجعة' : 'Review' ?></span>
+    </a>
+        <?php endif;
+        $adCases = function_exists('check_cases_open') ? check_cases_open($pdo) : [];   // cars not found in a check, waiting for a decision
+        if ($adCases): ?>
+    <a class="duty-bar plan" href="stock_check.php?lang=<?= $lang ?>#cases" data-secs="0">
+        <span class="dt-ic">🔎</span>
+        <span class="dt-tx"><?= $lang === 'ar' ? (count($adCases) === 1 ? 'سيارة غير موجودة في الجرد تنتظر قرارك' : push_ar_cars(count($adCases)) . ' غير موجودة في الجرد تنتظر قرارك') : count($adCases) . ' missing car(s) from stock checks waiting for you' ?>
+            <small><?= htmlspecialchars(implode(' · ', array_map(fn($x) => $x['label'] . ' — ' . push_branch_label($pdo, (string)$x['branch'], $lang), array_slice($adCases, 0, 3)))) ?></small></span>
+        <span class="dt-go">🔎 <?= $lang === 'ar' ? 'قرار' : 'Decide' ?></span>
     </a>
         <?php endif; if ($trust): ?>
     <div class="trust" id="trustStrip">

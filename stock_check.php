@@ -30,6 +30,7 @@ $isBoss = can('page.stock_check');
 $isAdmin = ($_SESSION['role'] ?? '') === 'admin';   // admins see the chassis; everyone else types it off the car
 push_tables($pdo);
 check_pick_cols($pdo);
+check_extra_tables($pdo);
 smart_check_scan($pdo);
 
 $myChecks = smart_checks_for_user($pdo, $uid);
@@ -122,8 +123,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     foreach ((array)($in['picks'] ?? []) as $pk) { $pc = (int)($pk['car'] ?? 0); if ($pc > 0) $picks[$pc] = ($pk['ask'] ?? '') === 'color' ? 'color' : 'chassis'; }
                     if (!$picks) { echo json_encode(['ok' => false, 'error' => 'nocars']); exit; }
                 }
-                $id = smart_check_create($pdo, $branch, $users, (int)($in['minutes'] ?? 30), trim((string)($in['note'] ?? '')), !empty($in['lock']), $me, array_map('intval', (array)($in['watch'] ?? [])),
-                                         array_keys($picks), false, array_keys(array_filter($picks, fn($a) => $a === 'color')));
+                $opt = ['photos' => max(0, min(3, (int)($in['photos'] ?? 0))), 'questions' => []];
+                foreach (array_slice((array)($in['questions'] ?? []), 0, 4) as $q) $opt['questions'][] = ['kind' => ($q['kind'] ?? '') === 'brand' ? 'brand' : 'color', 'key' => mb_substr((string)($q['key'] ?? ''), 0, 100)];
+                $users = array_values(array_unique(array_filter($users)));
+                $args = fn(array $who, array $o) => [$pdo, $branch, $who, (int)($in['minutes'] ?? 30), trim((string)($in['note'] ?? '')), !empty($in['lock']), $me, array_map('intval', (array)($in['watch'] ?? [])),
+                                                    array_keys($picks), false, array_keys(array_filter($picks, fn($a) => $a === 'color')), $o];
+                if (!empty($in['double']) && count($users) >= 2) {
+                    // 👥 a double check: the same check for each person alone (the followers are told once)
+                    $id = smart_check_create(...$args([$users[0]], $opt));
+                    if ($id) {
+                        $pdo->prepare("UPDATE stock_checks SET group_id = ? WHERE id = ?")->execute([$id, $id]);
+                        foreach (array_slice($users, 1) as $u2) smart_check_create(...$args([$u2], $opt + ['group' => $id, 'quiet' => true]));
+                    }
+                } else {
+                    $id = smart_check_create(...$args($users, $opt));
+                }
                 if (!$id) { echo json_encode(['ok' => false, 'error' => 'gone']); exit; }   // none of the chosen cars is at the branch any more
                 echo json_encode(['ok' => true, 'id' => $id]); exit;
             case 'cars':     // a branch's cars, to choose which ones to check: when each was added and when it last arrived
@@ -149,7 +163,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     'mv_from' => $r['mv_from'] ? push_branch_label($pdo, (string)$r['mv_from'], $lang) : '',
                     'seen_d' => $r['seen_d'] === null ? null : (int)$r['seen_d'], 'arr' => (int)$r['arr'],
                 ];
-                echo json_encode(['ok' => true, 'cars' => $out]); exit;
+                echo json_encode(['ok' => true, 'cars' => $out, 'suggest' => check_q_suggest($pdo, (string)($in['branch'] ?? ''), $lang)]); exit;
             case 'spot':     // ⚡ one random car of the branch, for one person
                 if (!$isBoss) break;
                 $branch = (string)($in['branch'] ?? ''); $who = (int)($in['user'] ?? 0);
@@ -166,8 +180,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 push_setting_set($pdo, 'check_auto', json_encode(['on' => !empty($in['on']), 'full' => max(0, min(7, (int)($in['full'] ?? 1))), 'spot' => max(0, min(14, (int)($in['spot'] ?? 2))), 'ping' => max(0, min(21, (int)($in['ping'] ?? 0))),
                     'from' => max(0, min(22, (int)($in['from'] ?? 11))), 'to' => max(1, min(23, (int)($in['to'] ?? 20)))]), $me);
                 // this week's plans that were not asked yet are planned again with the new numbers
-                check_auto_tables($pdo); $pdo->exec("DELETE FROM stock_check_plans WHERE status = 'planned'");
-                $wk = $pdo->prepare("UPDATE stock_check_plans SET week_key = CONCAT(week_key, 'x') WHERE week_key = ?"); $wk->execute([date('o-W')]);
+                check_auto_tables($pdo); $pdo->exec("DELETE FROM stock_check_plans WHERE status = 'planned' AND kind <> 'recheck'");
+                $wk = $pdo->prepare("UPDATE stock_check_plans SET week_key = CONCAT(week_key, 'x') WHERE week_key = ? AND kind <> 'recheck'"); $wk->execute([date('o-W')]);
                 echo json_encode(['ok' => true]); exit;
             case 'count':
                 // the first step: how many cars are at the branch? (answered once; the admin sees it against the system)
@@ -192,16 +206,39 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
                 if (!$t['ok']) { echo json_encode(['ok' => false, 'error' => 'count', 'locked' => $t['locked'], 'go' => $t['locked'] ? 'transfer_lock.php?lang=' . $lang : '']); exit; }
                 echo json_encode(['ok' => true]); exit;
+            case 'qcount':   // 🔢 a count question (by colour or brand), after the total
+                if ($isAdmin || !sc_access($pdo, $cid, $uid, false)) break;
+                if (chassis_locked($pdo, $uid)) { echo json_encode(['ok' => false, 'error' => 'locked', 'go' => 'transfer_lock.php?lang=' . $lang]); exit; }
+                $n = (int)($in['n'] ?? -1);
+                if (!is_numeric($in['n'] ?? null) || $n < 0 || $n > 5000) { echo json_encode(['ok' => false, 'error' => 'number']); exit; }
+                $ck = $pdo->prepare("SELECT 1 FROM stock_checks WHERE id = ? AND status IN ('active', 'expired')"); $ck->execute([$cid]);
+                if (!$ck->fetchColumn() || check_counted($pdo, $cid, $uid) === null) break;
+                $qid = (int)($in['q'] ?? 0);
+                if (!in_array($qid, array_map(fn($q) => (int)$q['id'], check_q_pending($pdo, $cid, $uid)), true)) { echo json_encode(['ok' => true]); exit; }   // answered already
+                $t = check_q_try($pdo, $cid, $qid, $uid, $me, $n);
+                if (!$t['ok']) { echo json_encode(['ok' => false, 'error' => 'count', 'locked' => $t['locked'], 'go' => $t['locked'] ? 'transfer_lock.php?lang=' . $lang : '']); exit; }
+                echo json_encode(['ok' => true]); exit;
             case 'mark':
                 if (!sc_access($pdo, $cid, $uid, false) && !$isBoss) break;
-                if (!$isAdmin && !sc_is_spot($pdo, $cid) && check_counted($pdo, $cid, $uid) === null && sc_access($pdo, $cid, $uid, false)) { echo json_encode(['ok' => false, 'error' => 'count_first']); exit; }
+                if (!$isAdmin && !sc_is_spot($pdo, $cid) && !check_step1_done($pdo, $cid, $uid) && sc_access($pdo, $cid, $uid, false)) { echo json_encode(['ok' => false, 'error' => 'count_first']); exit; }
                 $state = in_array($in['state'] ?? '', ['present', 'missing'], true) ? $in['state'] : null;
                 $note  = mb_substr(trim((string)($in['note'] ?? '')), 0, 250);
                 if (!$isAdmin && chassis_locked($pdo, $uid)) { echo json_encode(['ok' => false, 'error' => 'locked', 'go' => 'transfer_lock.php?lang=' . $lang]); exit; }
-                $askQ = $pdo->prepare("SELECT ask FROM stock_check_items WHERE id = ? AND check_id = ?");
+                $askQ = $pdo->prepare("SELECT i.ask, i.label, i.car_id, c.branch FROM stock_check_items i JOIN stock_checks c ON c.id = i.check_id WHERE i.id = ? AND i.check_id = ?");
                 $askQ->execute([(int)($in['item'] ?? 0), $cid]);
-                $ask = (string)$askQ->fetchColumn();
+                $askRow = $askQ->fetch(PDO::FETCH_ASSOC) ?: ['ask' => '', 'label' => '', 'car_id' => 0, 'branch' => ''];
+                $ask = (string)$askRow['ask'];
                 $answer = null;
+                $loc = null;
+                if (!$isAdmin && $state === 'present' && $askRow['branch'] !== '') {
+                    // 📍 the phone's position when the car is confirmed: far from the branch → not accepted, and it counts as a wrong answer
+                    $num = fn($k) => is_numeric($in[$k] ?? null) ? (float)$in[$k] : null;
+                    $loc = check_loc_judge($pdo, (string)$askRow['branch'], $num('lat'), $num('lng'), is_numeric($in['acc'] ?? null) ? (int)round((float)$in['acc']) : null);
+                    if ($loc['flag'] === 'far') {
+                        $t = check_far_try($pdo, $uid, $me, $cid, (int)($in['item'] ?? 0), (int)$askRow['car_id'], (string)$askRow['label'], (string)$askRow['branch'], (int)$loc['dist'], (int)$loc['allowed']);
+                        echo json_encode(['ok' => false, 'error' => 'far', 'dist' => check_m((int)$loc['dist'], $lang), 'locked' => $t['locked'], 'left' => $t['left'], 'go' => $t['locked'] ? 'transfer_lock.php?lang=' . $lang : '']); exit;
+                    }
+                }
                 if (!$isAdmin && $state === 'present' && $ask === 'color') {
                     // «موجودة» for a car asked by its colour = the colour picked from the list, checked against the car
                     $ci = $pdo->prepare("SELECT i.id, i.car_id, i.label, i.color, c.branch FROM stock_check_items i JOIN stock_checks c ON c.id = i.check_id
@@ -242,6 +279,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $ci = $pdo->prepare("SELECT car_id FROM stock_check_items WHERE id = ? AND check_id = ?"); $ci->execute([(int)($in['item'] ?? 0), $cid]);
                     car_seen($pdo, (int)$ci->fetchColumn(), $me, sc_is_spot($pdo, $cid) ? 'spot' : 'check');
                 }
+                $needPhoto = false;
+                if ($loc && $state === 'present') {
+                    $pdo->prepare("UPDATE stock_check_items SET lat = ?, lng = ?, acc = ?, dist_m = ?, loc_flag = ? WHERE id = ? AND check_id = ?")
+                        ->execute([is_numeric($in['lat'] ?? null) ? (float)$in['lat'] : null, is_numeric($in['lng'] ?? null) ? (float)$in['lng'] : null, $loc['acc'], $loc['dist'], $loc['flag'], (int)($in['item'] ?? 0), $cid]);
+                    check_after_confirm($pdo, $cid, $uid, $me, (string)$askRow['branch'], (string)$loc['flag']);   // ⚡ too fast / 📵 no location → the admins
+                    $pq = $pdo->prepare("SELECT photo_req = 1 AND photo IS NULL FROM stock_check_items WHERE id = ? AND check_id = ?");
+                    $pq->execute([(int)($in['item'] ?? 0), $cid]);
+                    $needPhoto = (bool)$pq->fetchColumn();   // 📷 told only now, after the car was confirmed
+                }
                 $counts = smart_check_counts($pdo, $cid);
                 // the admin follows the check car by car (one notification per check on the phone, updated each time)
                 if ($prev && $state && ($prev['state'] !== $state || ($state === 'missing' && $note !== '' && $note !== (string)$prev['note']))) {
@@ -251,10 +297,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         + (($w = smart_check_watchers($pdo, $cid)) ? ['only' => $w] : []));
                 }
                 echo json_encode(['ok' => true, 'counts' => $counts, 'item' => (int)($in['item'] ?? 0), 'chassis' => $shown ?? null,
-                                  'color' => $answer !== null ? push_color_label($pdo, $answer, $lang) : null]); exit;
+                                  'color' => $answer !== null ? push_color_label($pdo, $answer, $lang) : null, 'photo' => $needPhoto]); exit;
             case 'extra':
                 if (!sc_access($pdo, $cid, $uid, false) && !$isBoss) break;
-                if (!$isAdmin && !sc_is_spot($pdo, $cid) && check_counted($pdo, $cid, $uid) === null && sc_access($pdo, $cid, $uid, false)) { echo json_encode(['ok' => false, 'error' => 'count_first']); exit; }
+                if (!$isAdmin && !sc_is_spot($pdo, $cid) && !check_step1_done($pdo, $cid, $uid) && sc_access($pdo, $cid, $uid, false)) { echo json_encode(['ok' => false, 'error' => 'count_first']); exit; }
                 $txt = mb_substr(trim((string)($in['text'] ?? '')), 0, 200);
                 if ($txt === '') { echo json_encode(['ok' => false, 'error' => 'empty']); exit; }
                 $pdo->prepare("INSERT INTO stock_check_items (check_id, car_id, label, state, marked_by, marked_at) VALUES (?, 0, ?, 'extra', ?, NOW())")->execute([$cid, $txt, $me]);
@@ -265,13 +311,35 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 echo json_encode(['ok' => true]); exit;
             case 'finish':
                 if (!sc_access($pdo, $cid, $uid, false) && !$isBoss) break;
-                if (!$isAdmin && !sc_is_spot($pdo, $cid) && check_counted($pdo, $cid, $uid) === null && sc_access($pdo, $cid, $uid, false)) { echo json_encode(['ok' => false, 'error' => 'count_first']); exit; }
-                if (!$isAdmin && sc_is_spot($pdo, $cid)) {   // a spot check ends with a photo of the car's chassis plate
+                if (!$isAdmin && !sc_is_spot($pdo, $cid) && !check_step1_done($pdo, $cid, $uid) && sc_access($pdo, $cid, $uid, false)) { echo json_encode(['ok' => false, 'error' => 'count_first']); exit; }
+                if (!$isAdmin) {   // a photo of the chassis plate: every car of a spot check, and the cars picked at random in a check
                     sc_photo_col($pdo);
-                    $np = $pdo->prepare("SELECT COUNT(*) FROM stock_check_items WHERE check_id = ? AND car_id > 0 AND state = 'present' AND photo IS NULL"); $np->execute([$cid]);
+                    $np = $pdo->prepare("SELECT COUNT(*) FROM stock_check_items WHERE check_id = ? AND car_id > 0 AND state = 'present' AND photo IS NULL AND (photo_req = 1 OR ?)");
+                    $np->execute([$cid, sc_is_spot($pdo, $cid) ? 1 : 0]);
                     if ((int)$np->fetchColumn()) { echo json_encode(['ok' => false, 'error' => 'photo']); exit; }
                 }
                 echo json_encode(['ok' => smart_check_finish($pdo, $cid, $me)]); exit;
+            case 'time_req':     // ⏳ the person doing it asks for more minutes
+                if ($isAdmin || !sc_access($pdo, $cid, $uid, false)) break;
+                $r = check_time_ask($pdo, $cid, $uid, $me, (int)($in['minutes'] ?? 15), (string)($in['reason'] ?? ''));
+                echo json_encode($r + ['state' => check_time_state($pdo, $cid, $uid)]); exit;
+            case 'state':        // their page asks now and then: time left, and the answer to their request
+                if (!sc_access($pdo, $cid, $uid, false)) break;
+                echo json_encode(['ok' => true] + check_time_state($pdo, $cid, $uid)); exit;
+            case 'time_decide':
+                if (!$isBoss) break;
+                echo json_encode(['ok' => check_time_decide($pdo, (int)($in['req'] ?? 0), !empty($in['yes']), $me)]); exit;
+            case 'add_time':
+                if (!$isBoss) break;
+                $until = check_time_add($pdo, $cid, (int)($in['minutes'] ?? 15), $me, 'admin');
+                echo json_encode(['ok' => $until !== null, 'until' => $until]); exit;
+            case 'case':         // 🔎 the admin's decision on a car not found
+                if (!$isAdmin) break;
+                echo json_encode(['ok' => check_case_decide($pdo, (int)($in['id'] ?? 0), (string)($in['how'] ?? ''), (string)($in['note'] ?? ''), $me)]); exit;
+            case 'case_recheck': // 🔁 check that car again now, with someone else
+                if (!$isAdmin) break;
+                $nid = check_case_recheck_now($pdo, (int)($in['id'] ?? 0), (int)($in['user'] ?? 0), (int)($in['minutes'] ?? 5), $me);
+                echo json_encode($nid ? ['ok' => true, 'id' => $nid] : ['ok' => false, 'error' => 'nocar']); exit;
             case 'cancel':
                 if (!$isBoss) break;
                 $pdo->prepare("UPDATE stock_checks SET status = 'cancelled', finished_at = NOW(), finished_by = ? WHERE id = ? AND status IN ('active', 'expired')")->execute([$me, $cid]);
@@ -304,7 +372,10 @@ $doMode = $check && in_array((int)$check['id'], $myIds, true) && in_array($check
 $isPick = $check && ($check['mode'] ?? 'all') === 'pick';   // «سيارات أختارها»: only the cars the admin chose, each by chassis or colour
 // the first step for whoever does the check: count the cars. Until they answer, the list and its totals stay hidden.
 $isSpot = $check && !empty($check['spot']);
-$needCount = $doMode && !$isAdmin && !$isSpot && check_counted($pdo, (int)$check['id'], $uid) === null;
+$needTotal = $doMode && !$isAdmin && !$isSpot && check_counted($pdo, (int)$check['id'], $uid) === null;
+$pendingQ = $doMode && !$isAdmin && !$isSpot && !$needTotal ? check_q_pending($pdo, (int)$check['id'], $uid) : [];   // 🔢 the count questions the admin added, after the total
+$needCount = $needTotal || (bool)$pendingQ;
+$adminView = $check && ($isAdmin || ($isBoss && !$doMode));   // whoever runs the checks looking at one — never the person doing it
 
 $br  = fn($n) => push_branch_label($pdo, (string)$n, $lang);
 $stLbl = $ar ? ['active' => '⏳ جارٍ', 'expired' => '⌛ انتهى الوقت', 'done' => '✅ مكتمل', 'cancelled' => '✖ ملغى']
@@ -323,6 +394,7 @@ if ($isBoss && !$check) {
                                 (SELECT COUNT(*) FROM stock_check_items i WHERE i.check_id = c.id AND i.state = 'missing') AS x,
                                 (SELECT GROUP_CONCAT(u.username SEPARATOR '، ') FROM stock_check_users s JOIN users u ON u.id = s.user_id WHERE s.check_id = c.id) AS who
                          FROM stock_checks c ORDER BY c.id DESC LIMIT 25")->fetchAll(PDO::FETCH_ASSOC);
+    $casesOpen = $isAdmin ? check_cases_open($pdo) : [];   // 🔎 cars not found, waiting for a decision
 }
 if ($check) {
     $items = $pdo->prepare("SELECT * FROM stock_check_items WHERE check_id = ? ORDER BY car_id = 0, label, chassis");
@@ -338,6 +410,19 @@ if ($check) {
     $bTotal = check_branch_total($pdo, (int)$check['id']);   // what the counting step is checked against
     $nColor = count(array_filter($items, fn($it) => (int)$it['car_id'] > 0 && ($it['ask'] ?? '') === 'color'));
     $colorOpts = $doMode && $nColor ? check_color_options($pdo, $lang) : [];   // the same list for every car: it gives nothing away
+    $allQ = check_q_list($pdo, (int)$check['id']);
+    $pairIds = check_pair_ids($pdo, (int)$check['id']);
+    $running = in_array($check['status'], ['active', 'expired'], true);
+    $needLoc = $doMode && !$isAdmin && !$needCount && $running && check_loc_needed($pdo, (string)$check['branch']);   // 📍 each car carries where it was confirmed from
+    $timeSt = $doMode && !$isAdmin && $running ? check_time_state($pdo, (int)$check['id'], $uid) : null;
+    if ($adminView) {
+        $qAns = check_q_answers($pdo, (int)$check['id']);
+        $fastOf = [];
+        try { $fs = $pdo->prepare("SELECT user_id, fast_max FROM stock_check_users WHERE check_id = ?"); $fs->execute([(int)$check['id']]); foreach ($fs->fetchAll(PDO::FETCH_ASSOC) as $r) $fastOf[(int)$r['user_id']] = (int)$r['fast_max']; } catch (Throwable $e) {}
+        $caseOf = check_cases_for_check($pdo, (int)$check['id']);
+        $xtPending = $running ? check_time_pending($pdo, (int)$check['id']) : [];
+        $pairCmp = $pairIds ? check_pair_compare($pdo, (int)$check['id']) : null;
+    }
 }
 $ago = function ($s) use ($ar): string {
     $s = max(0, (int)$s);
@@ -469,7 +554,85 @@ $ago = function ($s) use ($ar): string {
 .cw-ok:disabled{background:rgba(255,255,255,.07);color:#64748b;cursor:default}
 .cw-ok b{display:inline;font-weight:900}
 .sc-it .cwb .cherr{margin-top:8px}
+/* the on/off switch (same as notifications_admin.php) */
+.tg{position:relative;display:inline-block;width:42px;height:24px;cursor:pointer}
+.tg input{position:absolute;opacity:0;width:1px;height:1px}
+.tg span{position:absolute;inset:0;border-radius:999px;background:rgba(255,255,255,.1);transition:.2s}
+.tg span::after{content:'';position:absolute;top:3px;inset-inline-start:3px;width:18px;height:18px;border-radius:50%;background:#cbd5e1;transition:.2s}
+.tg input:checked+span{background:linear-gradient(90deg,#22c55e,#9333ea)}
+.tg input:checked+span::after{inset-inline-start:21px;background:#fff}
 .sc-mode{margin-top:18px}
+/* 🔢 extra count questions (the admin chooses) · 📷 random photos · 👥 double check */
+.sc-xq{margin-top:18px}
+.sc-xq-list{display:flex;flex-wrap:wrap;gap:8px}
+.sc-xq-list:empty{display:none}
+.xq{display:inline-flex;align-items:center;gap:8px;min-height:40px;padding:6px 12px;border-radius:12px;border:1.5px solid var(--line);background:rgba(255,255,255,.03);color:var(--txt);font:inherit;font-size:13px;font-weight:800;cursor:pointer;text-align:start}
+.xq i{width:14px;height:14px;flex-shrink:0;border-radius:50%;border:1px solid rgba(255,255,255,.4)}
+.xq em{font-style:normal;font-size:11.5px;font-weight:900;padding:2px 8px;border-radius:999px;background:rgba(255,255,255,.07);color:var(--mut);white-space:nowrap}
+.xq.on{border-color:rgba(250,204,21,.75);background:rgba(250,204,21,.1)}.xq.on em{background:rgba(250,204,21,.2);color:#fde68a}
+.xq:disabled{opacity:.4;cursor:default}
+.sc-xo{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:14px}
+.sc-xo-i{display:flex;flex-direction:column;gap:6px;padding:12px 14px;border-radius:14px;border:1px solid var(--line);background:rgba(255,255,255,.02);font-size:13.5px;font-weight:800}
+.sc-xo-i small{font-size:11.5px;color:var(--mut);font-weight:700;line-height:1.7}
+.sc-xo-i select{max-width:200px}
+.sc-dbl.off{opacity:.65}
+/* whoever does it: location · more time · count questions */
+.sc-tools{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.sc-loc,.sc-xtb{height:32px;padding:0 11px;border-radius:999px;border:1px solid var(--line);background:rgba(255,255,255,.05);color:var(--mut);font:inherit;font-size:12px;font-weight:900;cursor:pointer}
+.sc-loc.ok{background:rgba(34,197,94,.12);border-color:rgba(34,197,94,.4);color:#bbf7d0}
+.sc-loc.weak{background:rgba(245,158,11,.12);border-color:rgba(245,158,11,.4);color:#fde68a}
+.sc-loc.bad{background:rgba(239,68,68,.14);border-color:rgba(239,68,68,.5);color:#fecaca}
+.sc-xtb{margin-inline-start:auto;color:#e9d5ff;border-color:rgba(168,85,247,.45);background:rgba(168,85,247,.12)}
+.sc-xtb.wait{color:#fde68a;border-color:rgba(245,158,11,.45);background:rgba(245,158,11,.1)}
+.sc-xt-box{display:grid;gap:10px;padding:14px 16px}.sc-xt-box[hidden]{display:none}
+.sc-xt-box>b{font-size:15px}
+.sc-xt-m{display:flex;gap:6px}
+.sc-xt-m button{flex:1;height:40px;border-radius:11px;border:1.5px solid var(--line);background:rgba(255,255,255,.04);color:var(--txt);font:inherit;font-size:13.5px;font-weight:900;cursor:pointer}
+.sc-xt-m button.on{border-color:#a855f7;background:rgba(168,85,247,.18);color:#f3e8ff}
+.sc-xt-box .sc-fin{margin-top:0}
+.sc-loch{padding:12px 16px;border-radius:14px;background:rgba(245,158,11,.08);border:1px solid rgba(245,158,11,.45);color:#fde68a;font-size:13px;font-weight:700;line-height:1.9}
+.sc-loch[hidden]{display:none}
+.sc-loch b{display:block;color:#fff;font-size:14.5px;margin-bottom:4px}.sc-loch .nf-btn{margin-top:8px}
+.sc-qprog{display:flex;justify-content:center;gap:6px;margin:10px 0 2px}
+.sc-qprog i{width:26px;height:6px;border-radius:6px;background:rgba(255,255,255,.12)}
+.sc-qprog i.ok{background:#22c55e}.sc-qprog i.on{background:#a855f7}
+.sc-qno{display:block;font-size:12px;font-weight:800;color:var(--mut)}
+/* whoever runs the checks: time, per car, the double check */
+.sc-time{display:grid;gap:8px;margin-top:12px}
+.sc-xtr{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:10px 12px;border-radius:14px;border:1px solid rgba(168,85,247,.45);background:rgba(168,85,247,.08)}
+.sc-xtr span{flex:1;min-width:200px;font-size:13.5px;font-weight:700}.sc-xtr small{color:var(--mut)}.sc-xtr small.why{display:block;color:#e9d5ff;margin-top:2px}
+.sc-addt{display:flex;flex-wrap:wrap;align-items:center;gap:6px;font-size:12.5px;font-weight:800;color:var(--mut)}
+.sc-meta{display:flex;flex-wrap:wrap;gap:5px;margin-top:6px}
+.sc-meta span{font-size:11.5px;font-weight:800;padding:2px 9px;border-radius:999px;background:rgba(255,255,255,.05);color:var(--mut)}
+.sc-meta .ok{background:rgba(34,197,94,.1);color:#bbf7d0}.sc-meta .mid{background:rgba(245,158,11,.1);color:#fde68a}.sc-meta .bad{background:rgba(239,68,68,.12);color:#fecaca}
+.sc-meta .ph{background:rgba(56,189,248,.1);color:#bae6fd}
+.sc-meta .case{background:rgba(239,68,68,.12);color:#fecaca}.sc-meta .case.found{background:rgba(34,197,94,.12);color:#bbf7d0}
+.sc-pair-who{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px}
+.sc-pair-who a{padding:8px 12px;border-radius:12px;border:1px solid var(--line);background:rgba(255,255,255,.03);color:var(--txt);text-decoration:none;font-size:13.5px;font-weight:900}
+.sc-pair-who a.on{border-color:rgba(56,189,248,.6);background:rgba(56,189,248,.08)}.sc-pair-who small{color:var(--mut);font-weight:700;margin-inline-start:4px}
+.sc-pair-t{display:grid;gap:4px}
+.sc-pair-t .h,.sc-pair-t .r{display:grid;grid-template-columns:minmax(0,1fr) repeat(<?= max(2, count($pairIds ?? [])) ?>,74px);gap:6px;align-items:center;padding:8px 10px;border-radius:11px}
+.sc-pair-t .h{font-size:12px;font-weight:900;color:var(--mut)}
+.sc-pair-t .r{background:rgba(255,255,255,.03);border:1px solid var(--line);font-size:13px;font-weight:800}
+.sc-pair-t .r small{display:block;font-family:Inter,monospace;font-size:11px;color:var(--mut);direction:ltr;text-align:start}
+.sc-pair-t .r.diff{border-color:rgba(239,68,68,.55);background:rgba(239,68,68,.08)}
+.sc-pair-t .v{text-align:center;font-size:15px}
+/* 🔎 cars not found */
+.sc-cases{border-color:rgba(239,68,68,.4);background:linear-gradient(160deg,rgba(239,68,68,.07),rgba(255,255,255,.02))}
+.sc-case{display:grid;gap:8px;padding:12px;border-radius:14px;border:1px solid rgba(239,68,68,.3);background:rgba(2,6,23,.4);margin-bottom:8px}
+.sc-case .i b{display:block;font-size:14.5px}.sc-case .i small{display:block;font-size:12px;color:var(--mut);font-weight:700;margin-top:3px}
+.sc-case .i small.rc{color:#c4b5fd}.sc-case .i small.rc:empty{display:none}
+.sc-case-acts{display:flex;flex-wrap:wrap;gap:6px}
+.sc-case-acts button{height:38px;padding:0 12px;border-radius:11px;border:1px solid var(--line);background:rgba(255,255,255,.05);color:var(--txt);font:inherit;font-size:13px;font-weight:900;cursor:pointer}
+.sc-case-acts button[data-how="found"]{border-color:rgba(34,197,94,.45);color:#bbf7d0}.sc-case-acts button[data-how="lost"]{border-color:rgba(239,68,68,.5);color:#fecaca}
+.sc-case-re{display:flex;flex-wrap:wrap;gap:8px}.sc-case-re select{flex:1;min-width:160px}
+.sc-plan.rc{border-color:rgba(168,85,247,.45)}
+.sc-it .phq{font-size:13px;font-weight:900;color:#bae6fd;margin-bottom:6px}
+.sc-toast{position:fixed;left:50%;bottom:calc(84px + env(safe-area-inset-bottom));z-index:60;width:max-content;max-width:min(92vw,420px);padding:12px 16px;border-radius:14px;font-size:14px;font-weight:800;line-height:1.6;text-align:center;
+  transform:translate(-50%,20px);opacity:0;transition:all .3s;box-shadow:0 14px 34px rgba(0,0,0,.45);pointer-events:none}
+.sc-toast.on{transform:translate(-50%,0);opacity:1}
+.sc-toast.ok{background:#14532d;border:1px solid #22c55e;color:#dcfce7}.sc-toast.bad{background:#450a0a;border:1px solid #ef4444;color:#fee2e2}
+@media (max-width:640px){.sc-xo{grid-template-columns:1fr}.sc-pair-t .h,.sc-pair-t .r{grid-template-columns:minmax(0,1fr) repeat(<?= max(2, count($pairIds ?? [])) ?>,54px)}}
 .sc-mc{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 .sc-mc button{display:grid;grid-template-columns:auto 1fr;grid-template-rows:auto auto;column-gap:12px;align-items:center;text-align:start;padding:14px 16px;border-radius:16px;border:1.5px solid var(--line);background:rgba(255,255,255,.03);color:var(--txt);font:inherit;cursor:pointer;transition:border-color .15s,background .15s}
 .sc-mc .ic{grid-row:span 2;width:44px;height:44px;border-radius:13px;display:grid;place-items:center;font-size:22px;background:rgba(255,255,255,.06)}
@@ -536,13 +699,46 @@ $ago = function ($s) use ($ar): string {
     <section class="nf-card sc-plans" id="plans">
         <h2>🎲 <?= $ar ? 'اقتراحات النظام — بانتظار موافقتك' : 'Proposed by the system — waiting for you' ?> <span class="nf-count"><?= count($plans) ?></span></h2>
         <p class="nf-note"><?= $ar ? 'لم يُرسل أي شيء للفرع. اضغط «إرسال الآن» ليبدأ الجرد فوراً، أو «تجاهل». ينتهي الاقتراح تلقائياً بعد ساعتين.' : 'Nothing has been sent to the branch. Press "Send now" to start it at once, or "Skip". A proposal expires by itself after two hours.' ?></p>
-        <?php foreach ($plans as $pl): $sp = $pl['kind'] === 'spot'; $pg = $pl['kind'] === 'ping'; ?>
-        <div class="sc-plan">
-            <div class="i"><b><?= $pg ? '📍 ' . ($ar ? 'تأكيد تواجد (موقع الهاتف)' : 'Location check') : ($sp ? '⚡ ' . ($ar ? 'فحص سريع لسيارة واحدة' : 'Spot check, one car') : '📋 ' . ($ar ? 'جرد مفاجئ كامل' : 'Full surprise check')) ?> — 📍 <?= htmlspecialchars($br($pl['branch'])) ?></b>
-                <small>👤 <?= $ar ? 'المكلَّف المقترح: ' : 'Proposed for: ' ?><?= htmlspecialchars((string)$pl['username']) ?> · <?= $ar ? 'منذ ' . max(1, (int)$pl['mins']) . ' دقيقة' : max(1, (int)$pl['mins']) . ' min ago' ?></small></div>
-            <select class="sc-in" data-pm<?= $pg ? ' hidden' : '' ?>><?php foreach ($sp ? [3, 5, 10, 15] : [15, 30, 45, 60, 90] as $mm): ?><option value="<?= $mm ?>"<?= $mm === ($sp ? 5 : 30) ? ' selected' : '' ?>><?= $mm ?> <?= $ar ? 'دقيقة' : 'min' ?></option><?php endforeach; ?></select>
+        <?php foreach ($plans as $pl): $sp = $pl['kind'] === 'spot'; $pg = $pl['kind'] === 'ping'; $rc = $pl['kind'] === 'recheck'; ?>
+        <div class="sc-plan<?= $rc ? ' rc' : '' ?>">
+            <div class="i"><b><?= $rc ? '🔁 ' . ($ar ? 'إعادة فحص سيارة لم تُوجد' : 'Re-check a missing car') : ($pg ? '📍 ' . ($ar ? 'تأكيد تواجد (موقع الهاتف)' : 'Location check') : ($sp ? '⚡ ' . ($ar ? 'فحص سريع لسيارة واحدة' : 'Spot check, one car') : '📋 ' . ($ar ? 'جرد مفاجئ كامل' : 'Full surprise check'))) ?> — 📍 <?= htmlspecialchars($br($pl['branch'])) ?></b>
+                <?php if ($rc && !empty($pl['car_label'])): ?><small>🚗 <?= htmlspecialchars((string)$pl['car_label']) ?> · 🔑 <?= htmlspecialchars((string)$pl['car_chassis']) ?></small><?php endif; ?>
+                <small>👤 <?= $ar ? 'المكلَّف المقترح: ' : 'Proposed for: ' ?><?= htmlspecialchars((string)$pl['username']) ?><?= $rc ? ($ar ? ' (غير من لم يجدها)' : ' (not the one who missed it)') : '' ?> · <?= $ar ? 'منذ ' . max(1, (int)$pl['mins']) . ' دقيقة' : max(1, (int)$pl['mins']) . ' min ago' ?></small></div>
+            <select class="sc-in" data-pm<?= $pg ? ' hidden' : '' ?>><?php foreach ($sp || $rc ? [3, 5, 10, 15] : [15, 30, 45, 60, 90] as $mm): ?><option value="<?= $mm ?>"<?= $mm === ($sp || $rc ? 5 : 30) ? ' selected' : '' ?>><?= $mm ?> <?= $ar ? 'دقيقة' : 'min' ?></option><?php endforeach; ?></select>
             <button type="button" class="nf-btn" data-plan="<?= (int)$pl['id'] ?>" data-send="1">🚨 <?= $ar ? 'إرسال الآن' : 'Send now' ?></button>
             <button type="button" class="nf-btn ghost" data-plan="<?= (int)$pl['id'] ?>" data-send="0">✖ <?= $ar ? 'تجاهل' : 'Skip' ?></button>
+        </div>
+        <?php endforeach; ?>
+    </section>
+    <?php endif; ?>
+
+    <?php if ($casesOpen): ?>
+    <section class="nf-card sc-cases" id="cases">
+        <h2>🔎 <?= $ar ? 'سيارات لم تُوجد في الجرد — تنتظر قرارك' : 'Cars not found in a check — waiting for you' ?> <span class="nf-count"><?= count($casesOpen) ?></span></h2>
+        <p class="nf-note"><?= $ar ? 'كل سيارة أُشير إليها «غير موجودة». اختر ما حدث لها. في اليوم التالي يقترح النظام عليك إعادة فحصها مع موظف آخر، وإذا وُجدت تُغلق المتابعة وحدها.' : 'Every car marked «missing». Choose what happened to it. The next day the system proposes a re-check by someone else; if it is found the case closes by itself.' ?></p>
+        <?php foreach ($casesOpen as $k): ?>
+        <div class="sc-case" data-case="<?= (int)$k['id'] ?>" data-branch="<?= htmlspecialchars((string)$k['branch']) ?>">
+            <div class="i"><b>🚗 <?= htmlspecialchars((string)$k['label']) ?></b>
+                <small>🔑 <?= htmlspecialchars((string)$k['chassis']) ?> · 📍 <?= htmlspecialchars($br($k['branch'])) ?> · ✍️ <?= htmlspecialchars((string)$k['marked_by']) ?> · <?= htmlspecialchars($ago((int)$k['mins'] * 60)) ?></small>
+                <?php if (!empty($k['note'])): ?><small>📝 <?= htmlspecialchars((string)$k['note']) ?></small><?php endif; ?>
+                <small class="rc"><?php
+                    if ($k['recheck_state'] === 'missing') echo '❗ ' . ($ar ? 'أُعيد فحصها: ما زالت غير موجودة' : 'Re-checked: still missing');
+                    elseif ($k['recheck_state'] === 'sent') echo '🔁 ' . ($ar ? 'أُرسلت إعادة فحص إلى ' : 'Re-check sent to ') . htmlspecialchars((string)$k['recheck_by']);
+                    elseif ($k['plan_status'] === 'planned') echo '🔁 ' . ($ar ? 'إعادة فحص مقترحة ' : 'Re-check proposed ') . htmlspecialchars(date('d/m', strtotime((string)$k['plan_due']))) . ' ' . htmlspecialchars(smart_time_label(strtotime((string)$k['plan_due']), $lang));
+                    elseif ($k['plan_status'] === 'pending') echo '🔁 ' . ($ar ? 'اقتراح إعادة الفحص بانتظار موافقتك أعلى الصفحة' : 'The re-check proposal is waiting for you above');
+                ?></small></div>
+            <div class="sc-case-acts">
+                <button type="button" data-how="found">✅ <?= $ar ? 'وُجدت' : 'Found' ?></button>
+                <button type="button" data-how="moved">🔄 <?= $ar ? 'في فرع آخر' : 'At another branch' ?></button>
+                <button type="button" data-how="sold">💰 <?= $ar ? 'بيعت ولم تُسجَّل' : 'Sold, not recorded' ?></button>
+                <button type="button" data-how="lost">🚨 <?= $ar ? 'مفقودة' : 'Lost' ?></button>
+            </div>
+            <input class="sc-in sc-case-note" maxlength="250" placeholder="<?= $ar ? 'ملاحظة مع القرار (اختياري)' : 'A note with the decision (optional)' ?>">
+            <div class="sc-case-re">
+                <select class="sc-in" data-who><option value=""><?= $ar ? '— إعادة الفحص الآن مع… —' : '— re-check now with… —' ?></option><?php foreach ($people as $p3): if ($p3['role'] === 'admin') continue; ?><option value="<?= (int)$p3['id'] ?>"><?= htmlspecialchars($p3['username']) ?><?= ($here[(int)$p3['id']] ?? '') === $k['branch'] ? ($ar ? ' 🟢 في الفرع' : ' 🟢 at the branch') : '' ?></option><?php endforeach; ?></select>
+                <button type="button" class="nf-btn" data-recheck>🔁 <?= $ar ? 'أعد فحصها الآن' : 'Re-check now' ?></button>
+            </div>
+            <div class="nf-msg" data-cmsg></div>
         </div>
         <?php endforeach; ?>
     </section>
@@ -625,6 +821,19 @@ $ago = function ($s) use ($ar): string {
                 </div>
             </div>
         </div>
+        <div class="sc-xq">
+            <label class="sc-l">🔢 <?= $ar ? 'أسئلة عدّ إضافية بعد العدد الكلي (اختياري — أنت تختار من الاقتراحات)' : 'Extra count questions after the total (optional — you choose from the suggestions)' ?></label>
+            <div class="sc-pk-empty" id="scXqNoB">📍 <?= $ar ? 'اختر الفرع أولاً لتظهر الاقتراحات' : 'Pick the branch first to see the suggestions' ?></div>
+            <div class="sc-xq-list" id="scXq"></div>
+            <small class="sc-hint"><?= $ar ? 'الرقم بجانب كل سؤال هو جواب النظام — يظهر لك أنت فقط. يجيب المكلَّف عن كل سؤال تختاره بعد العدد الكلي (حتى 4 أسئلة)، والعدد الخاطئ مرتين يوقف النظام.' : 'The number next to each question is the system\'s answer — shown to you only. They answer each question you choose after the total (up to 4); two wrong numbers stop the system.' ?></small>
+        </div>
+        <div class="sc-xo">
+            <label class="sc-xo-i"><span>📷 <?= $ar ? 'صور عشوائية لرقم الشاسيه' : 'Random chassis-plate photos' ?></span>
+                <select class="sc-in" id="scPh"><?php foreach ([0, 1, 2, 3] as $n): ?><option value="<?= $n ?>"<?= $n === 1 ? ' selected' : '' ?>><?= $ar ? [0 => 'بدون', 1 => 'سيارة واحدة', 2 => 'سيارتان', 3 => '3 سيارات'][$n] : ($n ? $n . ' car' . ($n > 1 ? 's' : '') : 'none') ?></option><?php endforeach; ?></select>
+                <small><?= $ar ? 'يختار النظام السيارات عشوائياً، ولا يعرف المكلَّف أنها تحتاج صورة حتى يؤكدها.' : 'The system picks the cars at random; they only learn a car needs a photo once they confirm it.' ?></small></label>
+            <label class="sc-xo-i sc-dbl" id="scDblL"><span class="sc-opt" style="margin:0"><span class="tg"><input type="checkbox" id="scDbl" disabled><span></span></span> 👥 <?= $ar ? 'جرد مزدوج' : 'Double check' ?></span>
+                <small id="scDblH"><?= $ar ? 'اختر شخصين أو أكثر: كل واحد يجرد وحده دون أن يرى عمل الآخر، ثم ترى كل اختلاف بينهما.' : 'Choose two people or more: each checks alone without seeing the other\'s work, then you see every difference.' ?></small></label>
+        </div>
         <div class="sc-watch">
             <label class="sc-l">🔔 <?= $ar ? 'من يستلم إشعارات هذا الجرد؟ (البدء، الوقت المتبقي، كل سيارة، النتيجة)' : 'Who gets this check\'s notifications? (start, time left, every car, result)' ?></label>
             <div class="sc-grp">
@@ -652,7 +861,7 @@ $ago = function ($s) use ($ar): string {
             <?php foreach ($list as $c): $pct = (int)$c['t'] ? round((int)$c['m'] * 100 / (int)$c['t']) : 100; ?>
             <a class="sc-row" href="?lang=<?= $lang ?>&id=<?= (int)$c['id'] ?>">
                 <div class="i"><b>📍 <?= htmlspecialchars($br($c['branch'])) ?></b>
-                    <small>👤 <?= htmlspecialchars((string)$c['who']) ?> · <?= htmlspecialchars($ago(-(int)$c['secs'] + (int)$c['minutes'] * 60)) ?><?= ($c['mode'] ?? '') === 'pick' ? ' · 🎯 ' . ($ar ? 'سيارات مختارة' : 'chosen cars') : (!empty($c['spot']) ? ' · ⚡ ' . ($ar ? 'فحص سريع' : 'spot check') : '') ?></small>
+                    <small>👤 <?= htmlspecialchars((string)$c['who']) ?> · <?= htmlspecialchars($ago(-(int)$c['secs'] + (int)$c['minutes'] * 60)) ?><?= ($c['mode'] ?? '') === 'pick' ? ' · 🎯 ' . ($ar ? 'سيارات مختارة' : 'chosen cars') : (!empty($c['spot']) ? ' · ⚡ ' . ($ar ? 'فحص سريع' : 'spot check') : '') ?><?= !empty($c['group_id']) ? ' · 👥 ' . ($ar ? 'جرد مزدوج' : 'double check') : '' ?></small>
                     <div class="sc-bar"><i style="width:<?= $pct ?>%"></i></div></div>
                 <span class="sc-prog"><?= (int)$c['m'] ?>/<?= (int)$c['t'] ?></span>
                 <?php if ((int)$c['x']): ?><span class="sc-miss">❌ <?= (int)$c['x'] ?></span><?php endif; ?>
@@ -671,20 +880,58 @@ $ago = function ($s) use ($ar): string {
         </div>
         <?php if (!$needCount): ?><div class="sc-bar"><i id="scBar" style="width:<?= $cT ? round($cM * 100 / $cT) : 100 ?>%"></i></div><?php endif; ?>
         <?php if ($doMode && !$needCount): ?><input class="sc-in sc-search" id="scQ" placeholder="🔍 <?= $isAdmin ? ($ar ? 'ابحث بالشاسيه أو الموديل…' : 'Search chassis or model…') : ($ar ? 'ابحث بالموديل أو اللون…' : 'Search model or colour…') ?>"><?php endif; ?>
+        <?php if ($needLoc || $timeSt): ?>
+        <div class="sc-tools">
+            <?php if ($needLoc): ?><button type="button" class="sc-loc wait" id="scLoc">📍 <?= $ar ? 'جاري تحديد موقعك…' : 'Finding your location…' ?></button><?php endif; ?>
+            <?php if ($timeSt): ?><button type="button" class="sc-xtb" id="scXtB">⏳ <?= $ar ? 'طلب وقت إضافي' : 'Ask for more time' ?></button><?php endif; ?>
+        </div>
+        <?php endif; ?>
     </div>
+    <?php if ($timeSt): ?>
+    <div class="nf-card sc-xt-box" id="scXt" hidden>
+        <b>⏳ <?= $ar ? 'طلب وقت إضافي لإكمال الجرد' : 'Ask for more time to finish the check' ?></b>
+        <div class="sc-xt-m" id="scXtM" role="radiogroup">
+            <?php foreach ([10, 15, 30] as $m): ?><button type="button" data-m="<?= $m ?>"<?= $m === 15 ? ' class="on"' : '' ?>><?= $ar ? ($m === 10 ? '10 دقائق' : $m . ' دقيقة') : $m . ' min' ?></button><?php endforeach; ?>
+        </div>
+        <input class="sc-in" id="scXtR" maxlength="250" placeholder="<?= $ar ? 'السبب (اختياري) — مثال: سيارات كثيرة في الساحة الخلفية' : 'Why (optional) — e.g. many cars in the back yard' ?>">
+        <button type="button" class="sc-fin" id="scXtGo">📨 <?= $ar ? 'إرسال الطلب للإدارة' : 'Send the request to management' ?></button>
+        <div class="nf-msg" id="scXtMsg"></div>
+    </div>
+    <?php endif; ?>
+    <?php if ($needLoc): ?>
+    <div class="sc-loch" id="scLocHelp" hidden>
+        <b>📍 <?= $ar ? 'السماح بالموقع مطلوب لتأكيد السيارات' : 'Location is needed to confirm the cars' ?></b>
+        <?= $ar ? 'كل سيارة تؤكدها يُحفظ معها مكانك، للتأكد أنك أمامها فعلاً.<br>• آيفون: الإعدادات ← الخصوصية والأمان ← خدمات الموقع ← تشغيل، ثم اختر المتصفح أو التطبيق ← «أثناء الاستخدام».<br>• أندرويد: اضغط 🔒 بجانب عنوان الموقع ← الأذونات ← الموقع ← سماح، وتأكد أن الموقع (GPS) مفعّل.'
+                : 'Each car you confirm keeps where you were, to make sure you are in front of it.<br>• iPhone: Settings → Privacy & Security → Location Services → On, then the browser or app → "While Using".<br>• Android: tap 🔒 next to the address → Permissions → Location → Allow, and make sure GPS is on.' ?>
+        <button type="button" class="nf-btn" id="scLocRetry">🔄 <?= $ar ? 'حاول مرة أخرى' : 'Try again' ?></button>
+    </div>
+    <?php endif; ?>
 
     <?php if ($isPick && (!$doMode || !$needCount)): ?>
     <div class="sc-pickinfo">🎯 <?= $ar ? 'سيارات مختارة: ' . push_ar_cars($cT) . ' — 🔑 ' . ($cT - $nColor) . ' بالشاسيه · 🎨 ' . $nColor . ' باللون' : 'Chosen cars: ' . $cT . ' — 🔑 ' . ($cT - $nColor) . ' by chassis · 🎨 ' . $nColor . ' by colour' ?></div>
     <?php endif; ?>
-    <?php if ($needCount): ?>
+    <?php if ($needTotal): ?>
     <section class="nf-card sc-count">
         <div class="sc-step">1 / 2</div>
         <div class="sc-cnt-ic">🔢</div>
         <h2><?= $ar ? 'كم عدد السيارات الموجودة في الفرع الآن؟' : 'How many cars are at the branch right now?' ?></h2>
-        <p class="nf-note"><?= $ar ? 'عُدّ السيارات الموجودة أمامك في الفرع بدقة واكتب العدد. بعدها تبدأ تأكيد كل سيارة برقم الشاسيه. العدد غير الصحيح مرتين يوقف النظام.' : 'Count the cars in front of you carefully and type the number. Then you confirm each car by its chassis. Two wrong numbers stop your system.' ?></p>
+        <p class="nf-note"><?= $ar ? 'عُدّ السيارات الموجودة أمامك في الفرع بدقة واكتب العدد. بعدها تبدأ تأكيد السيارات. العدد غير الصحيح مرتين يوقف النظام.' : 'Count the cars in front of you carefully and type the number. Then you confirm the cars. Two wrong numbers stop your system.' ?></p>
         <input class="sc-in sc-cnt-in" id="scCntIn" type="number" inputmode="numeric" min="0" max="5000" placeholder="0" autocomplete="off">
         <button type="button" class="sc-fin" id="scCntGo">✅ <?= $ar ? 'تأكيد العدد والبدء' : 'Confirm the number and start' ?></button>
         <div class="nf-msg" id="scCntMsg"></div>
+    </section>
+    <?php elseif ($pendingQ): $q0 = $pendingQ[0]; $qNo = count($allQ) - count($pendingQ) + 1; $qColor = $q0['kind'] === 'color'; ?>
+    <section class="nf-card sc-count">
+        <div class="sc-step">1 / 2</div>
+        <div class="sc-qprog"><?php foreach ($allQ as $k => $qq): ?><i class="<?= $k + 1 < $qNo ? 'ok' : ($k + 1 === $qNo ? 'on' : '') ?>"></i><?php endforeach; ?></div>
+        <small class="sc-qno">🔢 <?= $ar ? 'سؤال عدّ ' . $qNo . ' من ' . count($allQ) : 'Count question ' . $qNo . ' of ' . count($allQ) ?></small>
+        <div class="sc-cnt-ic"><?= $qColor ? '🎨' : '🚗' ?></div>
+        <h2><?= htmlspecialchars($ar ? $q0['label_ar'] : $q0['label_en']) ?></h2>
+        <p class="nf-note"><?= $qColor ? ($ar ? 'احسب كل درجات هذا اللون (الفاتح والغامق واللؤلؤي…). العدد غير الصحيح مرتين يوقف النظام.' : 'Count every shade of this colour (light, dark, pearl…). Two wrong numbers stop your system.')
+                                       : ($ar ? 'احسب كل سيارات هذه الماركة الموجودة في الفرع. العدد غير الصحيح مرتين يوقف النظام.' : 'Count every car of this make at the branch. Two wrong numbers stop your system.') ?></p>
+        <input class="sc-in sc-cnt-in" id="scQIn" type="number" inputmode="numeric" min="0" max="5000" placeholder="0" autocomplete="off">
+        <button type="button" class="sc-fin" id="scQGo" data-q="<?= (int)$q0['id'] ?>">✅ <?= $ar ? 'تأكيد العدد' : 'Confirm the number' ?></button>
+        <div class="nf-msg" id="scQMsg"></div>
     </section>
     <?php endif; ?>
     <?php if ($doMode && !$isAdmin && !$needCount && !$isPick): ?>
@@ -705,11 +952,39 @@ $ago = function ($s) use ($ar): string {
         <h2>👤 <?= $ar ? 'المكلَّفون' : 'Assigned' ?></h2>
         <div class="sc-ppl2">
             <?php foreach ($assigned as $aid => $an): ?>
-            <span><?= htmlspecialchars($an) ?><?php $cn = $isSpot ? -1 : check_counted($pdo, (int)$check['id'], (int)$aid); if ($cn === -1): ?><?php elseif ($cn !== null): ?> <em class="sc-cn <?= $cn === $bTotal ? 'ok' : 'bad' ?>">🔢 <?= $ar ? 'عدّ ' . $cn . ' — النظام ' . $bTotal : 'counted ' . $cn . ' — system ' . $bTotal ?> <?= $cn === $bTotal ? '✓' : '✗' ?></em><?php elseif (in_array($check['status'], ['active', 'expired'], true)): ?> <em class="sc-cn"><?= $ar ? '🔢 لم يُدخل العدد بعد' : '🔢 not counted yet' ?></em><?php endif; ?><?php if (in_array($aid, $lockedIds, true)): ?> 🔒 <button type="button" class="nf-mini" data-unlock="<?= $aid ?>"><?= $ar ? '🔓 فتح النظام' : '🔓 Unlock' ?></button><?php endif; ?></span>
+            <span><?= htmlspecialchars($an) ?><?php $cn = $isSpot ? -1 : check_counted($pdo, (int)$check['id'], (int)$aid); if ($cn === -1): ?><?php elseif ($cn !== null): ?> <em class="sc-cn <?= $cn === $bTotal ? 'ok' : 'bad' ?>">🔢 <?= $ar ? 'عدّ ' . $cn . ' — النظام ' . $bTotal : 'counted ' . $cn . ' — system ' . $bTotal ?> <?= $cn === $bTotal ? '✓' : '✗' ?></em><?php elseif (in_array($check['status'], ['active', 'expired'], true)): ?> <em class="sc-cn"><?= $ar ? '🔢 لم يُدخل العدد بعد' : '🔢 not counted yet' ?></em><?php endif; ?>
+            <?php foreach ($adminView ? $allQ : [] as $qq): $qa = $qAns[(int)$aid][(int)$qq['id']] ?? null; if (!$qa) continue; ?> <em class="sc-cn <?= $qa['ok'] ? 'ok' : 'bad' ?>"><?= $qq['kind'] === 'color' ? '🎨' : '🚗' ?> <?= htmlspecialchars((string)($ar ? $qq['tag_ar'] : $qq['tag_en'])) ?>: <?= (int)$qa['answer'] ?><?= $qa['ok'] ? ' ✓' : ' ✗ (' . ($ar ? 'النظام ' : 'system ') . (int)$qq['expected'] . ')' ?></em><?php endforeach; ?>
+            <?php if ($adminView && ($fastOf[(int)$aid] ?? 0) >= CHECK_FAST_PER_MIN): ?> <em class="sc-cn bad" title="<?= $ar ? 'أكبر عدد سيارات أكّدها خلال دقيقة واحدة' : 'Most cars confirmed within one minute' ?>">⚡ <?= $ar ? push_ar_cars($fastOf[(int)$aid]) . ' في دقيقة' : $fastOf[(int)$aid] . ' cars in a minute' ?></em><?php endif; ?>
+            <?php if (in_array($aid, $lockedIds, true)): ?> 🔒 <button type="button" class="nf-mini" data-unlock="<?= $aid ?>"><?= $ar ? '🔓 فتح النظام' : '🔓 Unlock' ?></button><?php endif; ?></span>
             <?php endforeach; ?>
         </div>
         <?php if (in_array($check['status'], ['active', 'expired'], true)): ?><button type="button" class="nf-btn ghost" id="scCancel" style="margin-top:8px">✖ <?= $ar ? 'إلغاء الجرد' : 'Cancel check' ?></button><?php endif; ?>
         <?php if ($check['status'] === 'done'): ?><p class="nf-note">✅ <?= $ar ? 'أنهاه ' : 'Finished by ' ?><?= htmlspecialchars((string)$check['finished_by']) ?> · <?= htmlspecialchars((string)$check['finished_at']) ?> — <?= $ar ? 'موجودة ' : 'present ' ?><?= $cP ?> · <?= $ar ? 'غير موجودة ' : 'missing ' ?><?= $cX ?> · <?= $ar ? 'زائدة ' : 'extra ' ?><?= $cE ?></p><?php endif; ?>
+        <?php if ($adminView && $running): ?>
+        <div class="sc-time">
+            <?php foreach ($xtPending as $xr): ?>
+            <div class="sc-xtr" data-req="<?= (int)$xr['id'] ?>">
+                <span>⏳ <b><?= htmlspecialchars((string)$xr['username']) ?></b> <?= $ar ? 'يطلب ' . push_ar_mins((int)$xr['minutes']) . ' إضافية' : 'asks for ' . (int)$xr['minutes'] . ' more minutes' ?> <small>· <?= $ar ? 'منذ ' . max(1, (int)$xr['mins']) . ' دقيقة' : max(1, (int)$xr['mins']) . ' min ago' ?></small><?php if (!empty($xr['reason'])): ?><small class="why">📝 <?= htmlspecialchars((string)$xr['reason']) ?></small><?php endif; ?></span>
+                <button type="button" class="nf-btn" data-xt="1">✅ <?= $ar ? 'موافقة' : 'Approve' ?></button><button type="button" class="nf-btn ghost" data-xt="0">✖ <?= $ar ? 'رفض' : 'Refuse' ?></button>
+            </div>
+            <?php endforeach; ?>
+            <div class="sc-addt"><span>⏱️ <?= $ar ? 'إضافة وقت للجرد:' : 'Add time:' ?></span><?php foreach ([10, 15, 30] as $m): ?><button type="button" class="nf-mini" data-addt="<?= $m ?>">+<?= $m ?> <?= $ar ? 'د' : 'min' ?></button><?php endforeach; ?></div>
+        </div>
+        <?php endif; ?>
+    </section>
+    <?php endif; ?>
+    <?php if ($adminView && !empty($pairCmp['ids'])): $pc = $pairCmp; ?>
+    <section class="nf-card sc-pair">
+        <h2>👥 <?= $ar ? 'الجرد المزدوج — مقارنة' : 'Double check — comparison' ?> <span class="nf-count"><?= $pc['diff'] ? ($ar ? 'اختلاف في ' . ($pc['diff'] === 2 ? 'سيارتين' : push_ar_cars($pc['diff'])) : $pc['diff'] . ' differ') : ($ar ? 'متطابق' : 'match') ?></span></h2>
+        <p class="nf-note"><?= $ar ? 'كل مكلَّف جرد وحده دون أن يرى عمل الآخر. الصفوف الملوّنة بالأحمر = اختلاف بينهما.' : 'Each person checked alone without seeing the other\'s work. Red rows = they differ.' ?></p>
+        <div class="sc-pair-who"><?php foreach ($pc['ids'] as $pid): ?><a href="?lang=<?= $lang ?>&id=<?= $pid ?>" class="<?= $pid === (int)$check['id'] ? 'on' : '' ?>">👤 <?= htmlspecialchars($pc['who'][$pid] ?? '') ?> <small><?= $stLbl[$pc['status'][$pid] ?? ''] ?? '' ?><?= ($pc['counted'][$pid] ?? null) !== null ? ' · 🔢 ' . (int)$pc['counted'][$pid] : '' ?></small></a><?php endforeach; ?></div>
+        <div class="sc-pair-t">
+            <div class="h"><span><?= $ar ? 'السيارة' : 'Car' ?></span><?php foreach ($pc['ids'] as $pid): ?><span><?= htmlspecialchars($pc['who'][$pid] ?? '') ?></span><?php endforeach; ?></div>
+            <?php foreach ($pc['cars'] as $pcar): ?>
+            <div class="r<?= $pcar['diff'] ? ' diff' : '' ?>"><span><?= htmlspecialchars($pcar['label']) ?><small><?= htmlspecialchars($pcar['chassis']) ?></small></span><?php foreach ($pc['ids'] as $pid): $sv = $pcar['by'][$pid] ?? null; ?><span class="v <?= $sv ?: 'none' ?>"><?= $sv === 'present' ? '✅' : ($sv === 'missing' ? '❌' : '—') ?></span><?php endforeach; ?></div>
+            <?php endforeach; ?>
+        </div>
+        <?php foreach ($pc['ids'] as $pid): if (empty($pc['extras'][$pid])): continue; endif; ?><p class="nf-note">➕ <?= htmlspecialchars($pc['who'][$pid] ?? '') ?>: <?= htmlspecialchars(implode('، ', $pc['extras'][$pid])) ?></p><?php endforeach; ?>
     </section>
     <?php endif; ?>
 
@@ -727,12 +1002,19 @@ $ago = function ($s) use ($ar): string {
                 <?php if ($byColor && $open): ?><span class="sc-col<?= $it['state'] === 'present' ? ' ok' : '' ?>"><i style="background:<?= htmlspecialchars(car_color_hex((string)($it['answer'] ?: $it['color']))) ?>"></i><?= htmlspecialchars($colorTxt) ?><?= $it['state'] === 'present' ? ' ✓' : '' ?></span>
                 <?php elseif ($byColor): /* nothing about the colour in the page until they pick it */ ?><span class="sc-col" hidden><i></i></span><?php endif; ?>
                 <?php if (!empty($it['photo']) && $isBoss): ?><a class="sc-ph-a" href="?photo=<?= (int)$it['id'] ?>" target="_blank" rel="noopener">📷 <?= $ar ? 'صورة رقم الشاسيه' : 'Chassis plate photo' ?><?= !empty($it['photo_at']) ? ' · ' . htmlspecialchars(smart_time_label(strtotime($it['photo_at']), $lang)) : '' ?></a><?php endif; ?>
-                <?php if ($it['marked_by']): ?><div class="by">✍️ <?= htmlspecialchars($it['marked_by']) ?><?= $it['note'] ? ' · 📝 ' . htmlspecialchars($it['note']) : '' ?></div><?php endif; ?></div>
+                <?php if ($it['marked_by']): ?><div class="by">✍️ <?= htmlspecialchars($it['marked_by']) ?><?= $it['note'] ? ' · 📝 ' . htmlspecialchars($it['note']) : '' ?></div><?php endif; ?>
+                <?php if ($adminView): $lf = (string)($it['loc_flag'] ?? ''); $kc = $caseOf[(int)$it['id']] ?? null; ?><div class="sc-meta">
+                    <?php if ($lf === 'ok'): ?><span class="ok">📍 <?= htmlspecialchars(check_m((int)$it['dist_m'], $lang)) ?></span>
+                    <?php elseif ($lf === 'weak'): ?><span class="mid" title="<?= $ar ? 'دقة الموقع ضعيفة' : 'Vague location' ?>">📍 <?= htmlspecialchars(check_m((int)$it['dist_m'], $lang)) ?> ±<?= htmlspecialchars(check_m((int)$it['acc'], $lang)) ?></span>
+                    <?php elseif ($lf === 'none'): ?><span class="bad">📵 <?= $ar ? 'بدون موقع' : 'no location' ?></span><?php endif; ?>
+                    <?php if ((int)($it['photo_req'] ?? 0) && !$isSpot): ?><span class="ph">📷 <?= $ar ? 'صورة عشوائية' : 'random photo' ?><?= !empty($it['photo']) ? ' ✓' : '' ?></span><?php endif; ?>
+                    <?php if ($kc): ?><span class="case <?= htmlspecialchars((string)$kc['status']) ?>">🔎 <?= htmlspecialchars(($ar ? ['open' => 'تنتظر قرارك', 'found' => 'وُجدت', 'moved' => 'في فرع آخر', 'sold' => 'بيعت ولم تُسجَّل', 'lost' => 'مفقودة'] : ['open' => 'waiting for you', 'found' => 'found', 'moved' => 'at another branch', 'sold' => 'sold, not recorded', 'lost' => 'lost'])[$kc['status']] ?? $kc['status']) ?><?= $kc['decided_by'] ? ' · ' . htmlspecialchars((string)$kc['decided_by']) : '' ?></span><?php endif; ?>
+                </div><?php endif; ?></div>
             <?php if ($doMode): ?>
             <div class="bt"><button type="button" class="y<?= $it['state'] === 'present' ? ' on' : '' ?>">✅ <?= $ar ? 'موجودة' : 'Here' ?></button><button type="button" class="n<?= $it['state'] === 'missing' ? ' on' : '' ?>">❌ <?= $ar ? 'غير موجودة' : 'Missing' ?></button></div>
             <?php if (!$isAdmin && $byColor): ?><div class="cwb"></div>
             <?php elseif (!$isAdmin): ?><div class="chb"><input class="sc-in chin" autocapitalize="characters" autocomplete="off" autocorrect="off" spellcheck="false" maxlength="40" placeholder="<?= $ar ? 'اكتب رقم الشاسيه من السيارة' : 'Type the chassis from the car' ?>"><button type="button" class="chok">✅ <?= $ar ? 'تأكيد' : 'Confirm' ?></button><div class="cherr"></div></div><?php endif; ?>
-            <?php if (!$isAdmin && $isSpot): ?><div class="phb<?= !empty($it['photo']) ? ' done' : '' ?>"><label class="phbtn">📷 <span><?= !empty($it['photo']) ? ($ar ? 'تم رفع الصورة ✓ — إعادة التصوير' : 'Photo sent ✓ — retake') : ($ar ? 'التقط صورة لرقم الشاسيه على السيارة' : 'Take a photo of the chassis plate') ?></span><input type="file" accept="image/*" capture="environment" hidden></label><div class="pherr"></div></div><?php endif; ?>
+            <?php if (!$isAdmin && ($isSpot || ((int)($it['photo_req'] ?? 0) && $it['state'] === 'present'))): /* 📷 a random photo is shown only once the car is confirmed */ ?><div class="phb<?= !empty($it['photo']) ? ' done' : '' ?>"><label class="phbtn">📷 <span><?= !empty($it['photo']) ? ($ar ? 'تم رفع الصورة ✓ — إعادة التصوير' : 'Photo sent ✓ — retake') : ($ar ? 'التقط صورة لرقم الشاسيه على السيارة' : 'Take a photo of the chassis plate') ?></span><input type="file" accept="image/*" capture="environment" hidden></label><div class="pherr"></div></div><?php endif; ?>
             <input class="sc-in nt" maxlength="200" placeholder="<?= $ar ? 'ملاحظة: أين هي؟ (اختياري)' : 'Note: where is it? (optional)' ?>" value="<?= htmlspecialchars((string)$it['note']) ?>">
             <?php else: ?>
             <span class="sc-st <?= $it['state'] === 'present' ? 'done' : ($it['state'] === 'missing' ? 'expired' : '') ?>"><?= $it['state'] === 'present' ? ($ar ? '✅ موجودة' : '✅ here') : ($it['state'] === 'missing' ? ($ar ? '❌ غير موجودة' : '❌ missing') : ($ar ? '⏳ لم تُراجع' : '⏳ not checked')) ?></span>
@@ -778,29 +1060,50 @@ $ago = function ($s) use ($ar): string {
         let branch = '', mins = 30, mode = 'all';
         const ppl = [...document.querySelectorAll('.sc-p')];
         const paintHere = () => ppl.forEach(p => { p.querySelector('small').textContent = branch && p.dataset.here === branch ? (AR ? '• في الفرع الآن' : '• at the branch') : ''; });
-        document.querySelectorAll('.sc-b').forEach(b => b.addEventListener('click', () => { branch = b.dataset.b; document.querySelectorAll('.sc-b').forEach(x => x.classList.toggle('on', x === b)); paintHere(); if (mode === 'pick') loadCars(); }));
+        document.querySelectorAll('.sc-b').forEach(b => b.addEventListener('click', () => { branch = b.dataset.b; document.querySelectorAll('.sc-b').forEach(x => x.classList.toggle('on', x === b)); paintHere(); loadCars(); }));
 
         /* «سيارات أختارها»: the branch's cars, with when each was added and when it last arrived; each one chosen is asked by its chassis or its colour */
-        let cars = [], loadedFor = '', sortBy = 'new';
+        let cars = [], suggest = [], loadedFor = '', sortBy = 'new';
         const picks = new Map();   // car id → 'chassis' | 'color'
+        const qs = new Map();      // 🔢 the count questions chosen: 'kind|key' → {kind, key}
         const list = $('scPkList');
         document.querySelectorAll('#scMode button').forEach(b => b.addEventListener('click', () => {
             mode = b.dataset.mode;
             document.querySelectorAll('#scMode button').forEach(x => { x.classList.toggle('on', x === b); x.setAttribute('aria-checked', x === b ? 'true' : 'false'); });
             $('scPick').hidden = mode !== 'pick';
-            if (mode === 'pick') loadCars();
+            loadCars();
         }));
+        /* the branch's cars (for choosing) and the count questions the system suggests for it */
         async function loadCars() {
-            $('scPkNoB').hidden = !!branch; $('scPkBar').hidden = !branch;
+            $('scPkNoB').hidden = !!branch; $('scPkBar').hidden = !branch; $('scXqNoB').hidden = !!branch;
             if (!branch) { list.innerHTML = ''; paintSum(); return; }
             if (loadedFor === branch) return;
-            loadedFor = branch; picks.clear(); cars = [];
-            list.innerHTML = '<div class="sc-pk-load"><span class="nf-spin"></span></div>';
+            loadedFor = branch; picks.clear(); qs.clear(); cars = []; suggest = [];
+            list.innerHTML = '<div class="sc-pk-load"><span class="nf-spin"></span></div>'; $('scXq').innerHTML = '';
             const r = await post({ action: 'cars', branch }).catch(() => ({ ok: false }));
             if (loadedFor !== branch) return;   // another branch was chosen meanwhile
             if (!r.ok) { loadedFor = ''; list.innerHTML = '<div class="sc-pk-empty">' + (AR ? 'تعذّر تحميل السيارات — حاول مرة أخرى' : 'Could not load the cars — try again') + '</div>'; return; }
-            cars = r.cars; draw();
+            cars = r.cars; suggest = r.suggest || []; draw(); drawQs();
         }
+        function drawQs() {
+            const box = $('scXq');
+            if (!suggest.length) { box.innerHTML = '<div class="sc-pk-empty">' + (AR ? 'لا توجد سيارات في هذا الفرع' : 'No cars at this branch') + '</div>'; return; }
+            box.innerHTML = suggest.map((q, i) => '<button type="button" class="xq" data-i="' + i + '" aria-pressed="false" title="' + esc(q.kind === 'color' && Object.keys(q.shades).length > 1 ? Object.entries(q.shades).map(([k, v]) => k + ' ×' + v).join(' + ') : '') + '">'
+                + (q.kind === 'color' ? '<i style="background:' + esc(q.hex) + '"></i>' : '🚗 ') + esc(q.q) + ' <em>' + (AR ? 'النظام: ' : 'system: ') + q.n + '</em></button>').join('');
+            box.querySelectorAll('.xq').forEach(b => b.addEventListener('click', () => {
+                const q = suggest[+b.dataset.i], k = q.kind + '|' + q.key;
+                if (qs.has(k)) qs.delete(k); else if (qs.size < 4) qs.set(k, { kind: q.kind, key: q.key });
+                paintQs();
+            }));
+            paintQs();
+        }
+        function paintQs() {
+            $('scXq').querySelectorAll('.xq').forEach(b => { const q = suggest[+b.dataset.i], on = qs.has(q.kind + '|' + q.key);
+                b.classList.toggle('on', on); b.setAttribute('aria-pressed', on ? 'true' : 'false'); b.disabled = !on && qs.size >= 4; });
+        }
+        /* 👥 a double check needs two people or more */
+        const paintDbl = () => { const n = ppl.filter(p => p.classList.contains('on')).length; $('scDbl').disabled = n < 2; if (n < 2) $('scDbl').checked = false; $('scDblL').classList.toggle('off', n < 2); };
+        ppl.forEach(p => p.addEventListener('click', () => setTimeout(paintDbl, 0)));   // after the person is (un)selected
         function chips(c) {
             const out = [];
             if (c.mv) {
@@ -872,11 +1175,13 @@ $ago = function ($s) use ($ar): string {
             if (!users.length) { m.textContent = AR ? 'اختر المكلَّف بالجرد' : 'Pick who does the check'; m.className = 'nf-msg bad'; return; }
             const n = picks.size, k = [...picks.values()].filter(v => v === 'color').length;
             if (mode === 'pick' && !n) { m.textContent = AR ? 'اختر السيارات المطلوب تأكيدها' : 'Choose the cars to confirm'; m.className = 'nf-msg bad'; $('scPick').scrollIntoView({ block: 'center', behavior: 'smooth' }); return; }
-            if (!confirm(mode === 'pick' ? (AR ? 'إرسال الجرد المفاجئ الآن؟\nبعد عدّ السيارات يؤكد السيارات المختارة (' + arCars(n) + '): ' + (n - k) + ' بالشاسيه و' + k + ' باللون.' : 'Send the surprise check now?\nAfter counting, they confirm ' + n + ' cars: ' + (n - k) + ' by chassis, ' + k + ' by colour.')
-                                         : (AR ? 'إرسال الجرد المفاجئ الآن؟' : 'Send the surprise check now?'))) return;
+            const extra = (qs.size ? (AR ? '\n🔢 أسئلة عدّ إضافية: ' + qs.size : '\n🔢 Extra count questions: ' + qs.size) : '') + ($('scDbl').checked ? (AR ? '\n👥 جرد مزدوج: كل واحد يجرد وحده' : '\n👥 Double check: each one alone') : '');
+            if (!confirm((mode === 'pick' ? (AR ? 'إرسال الجرد المفاجئ الآن؟\nبعد عدّ السيارات يؤكد السيارات المختارة (' + arCars(n) + '): ' + (n - k) + ' بالشاسيه و' + k + ' باللون.' : 'Send the surprise check now?\nAfter counting, they confirm ' + n + ' cars: ' + (n - k) + ' by chassis, ' + k + ' by colour.')
+                                          : (AR ? 'إرسال الجرد المفاجئ الآن؟' : 'Send the surprise check now?')) + extra)) return;
             $('scGo').disabled = true;
             const r = await post({ action: 'create', branch, users, minutes: +$('scMin').value || 30, note: $('scNote').value, lock: $('scLock').checked,
-                watch: [...document.querySelectorAll('.sc-w.on')].map(w => +w.dataset.u), mode, picks: mode === 'pick' ? [...picks].map(([car, ask]) => ({ car, ask })) : [] });
+                watch: [...document.querySelectorAll('.sc-w.on')].map(w => +w.dataset.u), mode, picks: mode === 'pick' ? [...picks].map(([car, ask]) => ({ car, ask })) : [],
+                questions: [...qs.values()], photos: +$('scPh').value, double: $('scDbl').checked });
             if (r.ok) location.href = '?lang=<?= $lang ?>&id=' + r.id;
             else { $('scGo').disabled = false; m.className = 'nf-msg bad';
                 m.textContent = r.error === 'nocars' ? (AR ? 'اختر السيارات المطلوب تأكيدها' : 'Choose the cars to confirm') : r.error === 'gone' ? (AR ? 'السيارات المختارة لم تعد في هذا الفرع — حدّث الصفحة' : 'The chosen cars are no longer at this branch — reload') : '✗ ' + r.error; }
@@ -908,11 +1213,12 @@ $ago = function ($s) use ($ar): string {
         m.textContent = r.ok ? (AR ? '✓ تم الحفظ' : '✓ Saved') : '✗'; m.className = 'nf-msg ' + (r.ok ? 'ok' : 'bad');
     });
 
-    /* ── countdown ── */
+    /* ── countdown (it moves when more time is added) ── */
     const cd = $('scCd');
+    let cdEnd = cd ? Date.now() + (+cd.dataset.secs) * 1000 : 0;
+    const setSecs = s => { cdEnd = Date.now() + s * 1000; };
     if (cd) {
-        const t0 = Date.now(), total = +cd.dataset.secs;
-        const tick = () => { const s = total - Math.floor((Date.now() - t0) / 1000), a = Math.abs(s);
+        const tick = () => { const s = Math.round((cdEnd - Date.now()) / 1000), a = Math.abs(s);
             cd.textContent = (s < 0 ? '−' : '') + Math.floor(a / 3600) + ':' + String(Math.floor(a % 3600 / 60)).padStart(2, '0') + ':' + String(a % 60).padStart(2, '0');
             cd.classList.toggle('over', s <= 0); cd.classList.toggle('low', s > 0 && s < 600); };
         tick(); setInterval(tick, 1000);
@@ -932,6 +1238,90 @@ $ago = function ($s) use ($ar): string {
         };
         $('scCntGo').addEventListener('click', go);
         $('scCntIn').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); go(); } });
+    }
+    /* 🔢 the count questions the admin added (by colour or brand), one after the other */
+    if ($('scQGo')) {
+        const go = async () => {
+            const v = $('scQIn').value.trim(), m = $('scQMsg');
+            if (v === '' || !/^\d+$/.test(v)) { m.textContent = AR ? 'اكتب العدد بالأرقام' : 'Type the number'; m.className = 'nf-msg bad'; $('scQIn').focus(); return; }
+            if (!confirm(AR ? 'تأكيد أن العدد هو ' + v + '؟' : 'Confirm ' + v + '?')) return;
+            $('scQGo').disabled = true;
+            const r = await post({ action: 'qcount', q: +$('scQGo').dataset.q, n: +v }).catch(() => ({ ok: false }));
+            if (r.ok) location.reload(); else if (r.go) location.href = r.go; else { $('scQGo').disabled = false; m.className = 'nf-msg bad';
+                m.textContent = r.error === 'count' ? (AR ? '❌ العدد غير صحيح. أعد العدّ بدقة — إذا أُدخل عدد غير صحيح مرة أخرى يتوقف النظام.' : '❌ Wrong number. Count again carefully — one more wrong number stops your system.') : (AR ? 'تعذّر الحفظ — حاول مرة أخرى' : 'Could not save — try again');
+                if (r.error === 'count') { $('scQIn').value = ''; $('scQIn').focus(); if (window.F1App) F1App.sound('bad'); } }
+        };
+        $('scQGo').addEventListener('click', go);
+        $('scQIn').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); go(); } });
+    }
+
+    /* a short message at the bottom of the screen */
+    const toast = (t, ok) => { const d = document.createElement('div'); d.className = 'sc-toast ' + (ok ? 'ok' : 'bad'); d.textContent = t; document.body.appendChild(d);
+        requestAnimationFrame(() => d.classList.add('on')); setTimeout(() => { d.classList.remove('on'); setTimeout(() => d.remove(), 400); }, 4200); };
+
+    /* 📍 every car carries the phone's position: far from the branch is not accepted */
+    const NEED_LOC = <?= json_encode(!empty($needLoc)) ?>;
+    let fix = null, locErr = 0;
+    const locBtn = $('scLoc'), locHelp = $('scLocHelp');
+    const paintLoc = () => {
+        if (!locBtn) return;
+        locBtn.className = 'sc-loc ' + (locErr === 1 ? 'bad' : fix ? (fix.acc > 300 ? 'weak' : 'ok') : locErr ? 'bad' : 'wait');
+        locBtn.textContent = locErr === 1 ? (AR ? '⛔ الموقع غير مسموح — اضغط هنا' : '⛔ Location blocked — tap here')
+            : fix ? (AR ? '📍 الموقع جاهز ✓' : '📍 Location ready ✓') + (fix.acc > 300 ? ' (±' + fix.acc + (AR ? ' م)' : ' m)') : '')
+            : locErr ? (AR ? '📵 تعذّر تحديد الموقع' : '📵 No location yet') : (AR ? '📍 جاري تحديد موقعك…' : '📍 Finding your location…');
+    };
+    const takeFix = p => { fix = { lat: p.coords.latitude, lng: p.coords.longitude, acc: Math.round(p.coords.accuracy || 0), t: Date.now() }; locErr = 0; if (locHelp) locHelp.hidden = true; paintLoc(); };
+    const locFail = e => { locErr = (e && e.code) || 2; paintLoc(); if (locErr === 1 && locHelp) locHelp.hidden = false; };
+    if (NEED_LOC && navigator.geolocation) navigator.geolocation.watchPosition(takeFix, locFail, { enableHighAccuracy: true, maximumAge: 10000, timeout: 20000 });
+    /* the position sent with a car — null: the phone refuses (nothing is sent, the help shows) · {}: none to be had (sent without; the admins see it) */
+    const getLoc = () => new Promise(res => {
+        if (!NEED_LOC || !navigator.geolocation) return res({});
+        if (fix && Date.now() - fix.t < 30000) return res({ lat: fix.lat, lng: fix.lng, acc: fix.acc });
+        navigator.geolocation.getCurrentPosition(p => { takeFix(p); res({ lat: fix.lat, lng: fix.lng, acc: fix.acc }); },
+            e => { locFail(e); if (locErr === 1) { if (locHelp) locHelp.scrollIntoView({ block: 'center', behavior: 'smooth' }); res(null); } else res({}); },
+            { enableHighAccuracy: true, timeout: 12000, maximumAge: 10000 });
+    });
+    if (locBtn) locBtn.addEventListener('click', () => { if (locHelp) locHelp.hidden = !locHelp.hidden; });
+    if ($('scLocRetry')) $('scLocRetry').addEventListener('click', () => getLoc());
+    const farMsg = r => AR ? '📍 أنت على بعد ' + r.dist + ' من الفرع — لم تُقبل السيارة. اذهب إلى السيارة نفسها ثم أكّدها. مرة أخرى ويتوقف النظام.'
+                           : '📍 You are ' + r.dist + ' from the branch — the car was not accepted. Go to the car itself, then confirm it. Once more and your system stops.';
+    const noLocMsg = AR ? '📍 اسمح للهاتف بإرسال الموقع أولاً (التعليمات أعلى الصفحة)' : '📍 Allow the phone to share its location first (see above)';
+
+    /* ⏳ more time: ask management — the page follows the answer by itself */
+    if ($('scXtB')) {
+        let xtMin = 15, last = <?= json_encode($timeSt['req']['status'] ?? '') ?>;
+        const box = $('scXt'), btn = $('scXtB');
+        const paintXt = st => {
+            if (!st) return;
+            if (typeof st.secs === 'number') setSecs(st.secs);
+            const pend = st.req && st.req.status === 'pending';
+            btn.classList.toggle('wait', !!pend); btn.disabled = pend || !st.left;
+            btn.textContent = pend ? (AR ? '⏳ طلبك بانتظار موافقة الإدارة' : '⏳ Waiting for management') : st.left ? (AR ? '⏳ طلب وقت إضافي' : '⏳ Ask for more time') : (AR ? '⏳ استُخدمت كل الطلبات' : '⏳ No requests left');
+            if (pend) box.hidden = true;
+            if (st.status === 'active') document.querySelectorAll('.sc-top .sc-st.expired').forEach(x => { x.className = 'sc-st active'; x.textContent = AR ? '⏳ جارٍ' : '⏳ running'; });
+        };
+        btn.addEventListener('click', () => { box.hidden = !box.hidden; if (!box.hidden) $('scXtR').focus(); });
+        $('scXtM').querySelectorAll('button').forEach(b => b.addEventListener('click', () => { xtMin = +b.dataset.m; $('scXtM').querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b)); }));
+        $('scXtGo').addEventListener('click', async () => {
+            const m = $('scXtMsg'); $('scXtGo').disabled = true;
+            const r = await post({ action: 'time_req', minutes: xtMin, reason: $('scXtR').value }).catch(() => ({ ok: false }));
+            $('scXtGo').disabled = false;
+            if (r.ok) { toast(AR ? '📨 أُرسل الطلب — ستصلك الإجابة هنا وعلى الهاتف' : '📨 Sent — the answer comes here and on your phone', true); last = 'pending'; $('scXtR').value = ''; paintXt(r.state); }
+            else { m.className = 'nf-msg bad'; m.textContent = r.error === 'pending' ? (AR ? 'لديك طلب بانتظار الرد' : 'A request is already waiting') : r.error === 'max' ? (AR ? 'استُخدمت كل الطلبات المتاحة لهذا الجرد' : 'No requests left for this check') : (AR ? 'تعذّر الإرسال — حاول مرة أخرى' : 'Could not send — try again'); }
+        });
+        paintXt(<?= json_encode($timeSt ?? null) ?>);
+        setInterval(async () => {
+            if (document.hidden) return;
+            const st = await post({ action: 'state' }).catch(() => null);
+            if (!st || !st.ok) return;
+            if (last === 'pending' && st.req && st.req.status !== 'pending') {
+                const yes = st.req.status === 'approved';
+                toast(yes ? (AR ? '✅ تمت الموافقة على ' + st.req.minutes + ' دقيقة إضافية' : '✅ ' + st.req.minutes + ' more minutes approved') : (AR ? '✖ رُفض طلب الوقت الإضافي' : '✖ The request was refused'), yes);
+                if (window.F1App) F1App.sound(yes ? 'ok' : 'bad');
+            }
+            last = st.req ? st.req.status : '';
+            paintXt(st);
+        }, 20000);
     }
 
     /* ── doing the check ── */
@@ -968,6 +1358,38 @@ $ago = function ($s) use ($ar): string {
         return { reset: () => { go(0, false); show(0); }, focus: () => win.focus({ preventScroll: true }), err: box.querySelector('.cherr'), ok };
     }
     function counts(c) { if (!c) return; $('scDone').textContent = c[1]; $('scBar').style.width = (c[0] ? Math.round(c[1] * 100 / c[0]) : 100) + '%'; if ($('scFin')) $('scFin').disabled = c[1] < c[0]; }
+    /* 📷 a photo of the chassis plate, taken now with the camera, shrunk on the phone before it is sent */
+    function bindPhoto(it) {
+        const phb = it.querySelector('.phb');
+        if (!phb || phb.dataset.bound) return;
+        phb.dataset.bound = '1';
+        phb.querySelector('input').addEventListener('change', async e => {
+            const file = e.target.files && e.target.files[0], err = phb.querySelector('.pherr'), lbl = phb.querySelector('.phbtn span'); if (!file) return;
+            phb.classList.add('busy'); err.textContent = ''; lbl.textContent = AR ? 'جاري رفع الصورة…' : 'Sending the photo…';
+            try {
+                const img = await new Promise((ok, no) => { const i = new Image(); i.onload = () => ok(i); i.onerror = no; i.src = URL.createObjectURL(file); });
+                const k = Math.min(1, 1600 / Math.max(img.width, img.height)), cv = document.createElement('canvas');
+                cv.width = Math.round(img.width * k); cv.height = Math.round(img.height * k); cv.getContext('2d').drawImage(img, 0, 0, cv.width, cv.height);
+                const blob = await new Promise(ok => cv.toBlob(ok, 'image/jpeg', .82));
+                const fd = new FormData(); fd.append('csrf', CSRF); fd.append('check', CHECK); fd.append('item', it.dataset.id); fd.append('photo', blob, 'p.jpg');
+                const r = await (await fetch(location.pathname, { method: 'POST', credentials: 'same-origin', body: fd })).json();
+                if (!r.ok) throw new Error(r.error);
+                phb.classList.add('done'); lbl.textContent = AR ? 'تم رفع الصورة ✓ — إعادة التصوير' : 'Photo sent ✓ — retake'; if (window.F1App) F1App.sound('ok');
+            } catch (x) { lbl.textContent = AR ? 'التقط صورة لرقم الشاسيه على السيارة' : 'Take a photo of the chassis plate'; err.textContent = AR ? 'تعذّر رفع الصورة — حاول مرة أخرى' : 'Could not send the photo — try again'; }
+            phb.classList.remove('busy'); e.target.value = '';
+        });
+    }
+    /* 📷 this car was picked at random for a photo: it is said only now, after it was confirmed */
+    function askPhoto(el) {
+        if (el.querySelector('.phb')) return;
+        const d = document.createElement('div'); d.className = 'phb';
+        d.innerHTML = '<div class="phq">📷 ' + (AR ? 'مطلوب لهذه السيارة: صورة لرقم الشاسيه عليها' : 'This car needs a photo of its chassis plate') + '</div>'
+            + '<label class="phbtn">📷 <span>' + (AR ? 'التقط صورة لرقم الشاسيه على السيارة' : 'Take a photo of the chassis plate') + '</span><input type="file" accept="image/*" capture="environment" hidden></label><div class="pherr"></div>';
+        const nt = el.querySelector('.nt'); el.insertBefore(d, nt);
+        bindPhoto(el);
+        if (navigator.vibrate) navigator.vibrate([60, 40, 60]);
+        d.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    }
     items.forEach(it => {
         const y = it.querySelector('.y'), n = it.querySelector('.n'), nt = it.querySelector('.nt'), cwb = it.querySelector('.cwb');
         if (!y) return;
@@ -988,7 +1410,9 @@ $ago = function ($s) use ($ar): string {
         const send = async () => {
             if (!chin.value.trim()) { chin.focus(); return; }
             const ok = it.querySelector('.chok'); ok.disabled = true;
-            const r = await post({ action: 'mark', item: +it.dataset.id, state: 'present', chassis: chin.value }).catch(() => ({ ok: false, error: 'net' }));
+            const loc = await getLoc();
+            if (loc === null) { ok.disabled = false; cherr.textContent = noLocMsg; return; }
+            const r = await post(Object.assign({ action: 'mark', item: +it.dataset.id, state: 'present', chassis: chin.value }, loc)).catch(() => ({ ok: false, error: 'net' }));
             ok.disabled = false;
             if (r.ok) {
                 const el = items.find(x => +x.dataset.id === r.item) || it;      // two cars of the same model: the number decides which one
@@ -997,31 +1421,16 @@ $ago = function ($s) use ($ar): string {
                 if (r.chassis) el.querySelector('.ch').textContent = r.chassis;
                 if (el !== it) { el.scrollIntoView({ block: 'center', behavior: 'smooth' }); }
                 counts(r.counts);
+                if (r.photo) askPhoto(el);
             } else if (r.go) { location.href = r.go; }
             else {
                 cherr.textContent = r.error === 'chassis' ? (AR ? '❌ رقم الشاسيه غير صحيح. راجع الرقم على السيارة نفسها — إذا أُدخل رقم غير صحيح مرة أخرى يتوقف النظام.' : '❌ Wrong chassis number. Check the number on the car — one more wrong number stops your system.')
-                                : (AR ? 'تعذّر الحفظ — حاول مرة أخرى' : 'Could not save — try again');
+                                : r.error === 'far' ? farMsg(r) : (AR ? 'تعذّر الحفظ — حاول مرة أخرى' : 'Could not save — try again');
                 it.classList.remove('shake'); void it.offsetWidth; it.classList.add('shake'); chin.select();
                 if (window.F1App) F1App.sound('bad');
             }
         };
-        /* 📷 spot check: a photo of the chassis plate, taken now with the camera, shrunk on the phone before it is sent */
-        const phb = it.querySelector('.phb');
-        if (phb) phb.querySelector('input').addEventListener('change', async e => {
-            const file = e.target.files && e.target.files[0], err = phb.querySelector('.pherr'), lbl = phb.querySelector('span'); if (!file) return;
-            phb.classList.add('busy'); err.textContent = ''; lbl.textContent = AR ? 'جاري رفع الصورة…' : 'Sending the photo…';
-            try {
-                const img = await new Promise((ok, no) => { const i = new Image(); i.onload = () => ok(i); i.onerror = no; i.src = URL.createObjectURL(file); });
-                const k = Math.min(1, 1600 / Math.max(img.width, img.height)), cv = document.createElement('canvas');
-                cv.width = Math.round(img.width * k); cv.height = Math.round(img.height * k); cv.getContext('2d').drawImage(img, 0, 0, cv.width, cv.height);
-                const blob = await new Promise(ok => cv.toBlob(ok, 'image/jpeg', .82));
-                const fd = new FormData(); fd.append('csrf', CSRF); fd.append('check', CHECK); fd.append('item', it.dataset.id); fd.append('photo', blob, 'p.jpg');
-                const r = await (await fetch(location.pathname, { method: 'POST', credentials: 'same-origin', body: fd })).json();
-                if (!r.ok) throw new Error(r.error);
-                phb.classList.add('done'); lbl.textContent = AR ? 'تم رفع الصورة ✓ — إعادة التصوير' : 'Photo sent ✓ — retake'; if (window.F1App) F1App.sound('ok');
-            } catch (x) { lbl.textContent = AR ? 'التقط صورة لرقم الشاسيه على السيارة' : 'Take a photo of the chassis plate'; err.textContent = AR ? 'تعذّر رفع الصورة — حاول مرة أخرى' : 'Could not send the photo — try again'; }
-            phb.classList.remove('busy'); e.target.value = '';
-        });
+        bindPhoto(it);
         if (chin) { it.querySelector('.chok').addEventListener('click', send); chin.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); send(); } }); }
         /* 🎨 «موجودة» on a car asked by its colour: the colour picked from the list is checked against the car */
         let wheel = null;
@@ -1033,7 +1442,9 @@ $ago = function ($s) use ($ar): string {
         };
         const sendColor = async v => {
             wheel.ok.disabled = true;
-            const r = await post({ action: 'mark', item: +it.dataset.id, state: 'present', color: v }).catch(() => ({ ok: false, error: 'net' }));
+            const loc = await getLoc();
+            if (loc === null) { wheel.ok.disabled = false; wheel.err.textContent = noLocMsg; return; }
+            const r = await post(Object.assign({ action: 'mark', item: +it.dataset.id, state: 'present', color: v }, loc)).catch(() => ({ ok: false, error: 'net' }));
             if (r.ok) {
                 paint(it, 'present');
                 const col = it.querySelector('.sc-col'), o = COLORS.find(c => c.v === v);
@@ -1041,12 +1452,13 @@ $ago = function ($s) use ($ar): string {
                 col.innerHTML = '<i style="background:' + esc(o ? o.hex : '#64748b') + '"></i>' + esc(r.color || (o ? (AR ? o.ar : o.en) : v)) + ' ✓';
                 if (window.F1App) F1App.sound('ok');
                 counts(r.counts);
+                if (r.photo) askPhoto(it);
             } else if (r.go) { location.href = r.go; }
             else {
                 wheel.err.textContent = r.error === 'color' ? (AR ? '❌ اللون غير صحيح. انظر إلى السيارة نفسها مرة أخرى — إذا اخترت لوناً غير صحيح مرة أخرى يتوقف النظام.' : '❌ Wrong colour. Look at the car itself again — one more wrong answer stops your system.')
-                                                            : (AR ? 'تعذّر الحفظ — حاول مرة أخرى' : 'Could not save — try again');
+                                     : r.error === 'far' ? farMsg(r) : (AR ? 'تعذّر الحفظ — حاول مرة أخرى' : 'Could not save — try again');
                 it.classList.remove('shake'); void it.offsetWidth; it.classList.add('shake');
-                if (r.error === 'color') wheel.reset(); else wheel.ok.disabled = false;
+                if (r.error === 'color' || r.error === 'far') wheel.reset(); else wheel.ok.disabled = false;
                 if (window.F1App) F1App.sound('bad');
             }
         };
@@ -1066,12 +1478,48 @@ $ago = function ($s) use ($ar): string {
         if (!confirm(AR ? 'إنهاء الجرد وإرسال النتيجة للإدارة؟' : 'Finish and send the result?')) return;
         $('scFin').disabled = true;
         const r = await post({ action: 'finish' });
-        if (r.error === 'photo') { alert(AR ? 'التقط صورة لرقم الشاسيه على السيارة أولاً' : 'Take the photo of the chassis plate first'); $('scFin').disabled = false; return; }
+        if (r.error === 'photo') {
+            alert(AR ? 'التقط صورة لرقم الشاسيه للسيارات المطلوبة أولاً (📷)' : 'Take the chassis-plate photos asked for first (📷)');
+            const need = document.querySelector('.phb:not(.done)'); if (need) need.scrollIntoView({ block: 'center', behavior: 'smooth' });
+            $('scFin').disabled = false; return;
+        }
         if (r.ok) location.href = <?= json_encode(user_lock_active($pdo, $uid) ? 'transfer_lock.php?lang=' . $lang : 'dashboard.php?lang=' . $lang) ?>; else $('scFin').disabled = false;
     });
 
     /* ── admin ── */
     document.querySelectorAll('[data-unlock]').forEach(b => b.addEventListener('click', async () => { b.disabled = true; const r = await post({ action: 'unlock', uid: +b.dataset.unlock }); if (r.ok) location.reload(); }));
+    /* ⏳ a request for more time, or minutes added directly */
+    document.querySelectorAll('[data-xt]').forEach(b => b.addEventListener('click', async () => {
+        const row = b.closest('.sc-xtr'); row.querySelectorAll('button').forEach(x => x.disabled = true);
+        await post({ action: 'time_decide', req: +row.dataset.req, yes: b.dataset.xt === '1' }).catch(() => ({ ok: false }));
+        location.reload();
+    }));
+    document.querySelectorAll('[data-addt]').forEach(b => b.addEventListener('click', async () => {
+        if (!confirm(AR ? 'إضافة ' + b.dataset.addt + ' دقيقة لوقت الجرد؟' : 'Add ' + b.dataset.addt + ' minutes to the check?')) return;
+        b.disabled = true; await post({ action: 'add_time', minutes: +b.dataset.addt }).catch(() => ({ ok: false })); location.reload();
+    }));
+    /* 🔎 a car not found: the decision, or a re-check now with someone else */
+    document.querySelectorAll('.sc-case').forEach(card => {
+        const id = +card.dataset.case, msg = card.querySelector('[data-cmsg]');
+        const say = (t, ok) => { msg.textContent = t; msg.className = 'nf-msg ' + (ok ? 'ok' : 'bad'); };
+        card.querySelectorAll('[data-how]').forEach(b => b.addEventListener('click', async () => {
+            if (!confirm((AR ? 'تسجيل القرار: ' : 'Record: ') + b.textContent.trim() + '؟')) return;
+            card.querySelectorAll('button').forEach(x => x.disabled = true);
+            const r = await post({ action: 'case', id, how: b.dataset.how, note: card.querySelector('.sc-case-note').value }).catch(() => ({ ok: false }));
+            if (r.ok) { say('✓ ' + (AR ? 'تم الحفظ' : 'Saved'), true); card.style.opacity = '.55'; setTimeout(() => location.reload(), 700); }
+            else { card.querySelectorAll('button').forEach(x => x.disabled = false); say(AR ? 'تعذّر الحفظ — حاول مرة أخرى' : 'Could not save — try again', false); }
+        }));
+        const re = card.querySelector('[data-recheck]');
+        re.addEventListener('click', async () => {
+            const who = +card.querySelector('[data-who]').value;
+            if (!who) { say(AR ? 'اختر من يعيد فحصها' : 'Choose who re-checks it', false); return; }
+            if (!confirm(AR ? 'إرسال فحص سريع لهذه السيارة الآن؟' : 'Send a spot check of this car now?')) return;
+            re.disabled = true;
+            const r = await post({ action: 'case_recheck', id, user: who, minutes: 5 }).catch(() => ({ ok: false }));
+            if (r.ok) location.href = '?lang=<?= $lang ?>&id=' + r.id;
+            else { re.disabled = false; say(r.error === 'nocar' ? (AR ? 'السيارة لم تعد في هذا الفرع' : 'The car is no longer at this branch') : (AR ? 'تعذّر الإرسال' : 'Could not send'), false); }
+        });
+    });
     if ($('scCancel')) $('scCancel').addEventListener('click', async () => { if (!confirm(AR ? 'إلغاء هذا الجرد؟' : 'Cancel this check?')) return; const r = await post({ action: 'cancel' }); if (r.ok) location.reload(); });
 })();
 </script>

@@ -96,18 +96,21 @@ $history = $pdo->query("SELECT l.*, u.username FROM user_locks l JOIN users u ON
 
 $kindLbl = $ar ? ['manual' => '✋ يدوي', 'check' => '📋 جرد مفاجئ', 'transfer' => '🚚 استلام', 'chassis' => '🔑 إدخال غير صحيح'] : ['manual' => '✋ Manual', 'check' => '📋 Stock check', 'transfer' => '🚚 Receiving', 'chassis' => '🔑 Wrong entry'];
 /* admins only: what was typed against the real chassis number */
-$ctxLbl = $ar ? ['receive' => '🚚 استلام', 'check' => '📋 جرد', 'count' => '🔢 عدد السيارات', 'color' => '🎨 لون السيارة — جرد'] : ['receive' => '🚚 Receiving', 'check' => '📋 Stock check', 'count' => '🔢 Car count', 'color' => '🎨 Car colour — stock check'];
-/* a colour is kept as stored on the car ('White'): shown in the page's language */
-$triedTxt = fn(array $t, string $k) => $t['ctx'] === 'color' ? push_color_label($pdo, (string)$t[$k], $lang) : (string)$t[$k];
+$ctxLbl = $ar ? ['receive' => '🚚 استلام', 'check' => '📋 جرد', 'count' => '🔢 عدد السيارات', 'color' => '🎨 لون السيارة — جرد', 'far' => '📍 تأكيد من مكان بعيد — جرد']
+              : ['receive' => '🚚 Receiving', 'check' => '📋 Stock check', 'count' => '🔢 Car count', 'color' => '🎨 Car colour — stock check', 'far' => '📍 Confirmed from far away — stock check'];
+/* a colour is kept as stored on the car ('White'): shown in the page's language · far: the distance, against what is allowed */
+$meters = fn($m) => function_exists('check_m') ? check_m((int)$m, $lang) : (int)$m . ($ar ? ' م' : ' m');
+$triedTxt = fn(array $t, string $k) => $t['ctx'] === 'color' ? push_color_label($pdo, (string)$t[$k], $lang)
+                                     : ($t['ctx'] === 'far' ? ($k === 'typed' ? $meters($t[$k]) : ($ar ? 'حتى ' : 'up to ') . $meters($t[$k])) : (string)$t[$k]);
 $chTries = function (array $rows) use ($ar, $ctxLbl, $pdo, $lang, $triedTxt) {
     if (!$rows) return '';
     $h = '<div class="ld-ch"><div class="ld-ch-t">🔑 ' . ($ar ? 'ما أدخله مقابل الصحيح (يظهر للإدارة فقط)' : 'What was typed against the right answer (admins only)') . '</div>';
     foreach ($rows as $t) {
-        $h .= '<div class="ld-ch-r' . ((int)$t['ok'] ? ' ok' : '') . '"><div class="c">' . ($t['ctx'] === 'count' ? '🔢 ' : ($t['ctx'] === 'color' ? '🎨 ' : '🚗 ')) . htmlspecialchars((string)$t['label']) . ' <small>' . htmlspecialchars(($ctxLbl[$t['ctx']] ?? $t['ctx'])
+        $h .= '<div class="ld-ch-r' . ((int)$t['ok'] ? ' ok' : '') . '"><div class="c">' . ($t['ctx'] === 'count' ? '🔢 ' : ($t['ctx'] === 'color' ? '🎨 ' : ($t['ctx'] === 'far' ? '📍 ' : '🚗 '))) . htmlspecialchars((string)$t['label']) . ' <small>' . htmlspecialchars(($ctxLbl[$t['ctx']] ?? $t['ctx'])
             . ((string)$t['place'] !== '' ? ' · 📍 ' . push_branch_label($pdo, (string)$t['place'], $lang) : '') . ' · ' . date('Y-m-d', strtotime($t['created_at'])) . ' ' . smart_time_label(strtotime($t['created_at']), $lang)
             . (isset($t['username']) ? ' · 👤 ' . $t['username'] : '')) . '</small></div>'
-            . '<div class="v"><span>' . ($t['ctx'] === 'color' ? ($ar ? 'اختار' : 'Picked') : ($ar ? 'أدخل' : 'Typed')) . '</span><b class="bad' . ($t['ctx'] === 'color' ? ' tx' : '') . '">' . htmlspecialchars($triedTxt($t, 'typed')) . '</b></div>'
-            . '<div class="v"><span>' . ($ar ? 'الحقيقي' : 'Real') . '</span><b class="good' . ($t['ctx'] === 'color' ? ' tx' : '') . '">' . htmlspecialchars($triedTxt($t, 'real_chassis')) . '</b></div></div>';
+            . '<div class="v"><span>' . ($t['ctx'] === 'color' ? ($ar ? 'اختار' : 'Picked') : ($t['ctx'] === 'far' ? ($ar ? 'كان على بعد' : 'Was') : ($ar ? 'أدخل' : 'Typed'))) . '</span><b class="bad' . (in_array($t['ctx'], ['color', 'far'], true) ? ' tx' : '') . '">' . htmlspecialchars($triedTxt($t, 'typed')) . '</b></div>'
+            . '<div class="v"><span>' . ($t['ctx'] === 'far' ? ($ar ? 'المسموح' : 'Allowed') : ($ar ? 'الحقيقي' : 'Real')) . '</span><b class="good' . (in_array($t['ctx'], ['color', 'far'], true) ? ' tx' : '') . '">' . htmlspecialchars($triedTxt($t, 'real_chassis')) . '</b></div></div>';
     }
     return $h . '</div>';
 };
@@ -122,9 +125,11 @@ if ($isAdmin) {
         fn($r) => ['t' => $r['t'], 'u' => $r['username'], 'k' => 'stop', 'ic' => '⛔', 'x' => ($ar ? 'إيقاف النظام: ' : 'System stopped: ') . trim(strstr($kindLbl[$r['kind']] ?? $r['kind'], ' ')), 'd' => (string)$r['reason']]);
     try { chassis_tables($pdo); } catch (Throwable $e) {}
     $bx("SELECT created_at AS t, username, ctx, label, place, typed, real_chassis FROM chassis_tries WHERE ok = 0 AND created_at >= NOW() - INTERVAL 30 DAY",
-        fn($r) => ['t' => $r['t'], 'u' => $r['username'], 'k' => 'wrong', 'ic' => $r['ctx'] === 'count' ? '🔢' : ($r['ctx'] === 'color' ? '🎨' : '🔑'),
-                   'x' => $r['ctx'] === 'count' ? ($ar ? 'عدد سيارات غير صحيح' : 'Wrong car count') : ($r['ctx'] === 'color' ? ($ar ? 'لون سيارة غير صحيح' : 'Wrong car colour') : ($ar ? 'رقم شاسيه غير صحيح' : 'Wrong chassis number')),
-                   'd' => ($r['ctx'] === 'color' ? ($ar ? 'اختار ' : 'picked ') : ($ar ? 'أدخل ' : 'typed ')) . $triedTxt($r, 'typed') . ($ar ? ' — الصحيح ' : ' — right ') . $triedTxt($r, 'real_chassis')
+        fn($r) => ['t' => $r['t'], 'u' => $r['username'], 'k' => 'wrong', 'ic' => $r['ctx'] === 'count' ? '🔢' : ($r['ctx'] === 'color' ? '🎨' : ($r['ctx'] === 'far' ? '📍' : '🔑')),
+                   'x' => $r['ctx'] === 'count' ? ($ar ? 'عدد سيارات غير صحيح' : 'Wrong car count') : ($r['ctx'] === 'color' ? ($ar ? 'لون سيارة غير صحيح' : 'Wrong car colour')
+                        : ($r['ctx'] === 'far' ? ($ar ? 'تأكيد سيارة من مكان بعيد عن الفرع' : 'Car confirmed from far away') : ($ar ? 'رقم شاسيه غير صحيح' : 'Wrong chassis number'))),
+                   'd' => ($r['ctx'] === 'far' ? ($ar ? 'كان على بعد ' : 'was ') . $triedTxt($r, 'typed') . ' — ' . $triedTxt($r, 'real_chassis')
+                        : ($r['ctx'] === 'color' ? ($ar ? 'اختار ' : 'picked ') : ($ar ? 'أدخل ' : 'typed ')) . $triedTxt($r, 'typed') . ($ar ? ' — الصحيح ' : ' — right ') . $triedTxt($r, 'real_chassis'))
                         . ($r['ctx'] === 'count' ? '' : ' · ' . $r['label']) . ((string)$r['place'] !== '' ? ' · 📍 ' . $brb($r['place']) : '')]);
     $bx("SELECT a.clock_in AS t, u.username, a.branch_name, a.in_dist_m FROM attendance_logs a JOIN users u ON u.id = a.user_id WHERE a.clock_in >= NOW() - INTERVAL 30 DAY AND a.in_dist_m > " . (int)$fence,
         fn($r) => ['t' => $r['t'], 'u' => $r['username'], 'k' => 'far', 'ic' => '📍', 'x' => $ar ? 'تسجيل حضور من مكان بعيد عن الفرع' : 'Clocked in far from the branch',
