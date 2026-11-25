@@ -9,9 +9,10 @@
  *                  once («مشبوه»). The same for cars confirmed without any location.
  *   🔢 questions   besides «how many cars are at the branch», count questions the system suggests
  *                  and the admin chooses: «كم سيارة لونها أبيض؟» «كم سيارة Toyota؟» — checked the same way.
- *   📷 photos      only when the admin asks for it: a few cars picked at random, unannounced, also need
- *                  a photo of the chassis plate (the person learns it only after confirming that car);
- *                  a spot check: its one car. Taken with the camera inside the page — never from the gallery.
+ *   📷 photos      only when the admin asks for it, and of what the admin chooses: the chassis plate, the
+ *                  car itself, or both (photo_req bits: 1 chassis · 2 car). A few cars picked at random,
+ *                  unannounced (the person learns it only after confirming that car); a spot check: its
+ *                  one car. Taken with the camera inside the page — never from the gallery.
  *   🔎 cases       every car marked «غير موجودة» opens a case the admins close (found / moved / sold /
  *                  lost); the next day the system proposes a re-check of that car by someone else.
  *   👥 pairs       a double check: each person does the same check alone; the admins see every difference.
@@ -41,6 +42,7 @@ function check_extra_tables(PDO $pdo): void
     };
     $add('stock_checks', 'group_id', 'ADD group_id INT NULL');
     $add('stock_check_items', 'photo', 'ADD photo VARCHAR(80) NULL, ADD photo_at DATETIME NULL');
+    $add('stock_check_items', 'car_photo', 'ADD car_photo VARCHAR(80) NULL, ADD car_photo_at DATETIME NULL');   // 🚗 the car itself (photo = the chassis plate)
     $add('stock_check_items', 'photo_req', 'ADD photo_req TINYINT NOT NULL DEFAULT 0, ADD lat DECIMAL(10,7) NULL, ADD lng DECIMAL(10,7) NULL, ADD acc INT NULL, ADD dist_m INT NULL, ADD loc_flag VARCHAR(10) NULL');
     $add('stock_check_users', 'fast_max', 'ADD fast_max INT NOT NULL DEFAULT 0, ADD fast_told TINYINT NOT NULL DEFAULT 0, ADD noloc_told TINYINT NOT NULL DEFAULT 0');
     $add('stock_check_plans', 'car_id', 'ADD car_id INT NULL, ADD case_id INT NULL, ADD avoid_user INT NULL');
@@ -365,17 +367,30 @@ function check_q_try(PDO $pdo, int $checkId, int $qId, int $uid, string $uname, 
 }
 
 /* ════════════════════════ 📷 photos asked at random ════════════════════════ */
-/** Cars of a check that also need a photo of the chassis plate — only when the admin asked ($n > 0): $n picked at random, or every car ($all, a spot check). */
-function check_photo_pick(PDO $pdo, int $checkId, int $n, bool $all = false): void
+const CHECK_PHOTO_CHASSIS = 1;   // photo_req bits: the chassis plate…
+const CHECK_PHOTO_CAR     = 2;   // …and/or the car itself
+
+/** What to photograph, as the admin chose it: 1 the chassis plate · 2 the car itself · 3 both · 0 nothing. */
+function check_photo_kind($v): int
 {
-    if ($n < 1) return;
-    if ($all) { $pdo->prepare("UPDATE stock_check_items SET photo_req = 1 WHERE check_id = ? AND car_id > 0")->execute([$checkId]); return; }
+    return max(0, min(3, (int)$v));
+}
+
+/**
+ * Cars of a check that also need photos — only when the admin asked ($n > 0): $n picked at random,
+ * or every car ($all, a spot check). $kind: what to photograph (check_photo_kind).
+ */
+function check_photo_pick(PDO $pdo, int $checkId, int $n, bool $all = false, int $kind = CHECK_PHOTO_CHASSIS): void
+{
+    $kind = check_photo_kind($kind);
+    if ($n < 1 || !$kind) return;
+    if ($all) { $pdo->prepare("UPDATE stock_check_items SET photo_req = ? WHERE check_id = ? AND car_id > 0")->execute([$kind, $checkId]); return; }
     $st = $pdo->prepare("SELECT id FROM stock_check_items WHERE check_id = ? AND car_id > 0");
     $st->execute([$checkId]);
     $ids = array_map('intval', $st->fetchAll(PDO::FETCH_COLUMN));
     for ($i = count($ids) - 1; $i > 0; $i--) { $j = random_int(0, $i); [$ids[$i], $ids[$j]] = [$ids[$j], $ids[$i]]; }
     $ids = array_slice($ids, 0, $n);
-    if ($ids) $pdo->exec("UPDATE stock_check_items SET photo_req = 1 WHERE id IN (" . implode(',', $ids) . ")");
+    if ($ids) $pdo->exec("UPDATE stock_check_items SET photo_req = " . $kind . " WHERE id IN (" . implode(',', $ids) . ")");
 }
 
 /* ════════════════════════ 🔎 cars not found: a case for the admins + a re-check ════════════════════════ */
@@ -461,14 +476,14 @@ function check_case_decide(PDO $pdo, int $caseId, string $how, string $note, str
     return true;
 }
 
-/** Re-check a case's car now: a one-car spot check for the person chosen ($photo: with a chassis-plate photo). Returns the check id (0 = the car is no longer there). */
-function check_case_recheck_now(PDO $pdo, int $caseId, int $uid, int $minutes, string $by, bool $photo = false): int
+/** Re-check a case's car now: a one-car spot check for the person chosen ($photo: what to photograph — check_photo_kind). Returns the check id (0 = the car is no longer there). */
+function check_case_recheck_now(PDO $pdo, int $caseId, int $uid, int $minutes, string $by, int $photo = 0): int
 {
     $st = $pdo->prepare("SELECT * FROM check_cases WHERE id = ? AND status = 'open'");
     $st->execute([$caseId]);
     $case = $st->fetch(PDO::FETCH_ASSOC);
     if (!$case || $uid < 1) return 0;
-    $cid = smart_check_create($pdo, (string)$case['branch'], [$uid], max(3, min(60, $minutes)), '', true, $by, [], [(int)$case['car_id']], true, [], ['photos' => $photo ? 1 : 0]);
+    $cid = smart_check_create($pdo, (string)$case['branch'], [$uid], max(3, min(60, $minutes)), '', true, $by, [], [(int)$case['car_id']], true, [], ['photos' => $photo ? 1 : 0, 'photo_kind' => $photo]);
     if ($cid) {
         $pdo->prepare("UPDATE check_cases SET recheck_id = ?, recheck_state = 'sent' WHERE id = ?")->execute([$cid, $caseId]);
         $pdo->prepare("UPDATE stock_check_plans SET status = 'skipped', decided_by = ?, decided_at = NOW() WHERE case_id = ? AND status IN ('planned', 'pending')")->execute([$by, $caseId]);
