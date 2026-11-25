@@ -101,7 +101,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['photo'])) {   // tak
     if (!@move_uploaded_file($up['tmp_name'], sc_photo_dir() . '/' . $name)) $fail('save');
     $old = $pdo->prepare("SELECT $col FROM stock_check_items WHERE id = ?"); $old->execute([$item]);
     $oldF = (string)$old->fetchColumn();
-    $pdo->prepare("UPDATE stock_check_items SET $col = ?, {$col}_at = NOW() WHERE id = ?")->execute([$name, $item]);
+    $pdo->prepare("UPDATE stock_check_items SET $col = ?, {$col}_at = NOW(), {$col}_by = ? WHERE id = ?")->execute([$name, $me, $item]);
     if (preg_match('/^[a-f0-9]{32}\.jpg$/', $oldF)) @unlink(sc_photo_dir() . '/' . $oldF);
     echo json_encode(['ok' => true]); exit;
 }
@@ -401,6 +401,7 @@ if ($isBoss && !$check) {
                                 (SELECT COUNT(*) FROM stock_check_items i WHERE i.check_id = c.id AND i.car_id > 0) AS t,
                                 (SELECT COUNT(*) FROM stock_check_items i WHERE i.check_id = c.id AND i.car_id > 0 AND i.state IS NOT NULL) AS m,
                                 (SELECT COUNT(*) FROM stock_check_items i WHERE i.check_id = c.id AND i.state = 'missing') AS x,
+                                (SELECT COALESCE(SUM((i.photo IS NOT NULL) + (i.car_photo IS NOT NULL)), 0) FROM stock_check_items i WHERE i.check_id = c.id) AS ph,
                                 (SELECT GROUP_CONCAT(u.username SEPARATOR '، ') FROM stock_check_users s JOIN users u ON u.id = s.user_id WHERE s.check_id = c.id) AS who
                          FROM stock_checks c ORDER BY c.id DESC LIMIT 25")->fetchAll(PDO::FETCH_ASSOC);
     $casesOpen = $isAdmin ? check_cases_open($pdo) : [];   // 🔎 cars not found, waiting for a decision
@@ -443,6 +444,8 @@ $phOpts = function (bool $none = true) use ($ar): string {
     return $h;
 };
 $phNames = $ar ? [1 => 'رقم الشاسيه', 2 => 'السيارة', 3 => 'الشاسيه + السيارة'] : [1 => 'chassis plate', 2 => 'the car', 3 => 'chassis + car'];
+/* a photo's address in this page: the chassis plate or the car (&k=car) — changes when it is retaken, so the old one is never shown from the cache */
+$phSrc = fn(array $it, string $k): string => '?photo=' . (int)$it['id'] . ($k === 'car' ? '&k=car' : '') . '&v=' . substr((string)($it[$k === 'car' ? 'car_photo' : 'photo'] ?? ''), 0, 8);
 $ago = function ($s) use ($ar): string {
     $s = max(0, (int)$s);
     if ($s < 60) return $ar ? 'الآن' : 'just now';
@@ -494,6 +497,31 @@ $ago = function ($s) use ($ar): string {
 .sc-st{font-size:12px;font-weight:900;padding:4px 10px;border-radius:999px;background:rgba(255,255,255,.06)}
 .sc-st.active{background:rgba(56,189,248,.15);color:#7dd3fc}.sc-st.expired{background:rgba(239,68,68,.15);color:#fca5a5}.sc-st.done{background:rgba(34,197,94,.15);color:#86efac}
 .sc-miss{font-size:12px;font-weight:900;color:#fca5a5}
+.sc-phc{font-size:12px;font-weight:900;color:#7dd3fc}
+.sc-gal-g{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}
+.sc-gi{display:flex;flex-direction:column;padding:0;border-radius:14px;border:1px solid rgba(56,189,248,.3);background:rgba(255,255,255,.03);overflow:hidden;text-align:start;color:var(--txt);font:inherit;cursor:zoom-in;transition:border-color .15s}
+.sc-gi:hover{border-color:rgba(56,189,248,.7)}
+.sc-gi img{display:block;width:100%;aspect-ratio:4/3;object-fit:cover;background:#0b1220}
+.sc-gi .cap{display:grid;gap:2px;padding:8px 10px;min-width:0}
+.sc-gi .cap b{font-size:12.5px;font-weight:900;color:#bae6fd}
+.sc-gi .cap small{font-size:11.5px;color:var(--mut);font-weight:700;line-height:1.5;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+.sc-gi .cap small:empty{display:none}
+.sc-gi.none{cursor:default;border:1px dashed var(--line)}
+.sc-gi.none .ph{display:grid;place-items:center;aspect-ratio:4/3;font-size:12.5px;font-weight:800;color:var(--mut);background:rgba(255,255,255,.02)}
+.sc-lb{position:fixed;inset:0;z-index:101;display:none;flex-direction:column;background:#020617;color:#fff}
+.sc-lb.on{display:flex}
+.sc-lb-top{display:flex;align-items:center;gap:10px;padding:calc(10px + env(safe-area-inset-top)) 14px 10px}
+.sc-lb-t{flex:1;min-width:0;font-size:13.5px;font-weight:800;color:#e2e8f0;line-height:1.55}
+.sc-lb-x{flex:none;width:42px;height:42px;border-radius:50%;border:0;background:rgba(255,255,255,.12);color:#fff;font-size:18px;cursor:pointer}
+.sc-lb-box{flex:1;min-height:0;display:flex;align-items:center;justify-content:center;overflow:hidden;padding:0 8px;direction:ltr}
+.sc-lb-box img{max-width:100%;max-height:100%;object-fit:contain;border-radius:10px;cursor:zoom-in;user-select:none;-webkit-user-select:none}
+.sc-lb-box.zoom{display:block;overflow:auto;padding:0;-webkit-overflow-scrolling:touch}
+.sc-lb-box.zoom img{max-width:none;max-height:none;border-radius:0;cursor:zoom-out}
+.sc-lb-bar{display:flex;align-items:center;justify-content:center;gap:18px;padding:10px 14px}
+.sc-lb-bar[hidden]{display:none}
+.sc-lb-bar button{width:48px;height:48px;border-radius:50%;border:1px solid rgba(255,255,255,.2);background:rgba(255,255,255,.08);color:#fff;font-size:26px;line-height:1;cursor:pointer}
+.sc-lb-n{min-width:60px;text-align:center;font-size:13px;font-weight:800;color:#cbd5e1}
+.sc-lb-hint{padding:0 14px calc(12px + env(safe-area-inset-bottom));text-align:center;font-size:12px;font-weight:700;color:#94a3b8}
 .sc-bar{height:8px;border-radius:8px;background:rgba(255,255,255,.07);overflow:hidden;margin-top:6px}.sc-bar i{display:block;height:100%;background:linear-gradient(90deg,#22c55e,#38bdf8);transition:width .3s}
 /* doing the check */
 .sc-top{position:sticky;top:0;z-index:5;padding:12px 14px;border-radius:0 0 18px 18px;margin:0 -2px 14px;background:linear-gradient(160deg,rgba(15,23,42,.97),rgba(30,27,75,.97));border:1px solid rgba(255,255,255,.08);border-top:0;backdrop-filter:blur(10px)}
@@ -928,6 +956,7 @@ $ago = function ($s) use ($ar): string {
                     <div class="sc-bar"><i style="width:<?= $pct ?>%"></i></div></div>
                 <span class="sc-prog"><?= (int)$c['m'] ?>/<?= (int)$c['t'] ?></span>
                 <?php if ((int)$c['x']): ?><span class="sc-miss">❌ <?= (int)$c['x'] ?></span><?php endif; ?>
+                <?php if ((int)($c['ph'] ?? 0)): ?><span class="sc-phc" title="<?= $ar ? 'صور الجرد' : 'Photos' ?>">📷 <?= (int)$c['ph'] ?></span><?php endif; ?>
                 <span class="sc-st <?= $c['status'] ?>"><?= $stLbl[$c['status']] ?? $c['status'] ?></span>
             </a>
             <?php endforeach; ?>
@@ -1036,6 +1065,39 @@ $ago = function ($s) use ($ar): string {
         <?php endif; ?>
     </section>
     <?php endif; ?>
+    <?php if ($adminView && $isBoss && $nPhoto):
+        $gal = [];   // 📷 every photo asked in this check, taken or not
+        foreach ($items as $it) {
+            $pr = (int)($it['photo_req'] ?? 0);
+            if (!$pr || (int)$it['car_id'] === 0) continue;
+            foreach ([1 => 'chassis', 2 => 'car'] as $bit => $k) {
+                if (!($pr & $bit)) continue;
+                $col = $k === 'car' ? 'car_photo' : 'photo';
+                $gal[] = ['it' => $it, 'k' => $k, 'has' => !empty($it[$col]), 'at' => (string)($it[$col . '_at'] ?? ''), 'by' => (string)(($it[$col . '_by'] ?? '') ?: $it['marked_by'])];
+            }
+        }
+        $galN = count(array_filter($gal, fn($g) => $g['has'])); ?>
+    <section class="nf-card sc-gal" id="photos">
+        <h2>📷 <?= $ar ? 'صور الجرد' : 'Photos' ?> <span class="nf-count"><?= $galN ?> / <?= count($gal) ?></span></h2>
+        <p class="nf-note"><?= $ar ? 'اضغط على أي صورة لعرضها بالحجم الكامل داخل النظام، ثم اضغط عليها مرة أخرى للتكبير (لقراءة رقم الشاسيه).' : 'Tap a photo to see it full size inside the system; tap it again to zoom in (to read the chassis number).' ?></p>
+        <div class="sc-gal-g">
+            <?php foreach ($gal as $g): $it = $g['it'];
+                  $kind = $g['k'] === 'car' ? '🚗 ' . ($ar ? 'السيارة' : 'The car') : '📷 ' . ($ar ? 'رقم الشاسيه' : 'Chassis plate');
+                  $when = $g['at'] ? smart_time_label(strtotime($g['at']), $lang) : '';
+                  $cap = $kind . ' — ' . $it['label'] . ($when ? ' · ' . $when : '') . ($g['by'] ? ' · 📸 ' . $g['by'] : ''); ?>
+            <?php if ($g['has']): ?>
+            <button type="button" class="sc-gi" data-src="<?= htmlspecialchars($phSrc($it, $g['k'])) ?>" data-cap="<?= htmlspecialchars($cap) ?>">
+                <img src="<?= htmlspecialchars($phSrc($it, $g['k'])) ?>" loading="lazy" alt="<?= htmlspecialchars($cap) ?>">
+                <span class="cap"><b><?= $kind ?></b><small><?= htmlspecialchars((string)$it['label']) ?></small><small><?= htmlspecialchars(trim(($when ? '🕒 ' . $when : '') . ($g['by'] ? ' · 📸 ' . $g['by'] : ''), ' ·')) ?></small></span>
+            </button>
+            <?php else: ?>
+            <div class="sc-gi none"><span class="ph"><?= $running ? '⏳ ' . ($ar ? 'لم تُرسل بعد' : 'Not sent yet') : '✖ ' . ($ar ? 'لم تُرسل' : 'Never sent') ?></span>
+                <span class="cap"><b><?= $kind ?></b><small><?= htmlspecialchars((string)$it['label']) ?></small></span></div>
+            <?php endif; ?>
+            <?php endforeach; ?>
+        </div>
+    </section>
+    <?php endif; ?>
     <?php if ($adminView && !empty($pairCmp['ids'])): $pc = $pairCmp; ?>
     <section class="nf-card sc-pair">
         <h2>👥 <?= $ar ? 'الجرد المزدوج — مقارنة' : 'Double check — comparison' ?> <span class="nf-count"><?= $pc['diff'] ? ($ar ? 'اختلاف في ' . ($pc['diff'] === 2 ? 'سيارتين' : push_ar_cars($pc['diff'])) : $pc['diff'] . ' differ') : ($ar ? 'متطابق' : 'match') ?></span></h2>
@@ -1064,8 +1126,8 @@ $ago = function ($s) use ($ar): string {
                                                                                                   : '🔑 ' . ($doer ? ($ar ? 'اكتب الشاسيه' : 'Type the chassis') : ($ar ? 'المطلوب: الشاسيه' : 'Asked: chassis')) ?></span><?php endif; ?>
                 <?php if ($byColor && $open): ?><span class="sc-col<?= $it['state'] === 'present' ? ' ok' : '' ?>"><i style="background:<?= htmlspecialchars(car_color_hex((string)($it['answer'] ?: $it['color']))) ?>"></i><?= htmlspecialchars($colorTxt) ?><?= $it['state'] === 'present' ? ' ✓' : '' ?></span>
                 <?php elseif ($byColor): /* nothing about the colour in the page until they pick it */ ?><span class="sc-col" hidden><i></i></span><?php endif; ?>
-                <?php if (!empty($it['photo']) && $isBoss): ?><a class="sc-ph-a" href="?photo=<?= (int)$it['id'] ?>" target="_blank" rel="noopener">📷 <?= $ar ? 'صورة رقم الشاسيه' : 'Chassis plate photo' ?><?= !empty($it['photo_at']) ? ' · ' . htmlspecialchars(smart_time_label(strtotime($it['photo_at']), $lang)) : '' ?></a><?php endif; ?>
-                <?php if (!empty($it['car_photo']) && $isBoss): ?><a class="sc-ph-a" href="?photo=<?= (int)$it['id'] ?>&amp;k=car" target="_blank" rel="noopener">🚗 <?= $ar ? 'صورة السيارة' : 'Car photo' ?><?= !empty($it['car_photo_at']) ? ' · ' . htmlspecialchars(smart_time_label(strtotime($it['car_photo_at']), $lang)) : '' ?></a><?php endif; ?>
+                <?php if (!empty($it['photo']) && $isBoss): ?><a class="sc-ph-a" href="<?= htmlspecialchars($phSrc($it, 'chassis')) ?>">📷 <?= $ar ? 'صورة رقم الشاسيه' : 'Chassis plate photo' ?><?= !empty($it['photo_at']) ? ' · ' . htmlspecialchars(smart_time_label(strtotime($it['photo_at']), $lang)) : '' ?></a><?php endif; ?>
+                <?php if (!empty($it['car_photo']) && $isBoss): ?><a class="sc-ph-a" href="<?= htmlspecialchars($phSrc($it, 'car')) ?>">🚗 <?= $ar ? 'صورة السيارة' : 'Car photo' ?><?= !empty($it['car_photo_at']) ? ' · ' . htmlspecialchars(smart_time_label(strtotime($it['car_photo_at']), $lang)) : '' ?></a><?php endif; ?>
                 <?php if ($it['marked_by']): ?><div class="by">✍️ <?= htmlspecialchars($it['marked_by']) ?><?= $it['note'] ? ' · 📝 ' . htmlspecialchars($it['note']) : '' ?></div><?php endif; ?>
                 <?php if ($adminView): $lf = (string)($it['loc_flag'] ?? ''); $kc = $caseOf[(int)$it['id']] ?? null; ?><div class="sc-meta">
                     <?php if ($lf === 'ok'): ?><span class="ok">📍 <?= htmlspecialchars(check_m((int)$it['dist_m'], $lang)) ?></span>
@@ -1694,6 +1756,58 @@ $ago = function ($s) use ($ar): string {
             else { re.disabled = false; say(r.error === 'nocar' ? (AR ? 'السيارة لم تعد في هذا الفرع' : 'The car is no longer at this branch') : (AR ? 'تعذّر الإرسال' : 'Could not send'), false); }
         });
     });
+    /* 📷 the check's photos, full screen inside the page — never a new window (an installed app would open it in the
+       browser, without the login, and show the login page instead of the photo). Tap to zoom, swipe or arrows for the next. */
+    const galItems = [...document.querySelectorAll('.sc-gi[data-src]')].map(b => ({ src: b.dataset.src, cap: b.dataset.cap }));
+    const viewer = (() => {
+        let el = null, list = [], at = 0, x0 = null;
+        const q = s => el.querySelector(s);
+        function build() {
+            el = document.createElement('div'); el.className = 'sc-lb'; el.setAttribute('role', 'dialog'); el.setAttribute('aria-modal', 'true');
+            el.innerHTML = '<div class="sc-lb-top"><span class="sc-lb-t"></span><button type="button" class="sc-lb-x" aria-label="' + (AR ? 'إغلاق' : 'Close') + '">✕</button></div>'
+                + '<div class="sc-lb-box"><img alt=""></div>'
+                // laid out left to right on purpose (an arrow is mirrored inside Arabic text): in Arabic the next photo is on the left
+                + '<div class="sc-lb-bar" dir="ltr"><button type="button" data-d="' + (AR ? 1 : -1) + '" aria-label="' + (AR ? 'التالية' : 'Previous') + '">‹</button>'
+                + '<span class="sc-lb-n" dir="' + (AR ? 'rtl' : 'ltr') + '"></span>'
+                + '<button type="button" data-d="' + (AR ? -1 : 1) + '" aria-label="' + (AR ? 'السابقة' : 'Next') + '">›</button></div>'
+                + '<div class="sc-lb-hint">' + (AR ? 'اضغط على الصورة للتكبير · اسحب للصورة التالية' : 'Tap the photo to zoom · swipe for the next one') + '</div>';
+            document.body.appendChild(el);
+            const box = q('.sc-lb-box'), img = q('.sc-lb-box img');
+            q('.sc-lb-x').addEventListener('click', close);
+            el.querySelectorAll('[data-d]').forEach(b => b.addEventListener('click', () => go(+b.dataset.d)));
+            img.addEventListener('click', e => {   // fit ⇄ the photo at full size, around the point tapped
+                if (box.classList.contains('zoom')) { box.classList.remove('zoom'); img.style.width = ''; return; }
+                const r = img.getBoundingClientRect(), fx = (e.clientX - r.left) / r.width, fy = (e.clientY - r.top) / r.height;
+                box.classList.add('zoom'); img.style.width = Math.max(img.naturalWidth, box.clientWidth * 2) + 'px';
+                box.scrollLeft = fx * img.offsetWidth - box.clientWidth / 2; box.scrollTop = fy * img.offsetHeight - box.clientHeight / 2;
+            });
+            box.addEventListener('touchstart', e => { x0 = box.classList.contains('zoom') || e.touches.length > 1 ? null : e.touches[0].clientX; }, { passive: true });
+            box.addEventListener('touchend', e => {
+                if (x0 == null) return;
+                const dx = e.changedTouches[0].clientX - x0; x0 = null;
+                if (Math.abs(dx) > 50) go((dx < 0) === AR ? -1 : 1);   // like turning pages: the next one comes from the side the text goes to
+            }, { passive: true });
+            document.addEventListener('keydown', e => {
+                if (!el.classList.contains('on')) return;
+                if (e.key === 'Escape') close(); else if (e.key === 'ArrowLeft') go(AR ? 1 : -1); else if (e.key === 'ArrowRight') go(AR ? -1 : 1);
+            });
+        }
+        function show() {
+            const p = list[at], img = q('.sc-lb-box img');
+            q('.sc-lb-box').classList.remove('zoom'); img.style.width = '';
+            img.src = p.src; img.alt = p.cap; q('.sc-lb-t').textContent = p.cap;
+            q('.sc-lb-n').textContent = (at + 1) + (AR ? ' من ' : ' / ') + list.length; q('.sc-lb-bar').hidden = list.length < 2;
+        }
+        function go(d) { if (list.length < 2) return; at = (at + d + list.length) % list.length; show(); }
+        function close() { el.classList.remove('on'); document.documentElement.style.overflow = ''; q('.sc-lb-box img').removeAttribute('src'); }
+        return { open(items, i) { if (!el) build(); list = items; at = i; show(); el.classList.add('on'); document.documentElement.style.overflow = 'hidden'; } };
+    })();
+    document.querySelectorAll('.sc-gi[data-src]').forEach((b, i) => b.addEventListener('click', () => viewer.open(galItems, i)));
+    document.querySelectorAll('a.sc-ph-a').forEach(a => a.addEventListener('click', e => {   // the links on a car's row: the same viewer
+        e.preventDefault();
+        const src = a.getAttribute('href'), i = galItems.findIndex(g => g.src === src);
+        if (i >= 0) viewer.open(galItems, i); else viewer.open([{ src, cap: a.textContent.trim() }], 0);
+    }));
     if ($('scCancel')) $('scCancel').addEventListener('click', async () => { if (!confirm(AR ? 'إلغاء هذا الجرد؟' : 'Cancel this check?')) return; const r = await post({ action: 'cancel' }); if (r.ok) location.reload(); });
 })();
 </script>

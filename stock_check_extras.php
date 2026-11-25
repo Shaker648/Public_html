@@ -44,6 +44,7 @@ function check_extra_tables(PDO $pdo): void
     $add('stock_checks', 'group_id', 'ADD group_id INT NULL');
     $add('stock_check_items', 'photo', 'ADD photo VARCHAR(80) NULL, ADD photo_at DATETIME NULL');
     $add('stock_check_items', 'car_photo', 'ADD car_photo VARCHAR(80) NULL, ADD car_photo_at DATETIME NULL');   // 🚗 the car itself (photo = the chassis plate)
+    $add('stock_check_items', 'photo_by', 'ADD photo_by VARCHAR(100) NULL, ADD car_photo_by VARCHAR(100) NULL');   // who took each photo
     $add('stock_check_items', 'photo_req', 'ADD photo_req TINYINT NOT NULL DEFAULT 0, ADD lat DECIMAL(10,7) NULL, ADD lng DECIMAL(10,7) NULL, ADD acc INT NULL, ADD dist_m INT NULL, ADD loc_flag VARCHAR(10) NULL');
     $add('stock_check_users', 'fast_max', 'ADD fast_max INT NOT NULL DEFAULT 0, ADD fast_told TINYINT NOT NULL DEFAULT 0, ADD noloc_told TINYINT NOT NULL DEFAULT 0');
     $add('stock_check_plans', 'car_id', 'ADD car_id INT NULL, ADD case_id INT NULL, ADD avoid_user INT NULL');
