@@ -80,6 +80,11 @@ function notify_events(): array
         'check_tick'       => ['الوقت المتبقي للجرد (منتصف المدة)', 'Stock check time left (half-way)', '⏳', ['admin'], true, true, 'check'],
         'check_warn'       => ['اقتراب انتهاء وقت الجرد',        'Stock check time almost up', '⚠️', ['admin'], true, true, 'check'],
         'check_done'       => ['نتيجة الجرد',                    'Stock check result',         '✅', ['admin'], true, null, 'check'],
+        'check_suspect'    => ['جرد: سرعة أو موقع مشبوه (للإدارة)', 'Stock check: suspicious speed or place (admins)', '🕵️', ['admin'], true, null, 'check'],
+        'check_time_req'   => ['طلب وقت إضافي للجرد',            'More time asked for a stock check', '⏳', ['admin'], true, null, 'check'],
+        'check_time_ans'   => ['الرد على طلب الوقت الإضافي (للمكلَّف)', 'The answer about more time (to the person)', '⏳', [], true, true, 'check'],
+        'check_case'       => ['سيارة غير موجودة: نتيجة إعادة الفحص', 'Missing car: the re-check result', '🔎', ['admin'], true, null, 'check'],
+        'check_pair'       => ['نتيجة الجرد المزدوج',            'Double check result',        '👥', ['admin'], true, null, 'check'],
         // stopping the system (manual, stock check, transfers) — every admin always gets it
         'user_locked'      => ['إيقاف النظام عن موظف (يدوي أو تلقائي)', 'System stopped for someone (manual or automatic)', '🔒', ['admin'], true, true, 'lock'],
         'lock_reason'      => ['تعديل سبب إيقاف النظام',             'Stop reason changed', '✏️', ['admin'], true, true, 'lock'],
@@ -948,9 +953,11 @@ function notify_message(PDO $pdo, string $event, array $d, string $lang): array
             break;
         case 'check_plan':
             $bn = push_branch_label($pdo, (string)($d['branch'] ?? ''), $lang);
-            $sp = ($d['kind'] ?? '') === 'spot'; $pg = ($d['kind'] ?? '') === 'ping';
-            $title = '🎲 ' . ($ar ? ($pg ? 'اقتراح تأكيد تواجد: فرع ' : ($sp ? 'اقتراح فحص سريع لسيارة: فرع ' : 'اقتراح جرد مفاجئ: فرع ')) . $bn : ($pg ? 'Proposed location check: ' : ($sp ? 'Proposed spot check: ' : 'Proposed surprise check: ')) . $bn);
-            $body[] = ($ar ? '👤 المكلَّف المقترح: ' : '👤 Proposed for: ') . ($d['user'] ?? '');
+            $sp = ($d['kind'] ?? '') === 'spot'; $pg = ($d['kind'] ?? '') === 'ping'; $rc = ($d['kind'] ?? '') === 'recheck';
+            $title = ($rc ? '🔁 ' : '🎲 ') . ($ar ? ($rc ? 'اقتراح إعادة فحص سيارة غير موجودة: فرع ' : ($pg ? 'اقتراح تأكيد تواجد: فرع ' : ($sp ? 'اقتراح فحص سريع لسيارة: فرع ' : 'اقتراح جرد مفاجئ: فرع '))) . $bn
+                                                 : ($rc ? 'Proposed re-check of a missing car: ' : ($pg ? 'Proposed location check: ' : ($sp ? 'Proposed spot check: ' : 'Proposed surprise check: '))) . $bn);
+            if ($rc && !empty($d['car'])) $body[] = '🚗 ' . $d['car'];
+            $body[] = ($ar ? '👤 المكلَّف المقترح: ' : '👤 Proposed for: ') . ($d['user'] ?? '') . ($rc ? ($ar ? ' (غير من لم يجدها)' : ' (not the one who missed it)') : '');
             $body[] = $ar ? '⏳ لن يُرسل شيء للفرع قبل موافقتك — ينتهي الاقتراح بعد ساعتين' : '⏳ Nothing is sent to the branch until you approve — the proposal expires in two hours';
             $url = 'stock_check.php?lang=' . $lang . '#plans';
             break;
@@ -1008,8 +1015,65 @@ function notify_message(PDO $pdo, string $event, array $d, string $lang): array
                 $title = ($miss ? '❗ ' : $ev[2] . ' ') . ($ar ? 'نتيجة جرد فرع ' . $bn . ': ' . ($miss ? push_ar_cars($miss) . ' غير موجودة' : 'كل السيارات موجودة') : $bn . ' stock check: ' . ($miss ? $miss . ' missing' : 'everything present'));
                 $body[] = ($ar ? 'موجودة ' : 'Present ') . (int)$d['present'] . ($ar ? ' · غير موجودة ' : ' · missing ') . $miss . ($ar ? ' · زائدة ' : ' · extra ') . (int)($d['extra'] ?? 0) . (!empty($d['late']) ? ($ar ? ' · بعد انتهاء الوقت' : ' · after the deadline') : '');
                 if (!empty($d['missing_list'])) $body[] = '❌ ' . implode('، ', array_slice((array)$d['missing_list'], 0, 4));
+                if (!empty($d['cases'])) $body[] = $ar ? '🔎 فُتحت متابعة لكل سيارة غير موجودة — قرار الإدارة في صفحة الجرد، وإعادة فحص مقترحة غداً' : '🔎 A follow-up was opened for each missing car — decided on the stock check page, with a re-check proposed tomorrow';
                 $body[] = ($ar ? '👤 بواسطة ' : '👤 by ') . ($d['by'] ?? '');
             }
+            break;
+        case 'check_suspect':
+            $bn = push_branch_label($pdo, (string)($d['branch'] ?? ''), $lang);
+            $u = (string)($d['user'] ?? '');
+            $k = (string)($d['kind'] ?? '');
+            $dm = function_exists('check_m') ? check_m((int)($d['dist'] ?? 0), $lang) : (int)($d['dist'] ?? 0) . ' m';
+            if ($k === 'fast') {
+                $title = '⚡ ' . ($ar ? 'سرعة مشبوهة في الجرد: ' . $u . ' أكّد ' . push_ar_cars((int)$d['n']) . ' خلال دقيقة' : 'Suspicious speed: ' . $u . ' confirmed ' . (int)$d['n'] . ' cars within a minute');
+                $body[] = $ar ? '📍 فرع ' . $bn . ' — لا يمكن الوصول إلى هذا العدد من السيارات فعلياً في دقيقة؛ قد يكون يكتب الأرقام من قائمة' : '📍 ' . $bn . ' — nobody reaches that many cars in a minute; the numbers may come from a list';
+            } elseif ($k === 'far') {
+                $title = '📍 ' . ($ar ? $u . ' حاول تأكيد سيارة وهو على بعد ' . $dm . ' من الفرع' : $u . ' tried to confirm a car ' . $dm . ' away from the branch');
+                $body[] = '🚗 ' . ($d['label'] ?? '') . ' · ' . ($ar ? 'فرع ' : '') . $bn;
+                $body[] = $ar ? '⛔ لم تُقبل السيارة — مرة أخرى ويتوقف النظام عنه' : '⛔ The car was not accepted — once more and his system stops';
+            } else {
+                $title = '📵 ' . ($ar ? $u . ' يؤكد السيارات بدون موقع الهاتف (' . push_ar_cars((int)$d['n']) . ')' : $u . ' is confirming cars without the phone\'s location (' . (int)$d['n'] . ')');
+                $body[] = $ar ? '📍 فرع ' . $bn . ' — الموقع مغلق أو غير متاح على هاتفه، فلا يُعرف أين كان' : '📍 ' . $bn . ' — location is off or unavailable on the phone';
+            }
+            $url = 'stock_check.php?lang=' . $lang . '&id=' . (int)($d['id'] ?? 0);
+            break;
+        case 'check_time_req':
+            $bn = push_branch_label($pdo, (string)($d['branch'] ?? ''), $lang);
+            $m = (int)($d['minutes'] ?? 15);
+            $title = '⏳ ' . ($ar ? ($d['user'] ?? '') . ' يطلب ' . push_ar_mins($m) . ' إضافية لإكمال الجرد' : ($d['user'] ?? '') . ' asks for ' . $m . ' more minutes for the stock check');
+            $body[] = ($ar ? '📍 فرع ' . $bn . ' · تم تأكيد ' . (int)$d['done'] . ' من أصل ' . (int)$d['total'] : '📍 ' . $bn . ' · ' . (int)$d['done'] . ' of ' . (int)$d['total'] . ' confirmed')
+                    . ' · ' . ((int)($d['secs'] ?? 0) > 0 ? ($ar ? 'متبقٍّ ' . push_ar_mins(max(1, (int)ceil((int)$d['secs'] / 60))) : max(1, (int)ceil((int)$d['secs'] / 60)) . ' min left') : ($ar ? 'انتهى الوقت' : 'time is up'));
+            if (!empty($d['reason'])) $body[] = '📝 ' . $d['reason'];
+            $url = 'stock_check.php?lang=' . $lang . '&id=' . (int)($d['id'] ?? 0);
+            break;
+        case 'check_time_ans':
+            $m = (int)($d['minutes'] ?? 0);
+            $how = (string)($d['how'] ?? '');
+            if ($how === 'refused') {
+                $title = '✖ ' . ($ar ? 'رُفض طلب الوقت الإضافي للجرد' : 'The request for more time was refused');
+                $body[] = $ar ? 'أكمل الجرد في الوقت المحدد' : 'Finish the check in the time set';
+            } else {
+                $title = ($how === 'approved' ? '✅ ' : '⏳ ') . ($ar ? ($how === 'approved' ? 'تمت الموافقة على ' . push_ar_mins($m) . ' إضافية للجرد' : 'أضافت الإدارة ' . push_ar_mins($m) . ' لوقت الجرد')
+                                                                   : ($how === 'approved' ? $m . ' more minutes approved for the stock check' : 'Management added ' . $m . ' minutes to the stock check'));
+                $body[] = $ar ? '⏱️ ينتهي الوقت الآن الساعة ' . ($d['until'] ?? '') : '⏱️ It now ends at ' . ($d['until'] ?? '');
+            }
+            $url = 'stock_check.php?lang=' . $lang . '&id=' . (int)($d['id'] ?? 0);
+            break;
+        case 'check_case':
+            $bn = push_branch_label($pdo, (string)($d['branch'] ?? ''), $lang);
+            $found = ($d['kind'] ?? '') === 'found';
+            $title = ($found ? '✅ ' : '❗ ') . ($ar ? ($found ? 'وُجدت في إعادة الفحص: ' : 'ما زالت غير موجودة بعد إعادة الفحص: ') : ($found ? 'Found in the re-check: ' : 'Still missing after the re-check: ')) . ($d['label'] ?? '');
+            $body[] = (!empty($d['chassis']) ? '🔑 ' . $d['chassis'] . ' · ' : '') . '📍 ' . $bn . (!empty($d['by']) ? ' · 👤 ' . $d['by'] : '');
+            $body[] = $found ? ($ar ? 'أُغلقت المتابعة تلقائياً' : 'The follow-up was closed by itself') : ($ar ? 'القرار لك في صفحة الجرد: وُجدت / نُقلت / بيعت / مفقودة' : 'Decide on the stock check page: found / moved / sold / lost');
+            $url = 'stock_check.php?lang=' . $lang . '#cases';
+            break;
+        case 'check_pair':
+            $bn = push_branch_label($pdo, (string)($d['branch'] ?? ''), $lang);
+            $df = (int)($d['diff'] ?? 0);
+            $title = ($df ? '⚠️ ' : '👥 ') . ($ar ? 'الجرد المزدوج — فرع ' . $bn . ': ' . ($df ? 'اختلاف في ' . ($df === 2 ? 'سيارتين' : push_ar_cars($df)) : 'النتيجتان متطابقتان ✓') : 'Double check — ' . $bn . ': ' . ($df ? $df . ' cars differ' : 'both results match ✓'));
+            $body[] = '👤 ' . ($d['who'] ?? '');
+            foreach (array_slice((array)($d['lines'] ?? []), 0, 4) as $ln) $body[] = '• ' . $ln;
+            $url = 'stock_check.php?lang=' . $lang . '&id=' . (int)($d['id'] ?? 0);
             break;
         case 'user_locked':
         case 'lock_basma':
@@ -1117,7 +1181,7 @@ function notify_message(PDO $pdo, string $event, array $d, string $lang): array
         default:
             $title = $ev[2] . ' ' . ($ar ? $ev[0] : $ev[1]);
     }
-    $noBy = ['test', 'must_remind', 'must_edited', 'must_locked', 'must_answer', 'must_wrong', 'loc_ping', 'loc_result', 'weekly_card', 'login_new', 'check_plan', 'user_locked', 'check_tick', 'transfer_missing', 'transfer_resolved', 'check_start', 'check_warn', 'check_locked', 'check_done', 'transfer_received', 'duty_start', 'duty_warn', 'duty_locked', 'duty_done', 'duty_unlocked', 'sale_celebrate', 'last_car', 'reserve_old', 'stock_aged', 'transfer_unconfirmed',
+    $noBy = ['test', 'must_remind', 'must_edited', 'must_locked', 'must_answer', 'must_wrong', 'check_suspect', 'check_time_req', 'check_time_ans', 'check_case', 'check_pair', 'loc_ping', 'loc_result', 'weekly_card', 'login_new', 'check_plan', 'user_locked', 'check_tick', 'transfer_missing', 'transfer_resolved', 'check_start', 'check_warn', 'check_locked', 'check_done', 'transfer_received', 'duty_start', 'duty_warn', 'duty_locked', 'duty_done', 'duty_unlocked', 'sale_celebrate', 'last_car', 'reserve_old', 'stock_aged', 'transfer_unconfirmed',
              'amana_long', 'bank_waiting', 'clockout_forgot', 'login_failed', 'price_reserved'];
     if ($by !== '' && !in_array($event, $noBy, true) && strpos($event, 'att_') !== 0) $body[] = ($ar ? '✍️ بواسطة ' : '✍️ by ') . $by;
     return [
@@ -1227,7 +1291,7 @@ function notify_deliver(PDO $pdo, int $logId, string $event, array $msg, array $
 
     // same kind, not seen yet, in the last 15 minutes → one grouped notification
     $group = [];
-    if (!in_array($event, ['message', 'test', 'transfer_incoming', 'must_remind', 'must_edited', 'must_locked', 'loc_ping', 'loc_result', 'weekly_card', 'login_new', 'check_plan', 'check_item', 'check_start', 'check_tick', 'check_warn', 'check_locked', 'check_done', 'transfer_missing', 'user_locked', 'lock_basma', 'lock_reason', 'lock_countdown', 'duty_unlocked'], true)) {
+    if (!in_array($event, ['message', 'test', 'transfer_incoming', 'must_remind', 'must_edited', 'must_locked', 'check_suspect', 'check_time_req', 'check_time_ans', 'check_case', 'check_pair', 'loc_ping', 'loc_result', 'weekly_card', 'login_new', 'check_plan', 'check_item', 'check_start', 'check_tick', 'check_warn', 'check_locked', 'check_done', 'transfer_missing', 'user_locked', 'lock_basma', 'lock_reason', 'lock_countdown', 'duty_unlocked'], true)) {
         $in2 = implode(',', $withDev);
         $gs = $pdo->prepare("SELECT i.user_id, l.title FROM notify_inbox i JOIN notify_log l ON l.id = i.log_id
                              WHERE i.user_id IN ($in2) AND l.event = ? AND i.seen_at IS NULL AND l.created_at >= NOW() - INTERVAL 15 MINUTE
@@ -1251,6 +1315,10 @@ function notify_deliver(PDO $pdo, int $logId, string $event, array $msg, array $
                                                         else $acts['open'] = [$ar ? '🔑 تأكيد الاستلام' : '🔑 Confirm', $msg['url']];   // everyone else types the chassis on the page
                                                         $acts['miss'] = [$ar ? '❌ لم تصل' : '❌ Did not arrive', 'notify_act.php?a=miss&t=' . $t]; }
             if ($event === 'clockout_forgot')           $acts['open'] = [$ar ? '🔵 تسجيل الانصراف' : '🔵 Clock out', $msg['url']];
+            if ($event === 'check_time_req' && ($roleOf[$uid] ?? '') === 'admin') {   // more time for a stock check: answered from the phone
+                $acts['xtok'] = [$ar ? '✅ موافقة' : '✅ Approve', 'notify_act.php?a=xtok&t=' . $t];
+                $acts['xtno'] = [$ar ? '✖ رفض' : '✖ Refuse', 'notify_act.php?a=xtno&t=' . $t];
+            }
             if ($event === 'user_locked' && !empty($opts['ask_basma']) && ($roleOf[$uid] ?? '') === 'admin') {
                 $acts['bstop'] = [$ar ? '⏹ إيقاف البصمة' : '⏹ Stop clock-in', 'notify_act.php?a=bstop&t=' . $t];
                 $acts['bkeep'] = [$ar ? '▶ استمرار البصمة' : '▶ Keep it running', 'notify_act.php?a=bkeep&t=' . $t];

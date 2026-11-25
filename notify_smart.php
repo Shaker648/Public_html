@@ -20,7 +20,8 @@
  */
 require_once __DIR__ . '/push_helpers.php';
 require_once __DIR__ . '/chassis_gate.php';
-if (is_file(__DIR__ . '/check_auto.php')) require_once __DIR__ . '/check_auto.php';   // checks the system proposes and the admin approves; spot checks   // cars are confirmed by typing the chassis: it is never sent to the receiving branch
+if (is_file(__DIR__ . '/check_auto.php')) require_once __DIR__ . '/check_auto.php';
+if (is_file(__DIR__ . '/stock_check_extras.php')) require_once __DIR__ . '/stock_check_extras.php';   // location, speed, count questions, random photos, cases, double checks, more time   // checks the system proposes and the admin approves; spot checks   // cars are confirmed by typing the chassis: it is never sent to the receiving branch
 
 /* ════════════════════════ helpers ════════════════════════ */
 function smart_line(array $c): string
@@ -655,13 +656,18 @@ function smart_check_counts(PDO $pdo, int $checkId): array
  *
  *   $onlyCarIds  a spot check (with $spot), or a check of the cars the admin chose: just these cars
  *   $askColor    of those, the cars whose COLOUR is asked (picked from the colours list) instead of the chassis
+ *   $opt         'photos' => n cars that also need a photo, picked at random (a spot check: every car)
+ *                'questions' => [['kind' => 'color'|'brand', 'key' => …]] count questions besides the total
+ *                'group' => the first check of a double check · 'quiet' => do not tell the followers again
  * The counting step always asks for the whole branch (branch_total). Returns 0 when none of the cars is there.
  */
-function smart_check_create(PDO $pdo, string $branch, array $userIds, int $minutes, string $note, bool $lock, string $by, array $watchIds = [], array $onlyCarIds = [], bool $spot = false, array $askColor = []): int
+function smart_check_create(PDO $pdo, string $branch, array $userIds, int $minutes, string $note, bool $lock, string $by, array $watchIds = [], array $onlyCarIds = [], bool $spot = false, array $askColor = [], array $opt = []): int
 {
     push_tables($pdo);
     if (function_exists('check_auto_tables')) check_auto_tables($pdo);
     check_pick_cols($pdo);
+    $extras = function_exists('check_extra_tables');
+    if ($extras) check_extra_tables($pdo);
     $minutes = max($spot ? 3 : 5, min(1440, $minutes));
     $userIds = array_values(array_unique(array_filter(array_map('intval', $userIds))));
     $st = $pdo->prepare("SELECT id, brand, model, trim_name, car_year, color, chassis FROM cars WHERE branch = ? AND status IN ('available', 'reserved') ORDER BY brand, model, chassis");
@@ -692,12 +698,17 @@ function smart_check_create(PDO $pdo, string $branch, array $userIds, int $minut
         $label = trim($c['brand'] . ' ' . $c['model'] . ' ' . $c['trim_name'] . ' ' . $c['car_year']) . ($byColor ? '' : ' · ' . push_color_label($pdo, (string)$c['color'], $lang));
         $ii->execute([$id, (int)$c['id'], mb_substr($label, 0, 200), $c['chassis'], $byColor ? 'color' : 'chassis', mb_substr((string)$c['color'], 0, 100)]);
     }
+    if ($extras) {
+        check_photo_pick($pdo, $id, max(0, min(5, (int)($opt['photos'] ?? 0))), $spot);   // nobody is told which cars until they confirm them
+        if (!$spot && !empty($opt['questions'])) check_q_create($pdo, $id, $branch, (array)$opt['questions']);
+        if (!empty($opt['group'])) $pdo->prepare("UPDATE stock_checks SET group_id = ? WHERE id = ?")->execute([(int)$opt['group'], $id]);
+    }
     $names = smart_check_users($pdo, $id);
     $dur = $lang === 'ar' ? ($minutes % 60 === 0 ? ($minutes === 60 ? 'ساعة' : ($minutes === 120 ? 'ساعتان' : ($minutes / 60) . ' ساعات')) : push_ar_mins($minutes)) : $minutes . ' min';
     // the people doing it + the people the admin chose to follow it (the admin included, if chosen)
     notify_event($pdo, 'check_start', ['id' => $id, 'branch' => $branch, 'count' => count($cars), 'spot' => $spot, 'pick' => (bool)$pick, 'colors' => $nColor,
         'until' => smart_time_label(time() + $minutes * 60, $lang), 'dur' => $dur,
-        'users' => implode('، ', $names), 'note' => $note, 'lock' => $lock, 'only' => array_merge(array_values($names), smart_check_watchers($pdo, $id)),
+        'users' => implode('، ', $names), 'note' => $note, 'lock' => $lock, 'only' => array_merge(array_values($names), empty($opt['quiet']) ? smart_check_watchers($pdo, $id) : []),
         'actor' => $by, 'tag' => 'chk-' . $id, 'force' => true, 'now' => true]);
     return $id;
 }
@@ -749,9 +760,13 @@ function smart_check_finish(PDO $pdo, int $checkId, string $by): bool
     $ml = $pdo->prepare("SELECT label, chassis FROM stock_check_items WHERE check_id = ? AND state = 'missing'");
     $ml->execute([$checkId]);
     $w = smart_check_watchers($pdo, $checkId);
-    notify_event($pdo, 'check_done', ['id' => $checkId, 'branch' => $c['branch'], 'present' => $p, 'missing' => $x, 'extra' => $e, 'by' => $by,
+    // a case for every car not found (the admins decide; a re-check is proposed for the next day).
+    // What looked odd (speed, location) went to the admins alone while it happened — never in this message, which followers get too.
+    $cases = function_exists('check_cases_after_finish') ? check_cases_after_finish($pdo, $checkId) : 0;
+    notify_event($pdo, 'check_done', ['id' => $checkId, 'branch' => $c['branch'], 'present' => $p, 'missing' => $x, 'extra' => $e, 'by' => $by, 'cases' => $cases,
         'late' => $c['status'] === 'expired', 'missing_list' => array_map(fn($r) => $r['chassis'], $ml->fetchAll(PDO::FETCH_ASSOC)), 'actor' => $by, 'tag' => 'chk-' . $checkId, 'force' => true, 'now' => true]
         + ($w ? ['only' => $w] : []));
+    if (function_exists('check_pair_finished')) check_pair_finished($pdo, $checkId);   // a double check: the comparison once everyone is done
     smart_duty_scan($pdo);   // someone locked only because of this check → the admin is told
     return true;
 }

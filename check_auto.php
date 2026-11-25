@@ -11,6 +11,9 @@
  *   - A spot check: one random car of the branch, its chassis typed within a
  *     few minutes (same rules as the stock check: hidden number, two wrong
  *     numbers stop the system).
+ *   - A re-check ('recheck'): a car marked «غير موجودة» is checked again the next
+ *     day by someone else (stock_check_extras.php plans it). Proposed to the
+ *     admins the same way, even when the automatic proposals are off.
  *
  * Also the branch trust score shown to admins on the dashboard.
  * Needs notify_smart.php.
@@ -73,14 +76,14 @@ function check_auto_scan(PDO $pdo): array
         $r = check_auto_rules($pdo);
         // proposals nobody answered in two hours quietly expire
         $pdo->exec("UPDATE stock_check_plans SET status = 'expired' WHERE status = 'pending' AND asked_at < NOW() - INTERVAL 2 HOUR");
-        if (!$r['on']) return $log;
+        if (function_exists('check_extra_tables')) check_extra_tables($pdo);
         $now  = (int)strtotime((string)$pdo->query("SELECT NOW()")->fetchColumn());
         $week = date('o-W', $now);
 
-        /* 1 — plan this week once: random days and times from now to the end of the week */
-        $has = $pdo->prepare("SELECT COUNT(*) FROM stock_check_plans WHERE week_key = ?");
+        /* 1 — plan this week once: random days and times from now to the end of the week (re-checks are planned on their own) */
+        $has = $pdo->prepare("SELECT COUNT(*) FROM stock_check_plans WHERE week_key = ? AND kind IN ('full', 'spot', 'ping')");
         $has->execute([$week]);
-        if (!(int)$has->fetchColumn()) {
+        if ($r['on'] && !(int)$has->fetchColumn()) {
             $ins = $pdo->prepare("INSERT INTO stock_check_plans (kind, branch, week_key, due_at) VALUES (?, ?, ?, ?)");
             $end = strtotime('next monday', $now);                       // ISO weeks end on Sunday night
             $span = max(1, (int)floor(($end - $now) / 86400));
@@ -97,16 +100,22 @@ function check_auto_scan(PDO $pdo): array
             $log[] = 'check_auto planned ' . $week;
         }
 
-        /* 2 — a plan whose time has come: pick someone who is at the branch now and ask the admins */
-        $due = $pdo->query("SELECT * FROM stock_check_plans WHERE status = 'planned' AND due_at <= NOW() ORDER BY due_at LIMIT 6")->fetchAll(PDO::FETCH_ASSOC);
+        /* 2 — a plan whose time has come: pick someone who is at the branch now and ask the admins (with the proposals off: re-checks only) */
+        $due = $pdo->query("SELECT * FROM stock_check_plans WHERE status = 'planned' AND due_at <= NOW()" . ($r['on'] ? '' : " AND kind = 'recheck'") . " ORDER BY due_at LIMIT 6")->fetchAll(PDO::FETCH_ASSOC);
         $h = (int)date('G', $now);
         foreach ($due as $p) {
             $id = (int)$p['id'];
-            if ($p['week_key'] !== $week) { $pdo->prepare("UPDATE stock_check_plans SET status = 'expired' WHERE id = ?")->execute([$id]); continue; }
+            if ($p['kind'] !== 'recheck' && $p['week_key'] !== $week) { $pdo->prepare("UPDATE stock_check_plans SET status = 'expired' WHERE id = ?")->execute([$id]); continue; }
+            if ($p['kind'] === 'recheck') {   // the car must still be at that branch, and its case still open
+                $ok = $pdo->prepare("SELECT 1 FROM cars c JOIN check_cases k ON k.car_id = c.id WHERE c.id = ? AND k.id = ? AND k.status = 'open' AND c.branch = ? AND c.status IN ('available', 'reserved')");
+                $ok->execute([(int)$p['car_id'], (int)$p['case_id'], (string)$p['branch']]);
+                if (!$ok->fetchColumn()) { $pdo->prepare("UPDATE stock_check_plans SET status = 'skipped' WHERE id = ?")->execute([$id]); continue; }
+            }
             $later = fn() => $pdo->prepare("UPDATE stock_check_plans SET due_at = NOW() + INTERVAL ? MINUTE WHERE id = ?")->execute([random_int(45, 180), $id]);
             if ($h < $r['from'] || $h >= $r['to']) { $later(); continue; }
             // someone there who is free: not an admin, not stopped, not already doing a check
             $here = transfer_clocked_in($pdo, (string)$p['branch']);
+            if (!empty($p['avoid_user'])) unset($here[(int)$p['avoid_user']]);   // a re-check is done by someone else
             foreach (array_keys($here) as $uid) {
                 $st = $pdo->prepare("SELECT (SELECT role FROM users WHERE id = ?) = 'admin' OR EXISTS (SELECT 1 FROM user_locks WHERE user_id = ? AND unlocked_at IS NULL)
                                          OR EXISTS (SELECT 1 FROM stock_check_users s JOIN stock_checks c ON c.id = s.check_id WHERE s.user_id = ? AND c.status IN ('active', 'expired'))");
@@ -119,7 +128,9 @@ function check_auto_scan(PDO $pdo): array
             $uid = array_rand($here);
             $pdo->prepare("UPDATE stock_check_plans SET status = 'pending', user_id = ?, asked_at = NOW() WHERE id = ? AND status = 'planned'")->execute([$uid, $id]);
             $admins = array_map('strval', $pdo->query("SELECT username FROM users WHERE active = 1 AND role = 'admin'")->fetchAll(PDO::FETCH_COLUMN));
-            if ($admins) notify_event($pdo, 'check_plan', ['kind' => $p['kind'], 'branch' => $p['branch'], 'user' => $here[$uid], 'only' => $admins,
+            $carLbl = '';
+            if ($p['kind'] === 'recheck') { $cl = $pdo->prepare("SELECT label FROM check_cases WHERE id = ?"); $cl->execute([(int)$p['case_id']]); $carLbl = (string)$cl->fetchColumn(); }
+            if ($admins) notify_event($pdo, 'check_plan', ['kind' => $p['kind'], 'branch' => $p['branch'], 'user' => $here[$uid], 'car' => $carLbl, 'only' => $admins,
                 'actor' => '', 'tag' => 'check-plan-' . $id, 'force' => true, 'now' => true]);
             $log[] = 'check_plan ' . $p['kind'] . ' ' . $p['branch'];
         }
@@ -132,6 +143,12 @@ function check_auto_pending(PDO $pdo): array
 {
     try {
         check_auto_tables($pdo);
+        if (function_exists('check_extra_tables')) {
+            check_extra_tables($pdo);
+            return $pdo->query("SELECT p.*, u.username, TIMESTAMPDIFF(MINUTE, p.asked_at, NOW()) AS mins, k.label AS car_label, k.chassis AS car_chassis
+                                FROM stock_check_plans p LEFT JOIN users u ON u.id = p.user_id LEFT JOIN check_cases k ON k.id = p.case_id
+                                WHERE p.status = 'pending' ORDER BY p.asked_at")->fetchAll(PDO::FETCH_ASSOC);
+        }
         return $pdo->query("SELECT p.*, u.username, TIMESTAMPDIFF(MINUTE, p.asked_at, NOW()) AS mins FROM stock_check_plans p LEFT JOIN users u ON u.id = p.user_id
                             WHERE p.status = 'pending' ORDER BY p.asked_at")->fetchAll(PDO::FETCH_ASSOC);
     } catch (Throwable $e) { return []; }
@@ -168,6 +185,11 @@ function check_auto_decide(PDO $pdo, int $planId, bool $send, string $by, int $m
     $p = $st->fetch(PDO::FETCH_ASSOC);
     if (!$p) return 0;
     $cid = 0;
+    if ($p['kind'] === 'recheck') {   // a car not found last time, checked again by someone else
+        $cid = $send && function_exists('check_case_recheck_now') ? check_case_recheck_now($pdo, (int)$p['case_id'], (int)$p['user_id'], $minutes ?: 5, $by) : 0;
+        $pdo->prepare("UPDATE stock_check_plans SET status = ?, decided_by = ?, decided_at = NOW(), check_id = ? WHERE id = ?")->execute([$cid ? 'sent' : 'skipped', $by, $cid ?: null, $planId]);
+        return $cid;
+    }
     if ($send && $p['kind'] === 'ping') {
         $ok = loc_ping_create($pdo, (int)$p['user_id'], $by);
         $pdo->prepare("UPDATE stock_check_plans SET status = ?, decided_by = ?, decided_at = NOW() WHERE id = ?")->execute([$ok ? 'sent' : 'skipped', $by, $planId]);
