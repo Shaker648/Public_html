@@ -11,8 +11,9 @@
  *                  and the admin chooses: «كم سيارة لونها أبيض؟» «كم سيارة Toyota؟» — checked the same way.
  *   📷 photos      only when the admin asks for it, and of what the admin chooses: the chassis plate, the
  *                  car itself, or both (photo_req bits: 1 chassis · 2 car). A few cars picked at random,
- *                  unannounced (the person learns it only after confirming that car); a spot check: its
- *                  one car. Taken with the camera inside the page — never from the gallery.
+ *                  or — «سيارات أختارها» — the very cars the admin marks; unannounced either way (the person
+ *                  learns it only after confirming that car); a spot check: its one car. Taken with the
+ *                  camera inside the page — never from the gallery.
  *   🔎 cases       every car marked «غير موجودة» opens a case the admins close (found / moved / sold /
  *                  lost); the next day the system proposes a re-check of that car by someone else.
  *   👥 pairs       a double check: each person does the same check alone; the admins see every difference.
@@ -391,6 +392,19 @@ function check_photo_pick(PDO $pdo, int $checkId, int $n, bool $all = false, int
     for ($i = count($ids) - 1; $i > 0; $i--) { $j = random_int(0, $i); [$ids[$i], $ids[$j]] = [$ids[$j], $ids[$i]]; }
     $ids = array_slice($ids, 0, $n);
     if ($ids) $pdo->exec("UPDATE stock_check_items SET photo_req = " . $kind . " WHERE id IN (" . implode(',', $ids) . ")");
+}
+
+/**
+ * The cars the admin chose to be photographed, each with what to photograph ([car id => check_photo_kind]) —
+ * «سيارات أختارها». Like the random ones, the person learns it only after confirming that car.
+ */
+function check_photo_set(PDO $pdo, int $checkId, array $kindByCar): void
+{
+    $st = $pdo->prepare("UPDATE stock_check_items SET photo_req = ? WHERE check_id = ? AND car_id = ?");
+    foreach ($kindByCar as $car => $kind) {
+        $k = check_photo_kind($kind);
+        if ($k && (int)$car > 0) $st->execute([$k, $checkId, (int)$car]);
+    }
 }
 
 /* ════════════════════════ 🔎 cars not found: a case for the admins + a re-check ════════════════════════ */
