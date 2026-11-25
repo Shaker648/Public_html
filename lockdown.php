@@ -96,16 +96,18 @@ $history = $pdo->query("SELECT l.*, u.username FROM user_locks l JOIN users u ON
 
 $kindLbl = $ar ? ['manual' => '✋ يدوي', 'check' => '📋 جرد مفاجئ', 'transfer' => '🚚 استلام', 'chassis' => '🔑 إدخال غير صحيح'] : ['manual' => '✋ Manual', 'check' => '📋 Stock check', 'transfer' => '🚚 Receiving', 'chassis' => '🔑 Wrong entry'];
 /* admins only: what was typed against the real chassis number */
-$ctxLbl = $ar ? ['receive' => '🚚 استلام', 'check' => '📋 جرد', 'count' => '🔢 عدد السيارات'] : ['receive' => '🚚 Receiving', 'check' => '📋 Stock check', 'count' => '🔢 Car count'];
-$chTries = function (array $rows) use ($ar, $ctxLbl, $pdo, $lang) {
+$ctxLbl = $ar ? ['receive' => '🚚 استلام', 'check' => '📋 جرد', 'count' => '🔢 عدد السيارات', 'color' => '🎨 لون السيارة — جرد'] : ['receive' => '🚚 Receiving', 'check' => '📋 Stock check', 'count' => '🔢 Car count', 'color' => '🎨 Car colour — stock check'];
+/* a colour is kept as stored on the car ('White'): shown in the page's language */
+$triedTxt = fn(array $t, string $k) => $t['ctx'] === 'color' ? push_color_label($pdo, (string)$t[$k], $lang) : (string)$t[$k];
+$chTries = function (array $rows) use ($ar, $ctxLbl, $pdo, $lang, $triedTxt) {
     if (!$rows) return '';
     $h = '<div class="ld-ch"><div class="ld-ch-t">🔑 ' . ($ar ? 'ما أدخله مقابل الصحيح (يظهر للإدارة فقط)' : 'What was typed against the right answer (admins only)') . '</div>';
     foreach ($rows as $t) {
-        $h .= '<div class="ld-ch-r' . ((int)$t['ok'] ? ' ok' : '') . '"><div class="c">' . ($t['ctx'] === 'count' ? '🔢 ' : '🚗 ') . htmlspecialchars((string)$t['label']) . ' <small>' . htmlspecialchars(($ctxLbl[$t['ctx']] ?? $t['ctx'])
+        $h .= '<div class="ld-ch-r' . ((int)$t['ok'] ? ' ok' : '') . '"><div class="c">' . ($t['ctx'] === 'count' ? '🔢 ' : ($t['ctx'] === 'color' ? '🎨 ' : '🚗 ')) . htmlspecialchars((string)$t['label']) . ' <small>' . htmlspecialchars(($ctxLbl[$t['ctx']] ?? $t['ctx'])
             . ((string)$t['place'] !== '' ? ' · 📍 ' . push_branch_label($pdo, (string)$t['place'], $lang) : '') . ' · ' . date('Y-m-d', strtotime($t['created_at'])) . ' ' . smart_time_label(strtotime($t['created_at']), $lang)
             . (isset($t['username']) ? ' · 👤 ' . $t['username'] : '')) . '</small></div>'
-            . '<div class="v"><span>' . ($ar ? 'أدخل' : 'Typed') . '</span><b class="bad">' . htmlspecialchars((string)$t['typed']) . '</b></div>'
-            . '<div class="v"><span>' . ($ar ? 'الحقيقي' : 'Real') . '</span><b class="good">' . htmlspecialchars((string)$t['real_chassis']) . '</b></div></div>';
+            . '<div class="v"><span>' . ($t['ctx'] === 'color' ? ($ar ? 'اختار' : 'Picked') : ($ar ? 'أدخل' : 'Typed')) . '</span><b class="bad' . ($t['ctx'] === 'color' ? ' tx' : '') . '">' . htmlspecialchars($triedTxt($t, 'typed')) . '</b></div>'
+            . '<div class="v"><span>' . ($ar ? 'الحقيقي' : 'Real') . '</span><b class="good' . ($t['ctx'] === 'color' ? ' tx' : '') . '">' . htmlspecialchars($triedTxt($t, 'real_chassis')) . '</b></div></div>';
     }
     return $h . '</div>';
 };
@@ -120,9 +122,10 @@ if ($isAdmin) {
         fn($r) => ['t' => $r['t'], 'u' => $r['username'], 'k' => 'stop', 'ic' => '⛔', 'x' => ($ar ? 'إيقاف النظام: ' : 'System stopped: ') . trim(strstr($kindLbl[$r['kind']] ?? $r['kind'], ' ')), 'd' => (string)$r['reason']]);
     try { chassis_tables($pdo); } catch (Throwable $e) {}
     $bx("SELECT created_at AS t, username, ctx, label, place, typed, real_chassis FROM chassis_tries WHERE ok = 0 AND created_at >= NOW() - INTERVAL 30 DAY",
-        fn($r) => ['t' => $r['t'], 'u' => $r['username'], 'k' => 'wrong', 'ic' => $r['ctx'] === 'count' ? '🔢' : '🔑',
-                   'x' => $r['ctx'] === 'count' ? ($ar ? 'عدد سيارات غير صحيح' : 'Wrong car count') : ($ar ? 'رقم شاسيه غير صحيح' : 'Wrong chassis number'),
-                   'd' => ($ar ? 'أدخل ' : 'typed ') . $r['typed'] . ($ar ? ' — الصحيح ' : ' — right ') . $r['real_chassis'] . ($r['ctx'] === 'count' ? '' : ' · ' . $r['label']) . ((string)$r['place'] !== '' ? ' · 📍 ' . $brb($r['place']) : '')]);
+        fn($r) => ['t' => $r['t'], 'u' => $r['username'], 'k' => 'wrong', 'ic' => $r['ctx'] === 'count' ? '🔢' : ($r['ctx'] === 'color' ? '🎨' : '🔑'),
+                   'x' => $r['ctx'] === 'count' ? ($ar ? 'عدد سيارات غير صحيح' : 'Wrong car count') : ($r['ctx'] === 'color' ? ($ar ? 'لون سيارة غير صحيح' : 'Wrong car colour') : ($ar ? 'رقم شاسيه غير صحيح' : 'Wrong chassis number')),
+                   'd' => ($r['ctx'] === 'color' ? ($ar ? 'اختار ' : 'picked ') : ($ar ? 'أدخل ' : 'typed ')) . $triedTxt($r, 'typed') . ($ar ? ' — الصحيح ' : ' — right ') . $triedTxt($r, 'real_chassis')
+                        . ($r['ctx'] === 'count' ? '' : ' · ' . $r['label']) . ((string)$r['place'] !== '' ? ' · 📍 ' . $brb($r['place']) : '')]);
     $bx("SELECT a.clock_in AS t, u.username, a.branch_name, a.in_dist_m FROM attendance_logs a JOIN users u ON u.id = a.user_id WHERE a.clock_in >= NOW() - INTERVAL 30 DAY AND a.in_dist_m > " . (int)$fence,
         fn($r) => ['t' => $r['t'], 'u' => $r['username'], 'k' => 'far', 'ic' => '📍', 'x' => $ar ? 'تسجيل حضور من مكان بعيد عن الفرع' : 'Clocked in far from the branch',
                    'd' => $brb($r['branch_name']) . ' · ' . ((int)$r['in_dist_m'] < 1000 ? (int)$r['in_dist_m'] . ($ar ? ' م' : ' m') : round((int)$r['in_dist_m'] / 1000, 1) . ($ar ? ' كم' : ' km'))]);
@@ -241,6 +244,7 @@ window.addEventListener('error', function (e) {
 .ld-ch-r .v{display:flex;flex-direction:column;gap:2px;min-width:110px}.ld-ch-r .v span{font-size:10.5px;color:#94a3b8;font-weight:800}
 .ld-ch-r .v b{font-family:Inter,monospace;font-size:16px;letter-spacing:1px;direction:ltr;text-align:start}
 .ld-ch-r .v b.bad{color:#fca5a5}.ld-ch-r .v b.good{color:#a3e635}
+.ld-ch-r .v b.tx{font-family:inherit;letter-spacing:0;unicode-bidi:plaintext}
 .ld-cdm{flex-basis:100%;padding:8px 12px;border-radius:12px;background:rgba(250,204,21,.07);border:1px dashed rgba(250,204,21,.4);color:#fde68a;font-size:13px;font-weight:800;line-height:1.7}
 .ld-cd b{font-family:Inter,monospace;font-size:14px}
 .ld-cdp{display:none;margin-top:10px;padding:12px;border-radius:14px;border:1px solid rgba(250,204,21,.4);background:rgba(250,204,21,.06)}

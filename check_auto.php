@@ -224,7 +224,7 @@ function branch_trust_label(string $key, int $n, string $lang): string
     $ar = $lang === 'ar';
     $t = [
         'late'    => $ar ? 'تأكيد استلام بعد انتهاء المهلة' : 'receipts confirmed late',
-        'wrong'   => $ar ? 'إدخال غير صحيح (شاسيه أو عدد)' : 'wrong entries (chassis or count)',
+        'wrong'   => $ar ? 'إدخال غير صحيح (شاسيه أو عدد أو لون)' : 'wrong entries (chassis, count or colour)',
         'stopped' => $ar ? 'إيقاف بسبب إدخال غير صحيح' : 'stops for wrong entries',
         'missing' => $ar ? 'سيارة غير موجودة في الجرد' : 'cars missing in a check',
         'overdue' => $ar ? 'جرد لم يكتمل في وقته' : 'checks not finished in time',

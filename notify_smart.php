@@ -652,33 +652,51 @@ function smart_check_counts(PDO $pdo, int $checkId): array
 /**
  * Start a surprise check: the cars in the branch right now are the list;
  * the people chosen get it at once (phone + in the system) with the deadline.
+ *
+ *   $onlyCarIds  a spot check (with $spot), or a check of the cars the admin chose: just these cars
+ *   $askColor    of those, the cars whose COLOUR is asked (picked from the colours list) instead of the chassis
+ * The counting step always asks for the whole branch (branch_total). Returns 0 when none of the cars is there.
  */
-function smart_check_create(PDO $pdo, string $branch, array $userIds, int $minutes, string $note, bool $lock, string $by, array $watchIds = [], array $onlyCarIds = [], bool $spot = false): int
+function smart_check_create(PDO $pdo, string $branch, array $userIds, int $minutes, string $note, bool $lock, string $by, array $watchIds = [], array $onlyCarIds = [], bool $spot = false, array $askColor = []): int
 {
     push_tables($pdo);
     if (function_exists('check_auto_tables')) check_auto_tables($pdo);
+    check_pick_cols($pdo);
     $minutes = max($spot ? 3 : 5, min(1440, $minutes));
     $userIds = array_values(array_unique(array_filter(array_map('intval', $userIds))));
     $st = $pdo->prepare("SELECT id, brand, model, trim_name, car_year, color, chassis FROM cars WHERE branch = ? AND status IN ('available', 'reserved') ORDER BY brand, model, chassis");
     $st->execute([$branch]);
     $cars = $st->fetchAll(PDO::FETCH_ASSOC);
-    if ($onlyCarIds) $cars = array_values(array_filter($cars, fn($c) => in_array((int)$c['id'], array_map('intval', $onlyCarIds), true)));   // a spot check: just these cars
+    $branchTotal = count($cars);
+    $pick = !$spot && $onlyCarIds;
+    if ($onlyCarIds) {
+        $cars = array_values(array_filter($cars, fn($c) => in_array((int)$c['id'], array_map('intval', $onlyCarIds), true)));
+        if (!$cars) return 0;
+    }
+    $askColor = $pick ? array_map('intval', $askColor) : [];
     $watchIds = array_values(array_unique(array_filter(array_map('intval', $watchIds))));
     $pdo->prepare("INSERT INTO stock_checks (branch, note, minutes, lock_on, created_by, created_at, deadline, watchers) VALUES (?, ?, ?, ?, ?, NOW(), NOW() + INTERVAL ? MINUTE, ?)")
         ->execute([$branch, mb_substr($note, 0, 250), $minutes, $lock ? 1 : 0, $by, $minutes, json_encode($watchIds)]);
     $id = (int)$pdo->lastInsertId();
     if ($spot) { try { $pdo->prepare("UPDATE stock_checks SET spot = 1 WHERE id = ?")->execute([$id]); } catch (Throwable $e) {} }
+    $pdo->prepare("UPDATE stock_checks SET mode = ?, branch_total = ? WHERE id = ?")->execute([$pick ? 'pick' : 'all', $branchTotal, $id]);
     $iu = $pdo->prepare("INSERT IGNORE INTO stock_check_users (check_id, user_id) VALUES (?, ?)");
     foreach ($userIds as $u) $iu->execute([$id, $u]);
     $lang = notify_options($pdo)['lang'];
-    $ii = $pdo->prepare("INSERT INTO stock_check_items (check_id, car_id, label, chassis) VALUES (?, ?, ?, ?)");
+    $ii = $pdo->prepare("INSERT INTO stock_check_items (check_id, car_id, label, chassis, ask, color) VALUES (?, ?, ?, ?, ?, ?)");
+    $nColor = 0;
     foreach ($cars as $c) {
-        $ii->execute([$id, (int)$c['id'], mb_substr(trim($c['brand'] . ' ' . $c['model'] . ' ' . $c['trim_name'] . ' ' . $c['car_year'] . ' · ' . push_color_label($pdo, (string)$c['color'], $lang)), 0, 200), $c['chassis']]);
+        $byColor = in_array((int)$c['id'], $askColor, true);
+        $nColor += $byColor ? 1 : 0;
+        // a car asked by its colour is listed without it: the colour is the question
+        $label = trim($c['brand'] . ' ' . $c['model'] . ' ' . $c['trim_name'] . ' ' . $c['car_year']) . ($byColor ? '' : ' · ' . push_color_label($pdo, (string)$c['color'], $lang));
+        $ii->execute([$id, (int)$c['id'], mb_substr($label, 0, 200), $c['chassis'], $byColor ? 'color' : 'chassis', mb_substr((string)$c['color'], 0, 100)]);
     }
     $names = smart_check_users($pdo, $id);
     $dur = $lang === 'ar' ? ($minutes % 60 === 0 ? ($minutes === 60 ? 'ساعة' : ($minutes === 120 ? 'ساعتان' : ($minutes / 60) . ' ساعات')) : push_ar_mins($minutes)) : $minutes . ' min';
     // the people doing it + the people the admin chose to follow it (the admin included, if chosen)
-    notify_event($pdo, 'check_start', ['id' => $id, 'branch' => $branch, 'count' => count($cars), 'spot' => $spot, 'until' => smart_time_label(time() + $minutes * 60, $lang), 'dur' => $dur,
+    notify_event($pdo, 'check_start', ['id' => $id, 'branch' => $branch, 'count' => count($cars), 'spot' => $spot, 'pick' => (bool)$pick, 'colors' => $nColor,
+        'until' => smart_time_label(time() + $minutes * 60, $lang), 'dur' => $dur,
         'users' => implode('، ', $names), 'note' => $note, 'lock' => $lock, 'only' => array_merge(array_values($names), smart_check_watchers($pdo, $id)),
         'actor' => $by, 'tag' => 'chk-' . $id, 'force' => true, 'now' => true]);
     return $id;
