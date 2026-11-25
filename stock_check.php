@@ -69,9 +69,9 @@ function sc_photo_col(PDO $pdo): void
     try { $pdo->query("SELECT photo FROM stock_check_items LIMIT 1"); }
     catch (Throwable $e) { try { $pdo->exec("ALTER TABLE stock_check_items ADD photo VARCHAR(80) NULL, ADD photo_at DATETIME NULL"); } catch (Throwable $e2) {} }
 }
-if (isset($_GET['photo'])) {            // show one photo
+if (isset($_GET['photo'])) {            // show one photo: the chassis plate, or the car itself (&k=car)
     sc_photo_col($pdo);
-    $st = $pdo->prepare("SELECT photo FROM stock_check_items WHERE id = ?"); $st->execute([(int)$_GET['photo']]);
+    $st = $pdo->prepare("SELECT " . (($_GET['k'] ?? '') === 'car' ? 'car_photo' : 'photo') . " FROM stock_check_items WHERE id = ?"); $st->execute([(int)$_GET['photo']]);
     $f = (string)$st->fetchColumn();
     if (!$isBoss || !preg_match('/^[a-f0-9]{32}\.jpg$/', $f) || !is_file(sc_photo_dir() . '/' . $f)) { http_response_code(404); exit('Not found'); }
     header('Content-Type: image/jpeg'); header('Cache-Control: private, max-age=3600'); header('X-Content-Type-Options: nosniff');
@@ -87,9 +87,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['photo'])) {   // tak
     sc_photo_col($pdo);
     // taken with the camera inside the page (never a file from the phone's gallery: an older page that still offers one is refused)
     if (($_POST['src'] ?? '') !== 'camera') $fail('camera');
-    // only for a car the admin asked a photo of, that this person has already confirmed, in a check that is still running
-    $st = $pdo->prepare("SELECT i.id FROM stock_check_items i JOIN stock_checks c ON c.id = i.check_id WHERE i.id = ? AND i.check_id = ? AND i.state = 'present' AND i.photo_req = 1 AND c.status IN ('active', 'expired')");
-    $st->execute([$item, $cid]);
+    // which photo: the chassis plate (photo) or the car itself (car_photo) — only one the admin asked for, of a car this person already confirmed, in a running check
+    $isCar = ($_POST['kind'] ?? '') === 'car';
+    $col = $isCar ? 'car_photo' : 'photo';
+    $st = $pdo->prepare("SELECT i.id FROM stock_check_items i JOIN stock_checks c ON c.id = i.check_id WHERE i.id = ? AND i.check_id = ? AND i.state = 'present' AND (i.photo_req & ?) <> 0 AND c.status IN ('active', 'expired')");
+    $st->execute([$item, $cid, $isCar ? 2 : 1]);
     if (!$st->fetchColumn()) $fail('item');
     $up = $_FILES['photo'];
     if (($up['error'] ?? 1) !== UPLOAD_ERR_OK || ($up['size'] ?? 0) < 2000 || $up['size'] > 6 * 1024 * 1024) $fail('file');
@@ -97,9 +99,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['photo'])) {   // tak
     if (!$info || $info[2] !== IMAGETYPE_JPEG || $info[0] < 200 || $info[1] < 200) $fail('image');
     $name = bin2hex(random_bytes(16)) . '.jpg';
     if (!@move_uploaded_file($up['tmp_name'], sc_photo_dir() . '/' . $name)) $fail('save');
-    $old = $pdo->prepare("SELECT photo FROM stock_check_items WHERE id = ?"); $old->execute([$item]);
+    $old = $pdo->prepare("SELECT $col FROM stock_check_items WHERE id = ?"); $old->execute([$item]);
     $oldF = (string)$old->fetchColumn();
-    $pdo->prepare("UPDATE stock_check_items SET photo = ?, photo_at = NOW() WHERE id = ?")->execute([$name, $item]);
+    $pdo->prepare("UPDATE stock_check_items SET $col = ?, {$col}_at = NOW() WHERE id = ?")->execute([$name, $item]);
     if (preg_match('/^[a-f0-9]{32}\.jpg$/', $oldF)) @unlink(sc_photo_dir() . '/' . $oldF);
     echo json_encode(['ok' => true]); exit;
 }
@@ -125,7 +127,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     foreach ((array)($in['picks'] ?? []) as $pk) { $pc = (int)($pk['car'] ?? 0); if ($pc > 0) $picks[$pc] = ($pk['ask'] ?? '') === 'color' ? 'color' : 'chassis'; }
                     if (!$picks) { echo json_encode(['ok' => false, 'error' => 'nocars']); exit; }
                 }
-                $opt = ['photos' => max(0, min(3, (int)($in['photos'] ?? 0))), 'questions' => []];
+                $opt = ['photos' => max(0, min(3, (int)($in['photos'] ?? 0))), 'photo_kind' => check_photo_kind($in['photo_kind'] ?? 1) ?: 1, 'questions' => []];
                 foreach (array_slice((array)($in['questions'] ?? []), 0, 4) as $q) $opt['questions'][] = ['kind' => ($q['kind'] ?? '') === 'brand' ? 'brand' : 'color', 'key' => mb_substr((string)($q['key'] ?? ''), 0, 100)];
                 $users = array_values(array_unique(array_filter($users)));
                 $args = fn(array $who, array $o) => [$pdo, $branch, $who, (int)($in['minutes'] ?? 30), trim((string)($in['note'] ?? '')), !empty($in['lock']), $me, array_map('intval', (array)($in['watch'] ?? [])),
@@ -171,11 +173,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $branch = (string)($in['branch'] ?? ''); $who = (int)($in['user'] ?? 0);
                 $okB = $pdo->prepare("SELECT 1 FROM branches WHERE name = ?"); $okB->execute([$branch]);
                 if (!$okB->fetchColumn() || !$who) { echo json_encode(['ok' => false, 'error' => 'pick']); exit; }
-                $id = check_spot_create($pdo, $branch, $who, (int)($in['minutes'] ?? 5), $me, !empty($in['photo']));
+                $id = check_spot_create($pdo, $branch, $who, (int)($in['minutes'] ?? 5), $me, check_photo_kind($in['photo'] ?? 0));
                 echo json_encode($id ? ['ok' => true, 'id' => $id] : ['ok' => false, 'error' => 'nocar']); exit;
             case 'plan':     // the admin's answer to a check the system proposed
                 if (!$isAdmin) break;
-                $id = check_auto_decide($pdo, (int)($in['plan'] ?? 0), !empty($in['send']), $me, (int)($in['minutes'] ?? 0), !empty($in['photo']));
+                $id = check_auto_decide($pdo, (int)($in['plan'] ?? 0), !empty($in['send']), $me, (int)($in['minutes'] ?? 0), check_photo_kind($in['photo'] ?? 0));
                 echo json_encode(['ok' => true, 'id' => $id]); exit;
             case 'auto_rules':
                 if (!$isAdmin) break;
@@ -281,14 +283,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $ci = $pdo->prepare("SELECT car_id FROM stock_check_items WHERE id = ? AND check_id = ?"); $ci->execute([(int)($in['item'] ?? 0), $cid]);
                     car_seen($pdo, (int)$ci->fetchColumn(), $me, sc_is_spot($pdo, $cid) ? 'spot' : 'check');
                 }
-                $needPhoto = false;
+                $needPhoto = 0;
                 if ($loc && $state === 'present') {
                     $pdo->prepare("UPDATE stock_check_items SET lat = ?, lng = ?, acc = ?, dist_m = ?, loc_flag = ? WHERE id = ? AND check_id = ?")
                         ->execute([is_numeric($in['lat'] ?? null) ? (float)$in['lat'] : null, is_numeric($in['lng'] ?? null) ? (float)$in['lng'] : null, $loc['acc'], $loc['dist'], $loc['flag'], (int)($in['item'] ?? 0), $cid]);
                     check_after_confirm($pdo, $cid, $uid, $me, (string)$askRow['branch'], (string)$loc['flag']);   // ⚡ too fast / 📵 no location → the admins
-                    $pq = $pdo->prepare("SELECT photo_req = 1 AND photo IS NULL FROM stock_check_items WHERE id = ? AND check_id = ?");
+                    $pq = $pdo->prepare("SELECT IF((photo_req & 1) <> 0 AND photo IS NULL, 1, 0) + IF((photo_req & 2) <> 0 AND car_photo IS NULL, 2, 0) FROM stock_check_items WHERE id = ? AND check_id = ?");
                     $pq->execute([(int)($in['item'] ?? 0), $cid]);
-                    $needPhoto = (bool)$pq->fetchColumn();   // 📷 told only now, after the car was confirmed
+                    $needPhoto = (int)$pq->fetchColumn();   // 📷 told only now, after the car was confirmed: 1 chassis · 2 car · 3 both
                 }
                 $counts = smart_check_counts($pdo, $cid);
                 // the admin follows the check car by car (one notification per check on the phone, updated each time)
@@ -316,7 +318,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 if (!$isAdmin && !sc_is_spot($pdo, $cid) && !check_step1_done($pdo, $cid, $uid) && sc_access($pdo, $cid, $uid, false)) { echo json_encode(['ok' => false, 'error' => 'count_first']); exit; }
                 if (!$isAdmin) {   // a photo of the chassis plate: only the cars the admin asked one of
                     sc_photo_col($pdo);
-                    $np = $pdo->prepare("SELECT COUNT(*) FROM stock_check_items WHERE check_id = ? AND car_id > 0 AND state = 'present' AND photo IS NULL AND photo_req = 1");
+                    $np = $pdo->prepare("SELECT COUNT(*) FROM stock_check_items WHERE check_id = ? AND car_id > 0 AND state = 'present' AND (((photo_req & 1) <> 0 AND photo IS NULL) OR ((photo_req & 2) <> 0 AND car_photo IS NULL))");
                     $np->execute([$cid]);
                     if ((int)$np->fetchColumn()) { echo json_encode(['ok' => false, 'error' => 'photo']); exit; }
                 }
@@ -340,7 +342,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 echo json_encode(['ok' => check_case_decide($pdo, (int)($in['id'] ?? 0), (string)($in['how'] ?? ''), (string)($in['note'] ?? ''), $me)]); exit;
             case 'case_recheck': // 🔁 check that car again now, with someone else
                 if (!$isAdmin) break;
-                $nid = check_case_recheck_now($pdo, (int)($in['id'] ?? 0), (int)($in['user'] ?? 0), (int)($in['minutes'] ?? 5), $me, !empty($in['photo']));
+                $nid = check_case_recheck_now($pdo, (int)($in['id'] ?? 0), (int)($in['user'] ?? 0), (int)($in['minutes'] ?? 5), $me, check_photo_kind($in['photo'] ?? 0));
                 echo json_encode($nid ? ['ok' => true, 'id' => $nid] : ['ok' => false, 'error' => 'nocar']); exit;
             case 'cancel':
                 if (!$isBoss) break;
@@ -426,6 +428,15 @@ if ($check) {
         $pairCmp = $pairIds ? check_pair_compare($pdo, (int)$check['id']) : null;
     }
 }
+/* 📷 what to photograph, as the admin chooses it (photo_req bits: 1 the chassis plate · 2 the car itself · 3 both) */
+$phOpts = function (bool $none = true) use ($ar): string {
+    $o = ($none ? [0 => $ar ? '📷 بدون صورة' : '📷 No photo'] : [])
+       + [1 => $ar ? '📷 صورة رقم الشاسيه' : '📷 Chassis plate', 2 => $ar ? '🚗 صورة السيارة نفسها' : '🚗 The car itself', 3 => $ar ? '📷+🚗 الاثنين' : '📷+🚗 Both'];
+    $h = '';
+    foreach ($o as $v => $t) $h .= '<option value="' . $v . '">' . htmlspecialchars($t) . '</option>';
+    return $h;
+};
+$phNames = $ar ? [1 => 'رقم الشاسيه', 2 => 'السيارة', 3 => 'الشاسيه + السيارة'] : [1 => 'chassis plate', 2 => 'the car', 3 => 'chassis + car'];
 $ago = function ($s) use ($ar): string {
     $s = max(0, (int)$s);
     if ($s < 60) return $ar ? 'الآن' : 'just now';
@@ -508,8 +519,8 @@ $ago = function ($s) use ($ar): string {
 .sc-cn{font-style:normal;font-size:12px;font-weight:900;padding:3px 9px;border-radius:999px;background:rgba(255,255,255,.06);color:#cbd5e1}
 .sc-cn.ok{background:rgba(34,197,94,.15);color:#86efac}.sc-cn.bad{background:rgba(239,68,68,.16);color:#fca5a5}
 .sc-ph-a{display:inline-block;margin-top:4px;font-size:12.5px;font-weight:800;color:#7dd3fc;text-decoration:none}
-.sc-it .phb{width:100%;display:none}.sc-it.present .phb{display:block}
-.sc-it .phbtn{display:flex;align-items:center;justify-content:center;gap:8px;width:100%;height:50px;border-radius:13px;border:1.5px dashed rgba(56,189,248,.6);background:rgba(56,189,248,.08);color:#bae6fd;font:inherit;font-size:14.5px;font-weight:900;cursor:pointer}
+.sc-it .phb{width:100%;display:none;gap:8px}.sc-it.present .phb{display:grid}
+.sc-it .phbtn{display:flex;align-items:center;justify-content:center;gap:8px;width:100%;min-height:50px;padding:8px 12px;line-height:1.45;text-align:center;border-radius:13px;border:1.5px dashed rgba(56,189,248,.6);background:rgba(56,189,248,.08);color:#bae6fd;font:inherit;font-size:14.5px;font-weight:900;cursor:pointer}
 /* 📷 the camera inside the page (no file picker, no gallery) */
 .cam{position:fixed;inset:0;z-index:100;display:none;flex-direction:column;background:#000;color:#fff}
 .cam.on{display:flex}
@@ -522,6 +533,10 @@ $ago = function ($s) use ($ar): string {
 .cam-view [hidden]{display:none!important}
 .cam-frame{position:absolute;inset:0;display:grid;place-items:center;pointer-events:none}
 .cam-frame span{width:84%;height:24%;border:3px solid rgba(255,255,255,.9);border-radius:16px;box-shadow:0 0 0 9999px rgba(0,0,0,.38)}
+.cam.car .cam-frame span{width:92%;height:58%;border-radius:22px;box-shadow:0 0 0 9999px rgba(0,0,0,.25)}
+.sc-phrow{display:flex;flex-wrap:wrap;gap:8px}.sc-phrow select{flex:1;min-width:140px;max-width:none}
+.sc-phrow select:disabled{opacity:.45}
+.sc-phs{max-width:190px}
 .cam-msg{position:absolute;inset-inline:16px;bottom:16px;display:grid;gap:8px;padding:14px;border-radius:16px;background:rgba(15,23,42,.96);border:1px solid rgba(245,158,11,.5);color:#fde68a;font-size:13.5px;font-weight:700;line-height:1.8}
 .cam-msg b{display:block;color:#fff;font-size:15px}
 .cam-retry{justify-self:start;height:40px;padding:0 14px;border-radius:12px;border:0;background:#f59e0b;color:#1c1917;font:inherit;font-weight:900;cursor:pointer}
@@ -535,8 +550,8 @@ $ago = function ($s) use ($ar): string {
 .cam-again,.cam-use{height:54px;padding:0 20px;border-radius:16px;border:0;font:inherit;font-size:16px;font-weight:900;cursor:pointer}
 .cam-again{background:rgba(255,255,255,.16);color:#fff}.cam-use{flex:1;max-width:260px;background:linear-gradient(90deg,#16a34a,#0ea5e9);color:#fff}
 .sc-pp{display:inline-flex;align-items:center;gap:7px;font-size:12.5px;font-weight:800;color:var(--mut);cursor:pointer;white-space:nowrap}
-.sc-it .phb.done .phbtn{border-style:solid;border-color:rgba(34,197,94,.55);background:rgba(34,197,94,.1);color:#bbf7d0}
-.sc-it .phb.busy .phbtn{opacity:.6;pointer-events:none}
+.sc-it .phbtn.done{border-style:solid;border-color:rgba(34,197,94,.55);background:rgba(34,197,94,.1);color:#bbf7d0}
+.sc-it .phbtn.busy{opacity:.6;pointer-events:none}
 .sc-it .pherr{font-size:13px;font-weight:800;color:#fca5a5;margin-top:6px}.sc-it .pherr:empty{display:none}
 .sc-how{margin-bottom:14px;padding:12px 16px;border-radius:14px;background:rgba(163,230,53,.07);border:1px solid rgba(163,230,53,.35);color:#d9f99d;font-size:13.5px;font-weight:700;line-height:1.8}
 .sc-how b{display:block;color:#fff;font-size:14.5px}
@@ -732,7 +747,7 @@ $ago = function ($s) use ($ar): string {
                 <?php if ($rc && !empty($pl['car_label'])): ?><small>🚗 <?= htmlspecialchars((string)$pl['car_label']) ?> · 🔑 <?= htmlspecialchars((string)$pl['car_chassis']) ?></small><?php endif; ?>
                 <small>👤 <?= $ar ? 'المكلَّف المقترح: ' : 'Proposed for: ' ?><?= htmlspecialchars((string)$pl['username']) ?><?= $rc ? ($ar ? ' (غير من لم يجدها)' : ' (not the one who missed it)') : '' ?> · <?= $ar ? 'منذ ' . max(1, (int)$pl['mins']) . ' دقيقة' : max(1, (int)$pl['mins']) . ' min ago' ?></small></div>
             <select class="sc-in" data-pm<?= $pg ? ' hidden' : '' ?>><?php foreach ($sp || $rc ? [3, 5, 10, 15] : [15, 30, 45, 60, 90] as $mm): ?><option value="<?= $mm ?>"<?= $mm === ($sp || $rc ? 5 : 30) ? ' selected' : '' ?>><?= $mm ?> <?= $ar ? 'دقيقة' : 'min' ?></option><?php endforeach; ?></select>
-            <?php if (!$pg): ?><label class="sc-pp" title="<?= $ar ? 'تطلب صورة لرقم الشاسيه بكاميرا الهاتف' : 'Asks for a chassis-plate photo with the phone camera' ?>"><span class="tg"><input type="checkbox" data-pp><span></span></span> 📷 <?= $ar ? 'مع صورة' : 'with photo' ?></label><?php endif; ?>
+            <?php if (!$pg): ?><select class="sc-in sc-phs" data-pp title="<?= $ar ? 'صورة بكاميرا الهاتف: رقم الشاسيه أو السيارة أو الاثنين' : 'A phone-camera photo: the chassis plate, the car or both' ?>"><?= $phOpts() ?></select><?php endif; ?>
             <button type="button" class="nf-btn" data-plan="<?= (int)$pl['id'] ?>" data-send="1">🚨 <?= $ar ? 'إرسال الآن' : 'Send now' ?></button>
             <button type="button" class="nf-btn ghost" data-plan="<?= (int)$pl['id'] ?>" data-send="0">✖ <?= $ar ? 'تجاهل' : 'Skip' ?></button>
         </div>
@@ -764,7 +779,7 @@ $ago = function ($s) use ($ar): string {
             <input class="sc-in sc-case-note" maxlength="250" placeholder="<?= $ar ? 'ملاحظة مع القرار (اختياري)' : 'A note with the decision (optional)' ?>">
             <div class="sc-case-re">
                 <select class="sc-in" data-who><option value=""><?= $ar ? '— إعادة الفحص الآن مع… —' : '— re-check now with… —' ?></option><?php foreach ($people as $p3): if ($p3['role'] === 'admin') continue; ?><option value="<?= (int)$p3['id'] ?>"><?= htmlspecialchars($p3['username']) ?><?= ($here[(int)$p3['id']] ?? '') === $k['branch'] ? ($ar ? ' 🟢 في الفرع' : ' 🟢 at the branch') : '' ?></option><?php endforeach; ?></select>
-                <label class="sc-pp"><span class="tg"><input type="checkbox" data-cph><span></span></span> 📷 <?= $ar ? 'مع صورة' : 'with photo' ?></label>
+                <select class="sc-in sc-phs" data-cph><?= $phOpts() ?></select>
                 <button type="button" class="nf-btn" data-recheck>🔁 <?= $ar ? 'أعد فحصها الآن' : 'Re-check now' ?></button>
             </div>
             <div class="nf-msg" data-cmsg></div>
@@ -780,7 +795,7 @@ $ago = function ($s) use ($ar): string {
             <select class="sc-in" id="spBranch"><option value=""><?= $ar ? '— الفرع —' : '— branch —' ?></option><?php foreach ($branches as $b): if (!(int)$b['n']) continue; ?><option value="<?= htmlspecialchars($b['name']) ?>"><?= htmlspecialchars(($ar ? $b['name_ar'] : $b['name_en']) ?: $b['name']) ?> (<?= (int)$b['n'] ?>)</option><?php endforeach; ?></select>
             <select class="sc-in" id="spUser"><option value=""><?= $ar ? '— المكلَّف —' : '— who —' ?></option><?php foreach ($people as $p2): if ($p2['role'] === 'admin') continue; ?><option value="<?= (int)$p2['id'] ?>" data-here="<?= htmlspecialchars($here[(int)$p2['id']] ?? '') ?>"><?= htmlspecialchars($p2['username']) ?></option><?php endforeach; ?></select>
             <select class="sc-in" id="spMin"><?php foreach ([3, 5, 10, 15] as $mm): ?><option value="<?= $mm ?>"<?= $mm === 5 ? ' selected' : '' ?>><?= $mm ?> <?= $ar ? 'دقائق' : 'min' ?></option><?php endforeach; ?></select>
-            <label class="sc-pp"><span class="tg"><input type="checkbox" id="spPh"><span></span></span> 📷 <?= $ar ? 'مع صورة لرقم الشاسيه' : 'with a chassis-plate photo' ?></label>
+            <select class="sc-in sc-phs" id="spPh"><?= $phOpts() ?></select>
             <button type="button" class="nf-btn" id="spGo">⚡ <?= $ar ? 'إرسال الفحص' : 'Send' ?></button>
         </div>
         <div class="nf-msg" id="spMsg"></div>
@@ -858,10 +873,13 @@ $ago = function ($s) use ($ar): string {
             <small class="sc-hint"><?= $ar ? 'الرقم بجانب كل سؤال هو جواب النظام — يظهر لك أنت فقط. يجيب المكلَّف عن كل سؤال تختاره بعد العدد الكلي (حتى 4 أسئلة)، والعدد الخاطئ مرتين يوقف النظام.' : 'The number next to each question is the system\'s answer — shown to you only. They answer each question you choose after the total (up to 4); two wrong numbers stop the system.' ?></small>
         </div>
         <div class="sc-xo">
-            <label class="sc-xo-i"><span>📷 <?= $ar ? 'صور لرقم الشاسيه — أنت تختار' : 'Chassis-plate photos — your choice' ?></span>
-                <select class="sc-in" id="scPh"><?php foreach ([0, 1, 2, 3] as $n): ?><option value="<?= $n ?>"<?= $n === 0 ? ' selected' : '' ?>><?= $ar ? [0 => 'بدون صور', 1 => 'صورة لسيارة واحدة', 2 => 'صور لسيارتين', 3 => 'صور لـ 3 سيارات'][$n] : ($n ? $n . ' car' . ($n > 1 ? 's' : '') : 'no photos') ?></option><?php endforeach; ?></select>
-                <small><?= $ar ? 'بدون صور إلا إذا اخترت. عند الاختيار يحدد النظام السيارات عشوائياً، ولا يعرف المكلَّف أنها تحتاج صورة حتى يؤكدها، ويلتقطها بكاميرا الهاتف مباشرة — لا يمكنه اختيار صورة من المعرض.'
-                                : 'No photos unless you choose. Then the system picks the cars at random; they only learn a car needs a photo once they confirm it, and take it with the phone camera — never from the gallery.' ?></small></label>
+            <div class="sc-xo-i"><span>📷 <?= $ar ? 'صور بكاميرا الهاتف — أنت تختار' : 'Phone-camera photos — your choice' ?></span>
+                <span class="sc-phrow">
+                    <select class="sc-in" id="scPh"><?php foreach ([0, 1, 2, 3] as $n): ?><option value="<?= $n ?>"<?= $n === 0 ? ' selected' : '' ?>><?= $ar ? [0 => 'بدون صور', 1 => 'لسيارة واحدة', 2 => 'لسيارتين', 3 => 'لـ 3 سيارات'][$n] : ($n ? 'for ' . $n . ' car' . ($n > 1 ? 's' : '') : 'no photos') ?></option><?php endforeach; ?></select>
+                    <select class="sc-in" id="scPhK" disabled><?= $phOpts(false) ?></select>
+                </span>
+                <small><?= $ar ? 'بدون صور إلا إذا اخترت. اختر عدد السيارات، ثم ماذا يصوّر: رقم الشاسيه أو السيارة نفسها أو الاثنين (صورتان). يحدد النظام السيارات عشوائياً، ولا يعرف المكلَّف أنها تحتاج صورة حتى يؤكدها، ويلتقطها بكاميرا الهاتف مباشرة — لا يمكنه اختيار صورة من المعرض.'
+                                : 'No photos unless you choose. Pick how many cars, then what: the chassis plate, the car itself or both (two photos). The system picks the cars at random; they only learn a car needs a photo once they confirm it, and take it with the phone camera — never from the gallery.' ?></small></div>
             <label class="sc-xo-i sc-dbl" id="scDblL"><span class="sc-opt" style="margin:0"><span class="tg"><input type="checkbox" id="scDbl" disabled><span></span></span> 👥 <?= $ar ? 'جرد مزدوج' : 'Double check' ?></span>
                 <small id="scDblH"><?= $ar ? 'اختر شخصين أو أكثر: كل واحد يجرد وحده دون أن يرى عمل الآخر، ثم ترى كل اختلاف بينهما.' : 'Choose two people or more: each checks alone without seeing the other\'s work, then you see every difference.' ?></small></label>
         </div>
@@ -1033,19 +1051,23 @@ $ago = function ($s) use ($ar): string {
                 <?php if ($byColor && $open): ?><span class="sc-col<?= $it['state'] === 'present' ? ' ok' : '' ?>"><i style="background:<?= htmlspecialchars(car_color_hex((string)($it['answer'] ?: $it['color']))) ?>"></i><?= htmlspecialchars($colorTxt) ?><?= $it['state'] === 'present' ? ' ✓' : '' ?></span>
                 <?php elseif ($byColor): /* nothing about the colour in the page until they pick it */ ?><span class="sc-col" hidden><i></i></span><?php endif; ?>
                 <?php if (!empty($it['photo']) && $isBoss): ?><a class="sc-ph-a" href="?photo=<?= (int)$it['id'] ?>" target="_blank" rel="noopener">📷 <?= $ar ? 'صورة رقم الشاسيه' : 'Chassis plate photo' ?><?= !empty($it['photo_at']) ? ' · ' . htmlspecialchars(smart_time_label(strtotime($it['photo_at']), $lang)) : '' ?></a><?php endif; ?>
+                <?php if (!empty($it['car_photo']) && $isBoss): ?><a class="sc-ph-a" href="?photo=<?= (int)$it['id'] ?>&amp;k=car" target="_blank" rel="noopener">🚗 <?= $ar ? 'صورة السيارة' : 'Car photo' ?><?= !empty($it['car_photo_at']) ? ' · ' . htmlspecialchars(smart_time_label(strtotime($it['car_photo_at']), $lang)) : '' ?></a><?php endif; ?>
                 <?php if ($it['marked_by']): ?><div class="by">✍️ <?= htmlspecialchars($it['marked_by']) ?><?= $it['note'] ? ' · 📝 ' . htmlspecialchars($it['note']) : '' ?></div><?php endif; ?>
                 <?php if ($adminView): $lf = (string)($it['loc_flag'] ?? ''); $kc = $caseOf[(int)$it['id']] ?? null; ?><div class="sc-meta">
                     <?php if ($lf === 'ok'): ?><span class="ok">📍 <?= htmlspecialchars(check_m((int)$it['dist_m'], $lang)) ?></span>
                     <?php elseif ($lf === 'weak'): ?><span class="mid" title="<?= $ar ? 'دقة الموقع ضعيفة' : 'Vague location' ?>">📍 <?= htmlspecialchars(check_m((int)$it['dist_m'], $lang)) ?> ±<?= htmlspecialchars(check_m((int)$it['acc'], $lang)) ?></span>
                     <?php elseif ($lf === 'none'): ?><span class="bad">📵 <?= $ar ? 'بدون موقع' : 'no location' ?></span><?php endif; ?>
-                    <?php if ((int)($it['photo_req'] ?? 0)): ?><span class="ph">📷 <?= $isSpot ? ($ar ? 'صورة مطلوبة' : 'photo asked') : ($ar ? 'صورة عشوائية' : 'random photo') ?><?= !empty($it['photo']) ? ' ✓' : '' ?></span><?php endif; ?>
+                    <?php $pr = (int)($it['photo_req'] ?? 0); if ($pr): $phDone = (!($pr & 1) || !empty($it['photo'])) && (!($pr & 2) || !empty($it['car_photo'])); ?><span class="ph">📷 <?= ($isSpot ? ($ar ? 'صورة مطلوبة: ' : 'photo asked: ') : ($ar ? 'صورة عشوائية: ' : 'random photo: ')) . htmlspecialchars($phNames[$pr] ?? '') ?><?= $phDone ? ' ✓' : '' ?></span><?php endif; ?>
                     <?php if ($kc): ?><span class="case <?= htmlspecialchars((string)$kc['status']) ?>">🔎 <?= htmlspecialchars(($ar ? ['open' => 'تنتظر قرارك', 'found' => 'وُجدت', 'moved' => 'في فرع آخر', 'sold' => 'بيعت ولم تُسجَّل', 'lost' => 'مفقودة'] : ['open' => 'waiting for you', 'found' => 'found', 'moved' => 'at another branch', 'sold' => 'sold, not recorded', 'lost' => 'lost'])[$kc['status']] ?? $kc['status']) ?><?= $kc['decided_by'] ? ' · ' . htmlspecialchars((string)$kc['decided_by']) : '' ?></span><?php endif; ?>
                 </div><?php endif; ?></div>
             <?php if ($doMode): ?>
             <div class="bt"><button type="button" class="y<?= $it['state'] === 'present' ? ' on' : '' ?>">✅ <?= $ar ? 'موجودة' : 'Here' ?></button><button type="button" class="n<?= $it['state'] === 'missing' ? ' on' : '' ?>">❌ <?= $ar ? 'غير موجودة' : 'Missing' ?></button></div>
             <?php if (!$isAdmin && $byColor): ?><div class="cwb"></div>
             <?php elseif (!$isAdmin): ?><div class="chb"><input class="sc-in chin" autocapitalize="characters" autocomplete="off" autocorrect="off" spellcheck="false" maxlength="40" placeholder="<?= $ar ? 'اكتب رقم الشاسيه من السيارة' : 'Type the chassis from the car' ?>"><button type="button" class="chok">✅ <?= $ar ? 'تأكيد' : 'Confirm' ?></button><div class="cherr"></div></div><?php endif; ?>
-            <?php if (!$isAdmin && (int)($it['photo_req'] ?? 0) && ($isSpot || $it['state'] === 'present')): /* 📷 asked by the admin; a random one is shown only once the car is confirmed */ ?><div class="phb<?= !empty($it['photo']) ? ' done' : '' ?>"><button type="button" class="phbtn">📷 <span><?= !empty($it['photo']) ? ($ar ? 'تم إرسال الصورة ✓ — إعادة التصوير' : 'Photo sent ✓ — retake') : ($ar ? 'افتح الكاميرا والتقط صورة لرقم الشاسيه' : 'Open the camera and photograph the chassis plate') ?></span></button><div class="pherr"></div></div><?php endif; ?>
+            <?php $pr = (int)($it['photo_req'] ?? 0); if (!$isAdmin && $pr && ($isSpot || $it['state'] === 'present')): /* 📷 asked by the admin; a random one is shown only once the car is confirmed */ ?><div class="phb">
+                <?php if ($pr & 1): $dn = !empty($it['photo']); ?><button type="button" class="phbtn<?= $dn ? ' done' : '' ?>" data-k="chassis">📷 <span><?= $dn ? ($ar ? 'تم إرسال صورة الشاسيه ✓ — إعادة' : 'Chassis plate photo sent ✓ — retake') : ($ar ? 'التقط صورة لرقم الشاسيه' : 'Photograph the chassis plate') ?></span></button><?php endif; ?>
+                <?php if ($pr & 2): $dn = !empty($it['car_photo']); ?><button type="button" class="phbtn<?= $dn ? ' done' : '' ?>" data-k="car">🚗 <span><?= $dn ? ($ar ? 'تم إرسال صورة السيارة ✓ — إعادة' : 'Car photo sent ✓ — retake') : ($ar ? 'التقط صورة للسيارة كاملة' : 'Photograph the whole car') ?></span></button><?php endif; ?>
+                <div class="pherr"></div></div><?php endif; ?>
             <input class="sc-in nt" maxlength="200" placeholder="<?= $ar ? 'ملاحظة: أين هي؟ (اختياري)' : 'Note: where is it? (optional)' ?>" value="<?= htmlspecialchars((string)$it['note']) ?>">
             <?php else: ?>
             <span class="sc-st <?= $it['state'] === 'present' ? 'done' : ($it['state'] === 'missing' ? 'expired' : '') ?>"><?= $it['state'] === 'present' ? ($ar ? '✅ موجودة' : '✅ here') : ($it['state'] === 'missing' ? ($ar ? '❌ غير موجودة' : '❌ missing') : ($ar ? '⏳ لم تُراجع' : '⏳ not checked')) ?></span>
@@ -1132,6 +1154,7 @@ $ago = function ($s) use ($ar): string {
             $('scXq').querySelectorAll('.xq').forEach(b => { const q = suggest[+b.dataset.i], on = qs.has(q.kind + '|' + q.key);
                 b.classList.toggle('on', on); b.setAttribute('aria-pressed', on ? 'true' : 'false'); b.disabled = !on && qs.size >= 4; });
         }
+        $('scPh').addEventListener('change', () => { $('scPhK').disabled = !+$('scPh').value; });   // 📷 of what: only with photos
         /* 👥 a double check needs two people or more */
         const paintDbl = () => { const n = ppl.filter(p => p.classList.contains('on')).length; $('scDbl').disabled = n < 2; if (n < 2) $('scDbl').checked = false; $('scDblL').classList.toggle('off', n < 2); };
         ppl.forEach(p => p.addEventListener('click', () => setTimeout(paintDbl, 0)));   // after the person is (un)selected
@@ -1212,7 +1235,7 @@ $ago = function ($s) use ($ar): string {
             $('scGo').disabled = true;
             const r = await post({ action: 'create', branch, users, minutes: +$('scMin').value || 30, note: $('scNote').value, lock: $('scLock').checked,
                 watch: [...document.querySelectorAll('.sc-w.on')].map(w => +w.dataset.u), mode, picks: mode === 'pick' ? [...picks].map(([car, ask]) => ({ car, ask })) : [],
-                questions: [...qs.values()], photos: +$('scPh').value, double: $('scDbl').checked });
+                questions: [...qs.values()], photos: +$('scPh').value, photo_kind: +$('scPhK').value, double: $('scDbl').checked });
             if (r.ok) location.href = '?lang=<?= $lang ?>&id=' + r.id;
             else { $('scGo').disabled = false; m.className = 'nf-msg bad';
                 m.textContent = r.error === 'nocars' ? (AR ? 'اختر السيارات المطلوب تأكيدها' : 'Choose the cars to confirm') : r.error === 'gone' ? (AR ? 'السيارات المختارة لم تعد في هذا الفرع — حدّث الصفحة' : 'The chosen cars are no longer at this branch — reload') : '✗ ' + r.error; }
@@ -1225,7 +1248,7 @@ $ago = function ($s) use ($ar): string {
         if (send && !confirm(AR ? 'إرسال هذا الطلب الآن؟' : 'Send this now?')) return;
         row.querySelectorAll('button').forEach(x => x.disabled = true);
         const pp = row.querySelector('[data-pp]');
-        const r = await post({ action: 'plan', plan: +b.dataset.plan, send, minutes: +row.querySelector('[data-pm]').value, photo: !!(pp && pp.checked) });
+        const r = await post({ action: 'plan', plan: +b.dataset.plan, send, minutes: +row.querySelector('[data-pm]').value, photo: pp ? +pp.value : 0 });
         if (r.ok && r.id) location.href = '?lang=<?= $lang ?>&id=' + r.id; else location.reload();
     }));
     if ($('spGo')) {
@@ -1236,7 +1259,7 @@ $ago = function ($s) use ($ar): string {
             if (!sb.value || !su.value) { m.textContent = AR ? 'اختر الفرع والمكلَّف' : 'Pick the branch and the person'; m.className = 'nf-msg bad'; return; }
             if (!confirm(AR ? 'إرسال فحص سريع لسيارة واحدة الآن؟' : 'Send a one-car spot check now?')) return;
             $('spGo').disabled = true;
-            const r = await post({ action: 'spot', branch: sb.value, user: +su.value, minutes: +$('spMin').value, photo: $('spPh').checked });
+            const r = await post({ action: 'spot', branch: sb.value, user: +su.value, minutes: +$('spMin').value, photo: +$('spPh').value });
             if (r.ok) location.href = '?lang=<?= $lang ?>&id=' + r.id; else { $('spGo').disabled = false; m.textContent = r.error === 'nocar' ? (AR ? 'لا توجد سيارات في هذا الفرع' : 'No cars at this branch') : '✗ ' + r.error; m.className = 'nf-msg bad'; }
         });
     }
@@ -1394,15 +1417,22 @@ $ago = function ($s) use ($ar): string {
     const ME = <?= json_encode($me) ?>;
     const SKEW = <?= time() ?> * 1000 - Date.now(), CAIRO = <?= (int)date('Z') ?> * 1000;   // the stamp uses the server's clock and Cairo time, never the phone's
     const cam = (() => {
-        let el = null, stream = null, onUse = null, shot = null, lbl = '';
-        const HINT = AR ? 'ضع رقم الشاسيه داخل الإطار ثم اضغط زر التصوير' : 'Fit the chassis plate inside the frame, then press the shutter';
+        let el = null, stream = null, onUse = null, shot = null, lbl = '', kind = 'chassis';
+        const TXT = {
+            chassis: { live: AR ? 'ضع رقم الشاسيه داخل الإطار ثم اضغط زر التصوير' : 'Fit the chassis plate inside the frame, then press the shutter',
+                       check: AR ? 'تأكد أن رقم الشاسيه واضح ومقروء في الصورة' : 'Make sure the chassis number is clear and readable',
+                       title: AR ? '📷 رقم الشاسيه — ' : '📷 Chassis plate — ', stamp: AR ? 'رقم الشاسيه' : 'chassis plate' },
+            car:     { live: AR ? 'ابتعد حتى تظهر السيارة كاملة داخل الإطار ثم اضغط زر التصوير' : 'Step back until the whole car is inside the frame, then press the shutter',
+                       check: AR ? 'تأكد أن السيارة كاملة وواضحة في الصورة' : 'Make sure the whole car is clear in the photo',
+                       title: AR ? '🚗 السيارة — ' : '🚗 The car — ', stamp: AR ? 'صورة السيارة' : 'car' },
+        };
         const q = sel => el.querySelector(sel);
         const stop = () => { if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; } if (el) q('video').srcObject = null; };
         const close = () => { stop(); if (el) el.classList.remove('on'); document.documentElement.style.overflow = ''; };
         const mode = live => {
             q('video').hidden = !live; q('.cam-img').hidden = live; q('.cam-frame').hidden = !live;
             q('.cam-shot').hidden = !live; q('.cam-again').hidden = live; q('.cam-use').hidden = live;
-            q('.cam-hint').textContent = live ? HINT : (AR ? 'تأكد أن رقم الشاسيه واضح ومقروء في الصورة' : 'Make sure the chassis number is clear and readable');
+            q('.cam-hint').textContent = live ? TXT[kind].live : TXT[kind].check;
         };
         const fail = kind => {
             stop(); q('.cam-shot').hidden = true; q('.cam-frame').hidden = true; q('.cam-hint').textContent = '';
@@ -1444,7 +1474,7 @@ $ago = function ($s) use ($ar): string {
             const band = Math.max(28, Math.round(h * .055)), d = new Date(Date.now() + SKEW + CAIRO), pad = n => String(n).padStart(2, '0');
             g.fillStyle = 'rgba(0,0,0,.62)'; g.fillRect(0, h - band, w, band);
             g.fillStyle = '#fff'; g.font = '700 ' + Math.round(band * .48) + 'px sans-serif'; g.textBaseline = 'middle';
-            g.fillText(d.getUTCFullYear() + '-' + pad(d.getUTCMonth() + 1) + '-' + pad(d.getUTCDate()) + ' ' + pad(d.getUTCHours()) + ':' + pad(d.getUTCMinutes()) + ' · ' + ME + ' · ' + lbl, Math.round(band * .4), h - band / 2, w - Math.round(band * .8));
+            g.fillText(d.getUTCFullYear() + '-' + pad(d.getUTCMonth() + 1) + '-' + pad(d.getUTCDate()) + ' ' + pad(d.getUTCHours()) + ':' + pad(d.getUTCMinutes()) + ' · ' + ME + ' · ' + lbl + ' · ' + TXT[kind].stamp, Math.round(band * .4), h - band / 2, w - Math.round(band * .8));
             shot = cv; q('.cam-img').src = cv.toDataURL('image/jpeg', .85);
             stop(); mode(false);
             if (navigator.vibrate) navigator.vibrate(30);
@@ -1463,35 +1493,48 @@ $ago = function ($s) use ($ar): string {
             q('.cam-use').addEventListener('click', () => { const cv = shot; if (!cv) return; cv.toBlob(b => { close(); if (b && onUse) onUse(b); }, 'image/jpeg', .85); });
             document.addEventListener('keydown', e => { if (e.key === 'Escape' && el.classList.contains('on')) close(); });
         }
-        return { open(label, use) { if (!el) build(); lbl = label; onUse = use; q('.cam-t').textContent = '📷 ' + label; el.classList.add('on'); document.documentElement.style.overflow = 'hidden'; start(); } };
+        return { open(label, use, what) {
+            if (!el) build();
+            lbl = label; onUse = use; kind = what === 'car' ? 'car' : 'chassis';
+            q('.cam-t').textContent = TXT[kind].title + label; el.classList.toggle('car', kind === 'car');
+            el.classList.add('on'); document.documentElement.style.overflow = 'hidden'; start();
+        } };
     })();
-    async function sendPhoto(it, blob) {
-        const phb = it.querySelector('.phb'), err = phb.querySelector('.pherr'), lbl = phb.querySelector('.phbtn span');
-        phb.classList.add('busy'); err.textContent = ''; lbl.textContent = AR ? 'جاري إرسال الصورة…' : 'Sending the photo…';
+    const PH_TXT = {
+        chassis: { take: AR ? 'التقط صورة لرقم الشاسيه' : 'Photograph the chassis plate', done: AR ? 'تم إرسال صورة الشاسيه ✓ — إعادة' : 'Chassis plate photo sent ✓ — retake' },
+        car:     { take: AR ? 'التقط صورة للسيارة كاملة' : 'Photograph the whole car',     done: AR ? 'تم إرسال صورة السيارة ✓ — إعادة' : 'Car photo sent ✓ — retake' },
+    };
+    async function sendPhoto(it, btn, blob) {
+        const k = btn.dataset.k === 'car' ? 'car' : 'chassis', err = it.querySelector('.phb .pherr'), lbl = btn.querySelector('span');
+        btn.classList.add('busy'); err.textContent = ''; lbl.textContent = AR ? 'جاري إرسال الصورة…' : 'Sending the photo…';
         try {
-            const fd = new FormData(); fd.append('csrf', CSRF); fd.append('check', CHECK); fd.append('item', it.dataset.id); fd.append('src', 'camera'); fd.append('photo', blob, 'p.jpg');
+            const fd = new FormData(); fd.append('csrf', CSRF); fd.append('check', CHECK); fd.append('item', it.dataset.id); fd.append('src', 'camera'); fd.append('kind', k); fd.append('photo', blob, 'p.jpg');
             const r = await (await fetch(location.pathname, { method: 'POST', credentials: 'same-origin', body: fd })).json();
             if (!r.ok) throw new Error(r.error);
-            phb.classList.add('done'); lbl.textContent = AR ? 'تم إرسال الصورة ✓ — إعادة التصوير' : 'Photo sent ✓ — retake'; if (window.F1App) F1App.sound('ok');
+            btn.classList.add('done'); lbl.textContent = PH_TXT[k].done; if (window.F1App) F1App.sound('ok');
         } catch (x) {
-            lbl.textContent = AR ? 'افتح الكاميرا والتقط صورة لرقم الشاسيه' : 'Open the camera and photograph the chassis plate';
+            lbl.textContent = btn.classList.contains('done') ? PH_TXT[k].done : PH_TXT[k].take;
             err.textContent = AR ? 'تعذّر إرسال الصورة — حاول مرة أخرى' : 'Could not send the photo — try again';
         }
-        phb.classList.remove('busy');
+        btn.classList.remove('busy');
     }
     function bindPhoto(it) {
-        const phb = it.querySelector('.phb');
-        if (!phb || phb.dataset.bound) return;
-        phb.dataset.bound = '1';
         const name = ((it.querySelector('.i b') || {}).textContent || '').replace(/^🚗\s*/, '').trim();
-        phb.querySelector('.phbtn').addEventListener('click', () => cam.open(name, blob => sendPhoto(it, blob)));
+        it.querySelectorAll('.phb .phbtn').forEach(btn => {
+            if (btn.dataset.bound) return;
+            btn.dataset.bound = '1';
+            btn.addEventListener('click', () => cam.open(name, blob => sendPhoto(it, btn, blob), btn.dataset.k));
+        });
     }
-    /* 📷 this car was picked at random for a photo: it is said only now, after it was confirmed */
-    function askPhoto(el) {
+    /* 📷 this car was picked at random for photos: it is said only now, after it was confirmed. bits: 1 the chassis plate · 2 the car */
+    function askPhoto(el, bits) {
         if (el.querySelector('.phb')) return;
         const d = document.createElement('div'); d.className = 'phb';
-        d.innerHTML = '<div class="phq">📷 ' + (AR ? 'مطلوب لهذه السيارة: صورة لرقم الشاسيه عليها' : 'This car needs a photo of its chassis plate') + '</div>'
-            + '<button type="button" class="phbtn">📷 <span>' + (AR ? 'افتح الكاميرا والتقط صورة لرقم الشاسيه' : 'Open the camera and photograph the chassis plate') + '</span></button><div class="pherr"></div>';
+        d.innerHTML = '<div class="phq">📷 ' + (AR ? 'مطلوب لهذه السيارة: ' + (bits === 3 ? 'صورة لرقم الشاسيه وصورة للسيارة كاملة' : bits === 2 ? 'صورة للسيارة كاملة' : 'صورة لرقم الشاسيه')
+                                                   : 'This car needs ' + (bits === 3 ? 'a photo of its chassis plate and one of the whole car' : bits === 2 ? 'a photo of the whole car' : 'a photo of its chassis plate')) + '</div>'
+            + (bits & 1 ? '<button type="button" class="phbtn" data-k="chassis">📷 <span>' + PH_TXT.chassis.take + '</span></button>' : '')
+            + (bits & 2 ? '<button type="button" class="phbtn" data-k="car">🚗 <span>' + PH_TXT.car.take + '</span></button>' : '')
+            + '<div class="pherr"></div>';
         el.insertBefore(d, el.querySelector('.nt'));
         bindPhoto(el);
         if (navigator.vibrate) navigator.vibrate([60, 40, 60]);
@@ -1528,7 +1571,7 @@ $ago = function ($s) use ($ar): string {
                 if (r.chassis) el.querySelector('.ch').textContent = r.chassis;
                 if (el !== it) { el.scrollIntoView({ block: 'center', behavior: 'smooth' }); }
                 counts(r.counts);
-                if (r.photo) askPhoto(el);
+                if (r.photo) askPhoto(el, r.photo);
             } else if (r.go) { location.href = r.go; }
             else {
                 cherr.textContent = r.error === 'chassis' ? (AR ? '❌ رقم الشاسيه غير صحيح. راجع الرقم على السيارة نفسها — إذا أُدخل رقم غير صحيح مرة أخرى يتوقف النظام.' : '❌ Wrong chassis number. Check the number on the car — one more wrong number stops your system.')
@@ -1559,7 +1602,7 @@ $ago = function ($s) use ($ar): string {
                 col.innerHTML = '<i style="background:' + esc(o ? o.hex : '#64748b') + '"></i>' + esc(r.color || (o ? (AR ? o.ar : o.en) : v)) + ' ✓';
                 if (window.F1App) F1App.sound('ok');
                 counts(r.counts);
-                if (r.photo) askPhoto(it);
+                if (r.photo) askPhoto(it, r.photo);
             } else if (r.go) { location.href = r.go; }
             else {
                 wheel.err.textContent = r.error === 'color' ? (AR ? '❌ اللون غير صحيح. انظر إلى السيارة نفسها مرة أخرى — إذا اخترت لوناً غير صحيح مرة أخرى يتوقف النظام.' : '❌ Wrong colour. Look at the car itself again — one more wrong answer stops your system.')
@@ -1586,8 +1629,8 @@ $ago = function ($s) use ($ar): string {
         $('scFin').disabled = true;
         const r = await post({ action: 'finish' });
         if (r.error === 'photo') {
-            alert(AR ? 'التقط صورة لرقم الشاسيه للسيارات المطلوبة أولاً (📷)' : 'Take the chassis-plate photos asked for first (📷)');
-            const need = document.querySelector('.phb:not(.done)'); if (need) need.scrollIntoView({ block: 'center', behavior: 'smooth' });
+            alert(AR ? 'التقط الصور المطلوبة أولاً (📷 / 🚗)' : 'Take the photos asked for first (📷 / 🚗)');
+            const need = document.querySelector('.phbtn:not(.done)'); if (need) need.scrollIntoView({ block: 'center', behavior: 'smooth' });
             $('scFin').disabled = false; return;
         }
         if (r.ok) location.href = <?= json_encode(user_lock_active($pdo, $uid) ? 'transfer_lock.php?lang=' . $lang : 'dashboard.php?lang=' . $lang) ?>; else $('scFin').disabled = false;
@@ -1622,7 +1665,7 @@ $ago = function ($s) use ($ar): string {
             if (!who) { say(AR ? 'اختر من يعيد فحصها' : 'Choose who re-checks it', false); return; }
             if (!confirm(AR ? 'إرسال فحص سريع لهذه السيارة الآن؟' : 'Send a spot check of this car now?')) return;
             re.disabled = true;
-            const r = await post({ action: 'case_recheck', id, user: who, minutes: 5, photo: card.querySelector('[data-cph]').checked }).catch(() => ({ ok: false }));
+            const r = await post({ action: 'case_recheck', id, user: who, minutes: 5, photo: +card.querySelector('[data-cph]').value }).catch(() => ({ ok: false }));
             if (r.ok) location.href = '?lang=<?= $lang ?>&id=' + r.id;
             else { re.disabled = false; say(r.error === 'nocar' ? (AR ? 'السيارة لم تعد في هذا الفرع' : 'The car is no longer at this branch') : (AR ? 'تعذّر الإرسال' : 'Could not send'), false); }
         });
